@@ -8,6 +8,8 @@ import {
     isViewableInBrowser,
     generatePassword,
     isProtectedValue,
+    isStandardFieldName,
+    normalizeHttpUrl,
     STANDARD_FIELDS,
     toExactArrayBuffer,
 } from '../src/utils.js';
@@ -58,6 +60,29 @@ describe('field helpers', () => {
         expect(isProtectedValue(protectedValue('s3cret'))).toBe(true);
         expect(isProtectedValue('plain')).toBe(false);
         expect(isProtectedValue(null)).toBe(false);
+    });
+
+    test('detects standard field names case-insensitively after trim', () => {
+        expect(isStandardFieldName(' Password ')).toBe(true);
+        expect(isStandardFieldName('password')).toBe(true);
+        expect(isStandardFieldName('ApiKey')).toBe(false);
+    });
+});
+
+describe('normalizeHttpUrl', () => {
+    test('adds https to hostnames without a protocol', () => {
+        expect(normalizeHttpUrl('example.com/path')).toBe('https://example.com/path');
+    });
+
+    test('keeps http and https URLs', () => {
+        expect(normalizeHttpUrl('http://example.com')).toBe('http://example.com/');
+        expect(normalizeHttpUrl('https://example.com')).toBe('https://example.com/');
+    });
+
+    test('rejects unsupported or malformed URLs', () => {
+        expect(normalizeHttpUrl('ftp://example.com')).toBe('');
+        expect(normalizeHttpUrl('not a url')).toBe('');
+        expect(normalizeHttpUrl('mailto:user@example.com')).toBe('');
     });
 });
 

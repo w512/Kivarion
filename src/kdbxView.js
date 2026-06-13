@@ -67,6 +67,31 @@ export function groupContainsEntryUuid(group, uuid) {
     return (group.groups || []).some(child => groupContainsEntryUuid(child, uuid));
 }
 
+export function normalizeGroupName(name) {
+    return (name || '').trim();
+}
+
+export function groupNameExistsInParent(group, name, excludeUuid = getObjectUuid(group)) {
+    const parent = group?.parentGroup;
+    const normalized = normalizeGroupName(name).toLocaleLowerCase();
+    if (!parent || !normalized) return false;
+
+    return (parent.groups || []).some(sibling => {
+        return getObjectUuid(sibling) !== excludeUuid &&
+            normalizeGroupName(sibling.name).toLocaleLowerCase() === normalized;
+    });
+}
+
+export function getUniqueGroupName(parentGroup, baseName = 'New group') {
+    const base = normalizeGroupName(baseName) || 'New group';
+    const names = new Set((parentGroup?.groups || []).map(group => normalizeGroupName(group.name).toLocaleLowerCase()));
+    if (!names.has(base.toLocaleLowerCase())) return base;
+
+    let i = 2;
+    while (names.has(`${base} ${i}`.toLocaleLowerCase())) i++;
+    return `${base} ${i}`;
+}
+
 export function getAllEntries(db, group = getDefaultGroup(db)) {
     const entries = [];
     collectEntries(db, group, entries);

@@ -19,6 +19,15 @@ export function formatSize(bytes) {
 
 export const STANDARD_FIELDS = ['Title', 'UserName', 'Password', 'URL', 'Notes'];
 
+export function normalizeFieldName(name) {
+    return (name || '').trim().toLocaleLowerCase();
+}
+
+export function isStandardFieldName(name) {
+    const normalized = normalizeFieldName(name);
+    return STANDARD_FIELDS.some(field => normalizeFieldName(field) === normalized);
+}
+
 export function isProtectedValue(val) {
     return !!val && typeof val !== 'string' && typeof val.getText === 'function';
 }
@@ -38,6 +47,22 @@ export function toExactArrayBuffer(bytes) {
         throw new TypeError('Expected an ArrayBuffer or a typed array');
     }
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+}
+
+export function normalizeHttpUrl(value) {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return '';
+
+    const urlText = trimmed.includes('://') ? trimmed : `https://${trimmed}`;
+
+    try {
+        const url = new URL(urlText);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+        if (!url.hostname || url.username || url.password) return '';
+        return url.href;
+    } catch {
+        return '';
+    }
 }
 
 // Single source of truth for file-type handling, keyed by extension.

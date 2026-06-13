@@ -45,6 +45,21 @@
                     </div>
                 </div>
 
+                <div class="form-group" v-if="hasPasswordChange">
+                    <label>Confirm New Password</label>
+                    <input
+                        :type="showPassword ? 'text' : 'password'"
+                        v-model="localPasswordConfirm"
+                        placeholder="Repeat new password"
+                        class="modal-input"
+                    />
+                    <p class="password-warning">
+                        Make sure you remember this password. If it is lost, the database cannot be recovered.
+                    </p>
+                </div>
+
+                <p v-if="settingsError" class="modal-error">{{ settingsError }}</p>
+
                 <div class="modal-actions">
                     <button class="confirm-btn" @click="handleConfirm">
                         Save Changes
@@ -59,7 +74,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -70,13 +85,19 @@ const emit = defineEmits(['confirm', 'cancel']);
 
 const localName = ref('');
 const localPassword = ref('');
+const localPasswordConfirm = ref('');
+const settingsError = ref('');
 const nameInput = ref(null);
 const showPassword = ref(false);
+
+const hasPasswordChange = computed(() => localPassword.value.length > 0 || localPasswordConfirm.value.length > 0);
 
 watch(() => props.show, (isShowing) => {
     if (isShowing) {
         localName.value = props.dbName;
         localPassword.value = '';
+        localPasswordConfirm.value = '';
+        settingsError.value = '';
         showPassword.value = false;
         setTimeout(() => {
             nameInput.value?.focus();
@@ -84,10 +105,26 @@ watch(() => props.show, (isShowing) => {
     }
 });
 
+watch([localPassword, localPasswordConfirm], () => {
+    settingsError.value = '';
+});
+
 function handleConfirm() {
+    const password = localPassword.value;
+    if (hasPasswordChange.value) {
+        if (!password) {
+            settingsError.value = 'Enter the new password first.';
+            return;
+        }
+        if (password !== localPasswordConfirm.value) {
+            settingsError.value = 'New passwords do not match.';
+            return;
+        }
+    }
+
     emit('confirm', {
-        name: localName.value,
-        password: localPassword.value
+        name: localName.value.trim(),
+        password
     });
 }
 </script>
@@ -201,6 +238,22 @@ function handleConfirm() {
 
 .toggle-password:hover {
     opacity: 1;
+}
+
+.password-warning {
+    margin-top: 0.5rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
+.modal-error {
+    padding: 0.55rem 0.7rem;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--error-color);
+    font-size: 0.82rem;
+    line-height: 1.35;
 }
 
 .modal-actions {

@@ -1,6 +1,6 @@
 import { ref, watch } from 'vue';
 import * as kdbxweb from 'kdbxweb';
-import { getField, STANDARD_FIELDS } from '../utils';
+import { getField, isStandardFieldName, normalizeFieldName, STANDARD_FIELDS } from '../utils';
 
 export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     const isEditing = ref(false);
@@ -97,17 +97,18 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
             const key = (field.key || '').trim();
             if (!key) continue;
 
-            if (STANDARD_FIELDS.includes(key)) {
+            if (isStandardFieldName(key)) {
                 formError.value = `“${key}” is a standard field and cannot be used as a custom field name.`;
                 return null;
             }
 
-            if (seenKeys.has(key)) {
+            const normalizedKey = normalizeFieldName(key);
+            if (seenKeys.has(normalizedKey)) {
                 formError.value = `Custom field “${key}” is duplicated.`;
                 return null;
             }
 
-            seenKeys.add(key);
+            seenKeys.add(normalizedKey);
             normalized.push({
                 key,
                 value: field.value ?? '',

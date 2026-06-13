@@ -102,6 +102,8 @@
             v-model="newGroupName"
             placeholder="Group name"
             confirm-text="Save"
+            :error="groupNameError"
+            :confirm-disabled="!newGroupName.trim()"
             @confirm="confirmRenameGroup"
             @cancel="cancelGroupAction"
         />
@@ -144,6 +146,8 @@ import {
     getObjectUuid,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
+    groupNameExistsInParent,
+    normalizeGroupName,
     toEntryListItem,
     toGroupTreeNode,
 } from '../kdbxView.js';
@@ -203,6 +207,7 @@ const entryToDeleteUuid = ref(null);
 const showRenameModal = ref(false);
 const groupToRenameUuid = ref(null);
 const newGroupName = ref('');
+const groupNameError = ref('');
 
 const showDeleteGroupConfirm = ref(false);
 const groupToDeleteUuid = ref(null);
@@ -235,6 +240,9 @@ function onActivity() {
 }
 
 watch(() => store.autoLockTimeout, resetLockTimer);
+watch(newGroupName, () => {
+    groupNameError.value = '';
+});
 
 // Column widths logic
 const { width: sidebarWidth, isResizing: isResizingSidebar, startResize: startResizeSidebar } = 
@@ -421,6 +429,7 @@ function requestRenameGroup(groupUuid) {
 
     groupToRenameUuid.value = groupUuid;
     newGroupName.value = group.name || '';
+    groupNameError.value = '';
     showRenameModal.value = true;
 }
 
@@ -428,10 +437,21 @@ function confirmRenameGroup() {
     const group = findGroupByUuid(store.db, groupToRenameUuid.value);
     if (!group) return;
 
-    group.name = newGroupName.value;
+    const normalizedName = normalizeGroupName(newGroupName.value);
+    if (!normalizedName) {
+        groupNameError.value = 'Group name cannot be empty.';
+        return;
+    }
+    if (groupNameExistsInParent(group, normalizedName)) {
+        groupNameError.value = 'A group with this name already exists here.';
+        return;
+    }
+
+    group.name = normalizedName;
     if (group.times) group.times.update();
     store.touchDb();
     groupToRenameUuid.value = null;
+    groupNameError.value = '';
     showRenameModal.value = false;
     saveDatabaseChanges();
 }
@@ -466,6 +486,7 @@ function confirmDeleteGroup() {
 function cancelGroupAction() {
     showRenameModal.value = false;
     groupToRenameUuid.value = null;
+    groupNameError.value = '';
     showDeleteGroupConfirm.value = false;
     groupToDeleteUuid.value = null;
 }

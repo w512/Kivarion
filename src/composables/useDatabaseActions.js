@@ -1,6 +1,6 @@
 import { computed, ref } from 'vue';
 import { saveDatabase } from '../dbHelper.js';
-import { ALL_ENTRIES_UUID, findGroupByUuid, getDefaultGroup, getObjectUuid } from '../kdbxView.js';
+import { ALL_ENTRIES_UUID, findGroupByUuid, getDefaultGroup, getObjectUuid, getUniqueGroupName } from '../kdbxView.js';
 
 export function useDatabaseActions(store) {
     // Surfaced to the UI so a failed save is never silent.
@@ -103,7 +103,7 @@ export function useDatabaseActions(store) {
 
         if (!parentGroup) return null;
 
-        const group = store.db.createGroup(parentGroup, 'New group');
+        const group = store.db.createGroup(parentGroup, getUniqueGroupName(parentGroup));
         store.touchDb();
         saveDatabaseChanges();
         return getObjectUuid(group);

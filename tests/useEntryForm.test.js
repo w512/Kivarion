@@ -55,7 +55,7 @@ describe('useEntryForm custom fields', () => {
     test('rejects custom fields that collide with standard field names', () => {
         const entry = makeEntry({ Title: 'Entry', Password: protectedValue('secret') });
         const emit = mock(() => {});
-        const customFields = ref([{ key: 'Password', value: 'plain leak', protected: false }]);
+        const customFields = ref([{ key: ' password ', value: 'plain leak', protected: false }]);
         const form = useEntryForm({ entry }, emit, customFields);
 
         form.startEdit();
@@ -73,7 +73,7 @@ describe('useEntryForm custom fields', () => {
         const emit = mock(() => {});
         const customFields = ref([
             { key: 'ApiKey', value: 'one', protected: false },
-            { key: 'ApiKey', value: 'two', protected: true },
+            { key: ' apikey ', value: 'two', protected: true },
         ]);
         const form = useEntryForm({ entry }, emit, customFields);
 

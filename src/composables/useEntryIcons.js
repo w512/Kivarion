@@ -1,17 +1,17 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import * as kdbxweb from 'kdbxweb';
-import { getField } from '../utils';
+import { getField, normalizeHttpUrl } from '../utils';
 import { useStore } from '../store';
 
 export function useEntryIcons(emit) {
     const store = useStore();
 
     async function downloadIcon(entry) {
-        const url = getField(entry, 'URL');
+        const url = normalizeHttpUrl(getField(entry, 'URL'));
         if (!url) return;
 
         try {
-            const domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname;
+            const domain = new URL(url).hostname;
             const res = await tauriFetch(`https://icon.horse/icon/${domain}`);
             
             if (!res.ok) throw new Error('Icon fetch failed');

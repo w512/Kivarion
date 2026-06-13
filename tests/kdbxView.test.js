@@ -5,6 +5,8 @@ import {
     getAllEntries,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
+    getUniqueGroupName,
+    groupNameExistsInParent,
     toEntryListItem,
     toGroupTreeNode,
 } from '../src/kdbxView.js';
@@ -35,7 +37,11 @@ function makeDb() {
     const recycleEntry = entry('entry-trash', 'Trash Entry');
     const recycleGroup = { uuid: uuid('recycle'), name: 'Recycle Bin', entries: [recycleEntry], groups: [] };
     const childGroup = { uuid: uuid('child'), name: 'Child', entries: [childEntry], groups: [] };
-    const root = { uuid: uuid('root'), name: 'Root', entries: [rootEntry], groups: [childGroup, recycleGroup] };
+    const duplicateGroup = { uuid: uuid('duplicate'), name: 'New group', entries: [], groups: [] };
+    const root = { uuid: uuid('root'), name: 'Root', entries: [rootEntry], groups: [childGroup, recycleGroup, duplicateGroup] };
+    childGroup.parentGroup = root;
+    recycleGroup.parentGroup = root;
+    duplicateGroup.parentGroup = root;
 
     return {
         meta: { recycleBinUuid: uuid('recycle'), customIcons: new Map() },
@@ -45,6 +51,7 @@ function makeDb() {
         rootEntry,
         childEntry,
         recycleEntry,
+        duplicateGroup,
     };
 }
 
@@ -82,6 +89,7 @@ describe('kdbx view helpers', () => {
             children: [
                 { uuid: 'child', name: 'Child', entryCount: 1, children: [] },
                 { uuid: 'recycle', name: 'Recycle Bin', entryCount: 1, children: [] },
+                { uuid: 'duplicate', name: 'New group', entryCount: 0, children: [] },
             ],
         });
 
@@ -90,5 +98,14 @@ describe('kdbx view helpers', () => {
             title: 'Child Entry',
             iconSrc: null,
         });
+    });
+
+    test('validates group sibling names and generates unique defaults', () => {
+        const db = makeDb();
+
+        expect(groupNameExistsInParent(db.childGroup, ' recycle bin ')).toBe(true);
+        expect(groupNameExistsInParent(db.childGroup, 'Child')).toBe(false);
+        expect(getUniqueGroupName(db.root)).toBe('New group 2');
+        expect(getUniqueGroupName(db.root, 'Project')).toBe('Project');
     });
 });
