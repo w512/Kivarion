@@ -221,7 +221,7 @@ const { width: entriesWidth, isResizing: isResizingEntries, startResize: startRe
     useResizable('kivarion_entriesWidth', 300, 200, 800, sidebarWidth);
 
 // Database Actions logic
-const { saveDatabaseChanges, addEntry: performAddEntry, addGroup: performAddGroup, isSaving, saveError } =
+const { saveDatabaseChanges, addEntry: performAddEntry, addGroup: performAddGroup, isSaving, saveError, hasUnsavedChanges } =
     useDatabaseActions(store);
 
 const dbName = computed(() => {
@@ -350,11 +350,21 @@ function onEntryUpdated() {
     saveDatabaseChanges();
 }
 
-function closeDatabase() {
+async function closeDatabase() {
+    if (!await ensureSavedBeforeClose()) return;
+
     store.db = null;
     store.fileName = '';
     store.selectedGroupUuid = null;
     router.push({ name: 'home' });
+}
+
+async function ensureSavedBeforeClose() {
+    if (!store.db) return true;
+    if (!isSaving.value && !hasUnsavedChanges.value) return true;
+
+    const saved = await saveDatabaseChanges();
+    return saved && !hasUnsavedChanges.value;
 }
 
 function getEntryTitle(entry) {

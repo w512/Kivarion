@@ -34,7 +34,7 @@ export async function saveDatabase(db, fileName) {
     }
 
     const targetPath = store.filePath;
-    const tmpPath = `${targetPath}.tmp`;
+    const tmpPath = `${targetPath}.${uniqueSaveToken()}.tmp`;
     const backupPath = `${targetPath}.bak`;
 
     try {
@@ -62,6 +62,10 @@ export async function saveDatabase(db, fileName) {
 /**
  * Browser fallback: trigger a download of the serialized database.
  */
+function uniqueSaveToken() {
+    return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function downloadFile(bytes, fileName) {
     const blob = new Blob([bytes], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
