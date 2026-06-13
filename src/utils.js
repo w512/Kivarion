@@ -1,0 +1,118 @@
+export function formatDate(date) {
+    if (!date) return '—';
+    return new Intl.DateTimeFormat('default', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    }).format(date);
+}
+
+export function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+export function getField(entry, name) {
+    if (!entry || !entry.fields) return '';
+    const val = entry.fields.get(name);
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (val.getText) return val.getText();
+    return String(val);
+}
+
+// Single source of truth for file-type handling, keyed by extension.
+// `image` marks files shown as inline thumbnails; `viewable` marks files the
+// browser can render in the preview modal. Images are always viewable.
+const FILE_TYPES = {
+    // Images
+    png: { mime: 'image/png', image: true },
+    jpg: { mime: 'image/jpeg', image: true },
+    jpeg: { mime: 'image/jpeg', image: true },
+    gif: { mime: 'image/gif', image: true },
+    svg: { mime: 'image/svg+xml', image: true },
+    webp: { mime: 'image/webp', image: true },
+    // Documents & text
+    pdf: { mime: 'application/pdf', viewable: true },
+    txt: { mime: 'text/plain', viewable: true },
+    md: { mime: 'text/markdown', viewable: true },
+    html: { mime: 'text/html', viewable: true },
+    js: { mime: 'text/javascript', viewable: true },
+    css: { mime: 'text/css', viewable: true },
+    json: { mime: 'application/json', viewable: true },
+    // Media
+    mp4: { mime: 'video/mp4', viewable: true },
+    mp3: { mime: 'audio/mpeg', viewable: true },
+    wav: { mime: 'audio/wav', viewable: true },
+};
+
+function fileInfo(name) {
+    const ext = (name || '').split('.').pop().toLowerCase();
+    return FILE_TYPES[ext] || null;
+}
+
+export function isImage(name) {
+    return !!fileInfo(name)?.image;
+}
+
+export function getMimeType(name) {
+    return fileInfo(name)?.mime || 'application/octet-stream';
+}
+
+export function isViewableInBrowser(name) {
+    const info = fileInfo(name);
+    return !!info && (info.viewable || info.image);
+}
+
+export function generatePassword(options = {}) {
+    const {
+        length = 20,
+        upper = true,
+        lower = true,
+        numbers = true,
+        symbols = true,
+        excludeSimilar = true
+    } = options;
+
+    let charset = '';
+    if (upper) charset += 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // Excluded I, O
+    if (!excludeSimilar && upper) charset += 'IO';
+    
+    if (lower) charset += 'abcdefghijkmnopqrstuvwxyz'; // Excluded l
+    if (!excludeSimilar && lower) charset += 'l';
+
+    if (numbers) charset += '23456789'; // Excluded 0, 1
+    if (!excludeSimilar && numbers) charset += '01';
+
+    if (symbols) charset += '!@#$%^&*()_+-=[]{}|;:,.<>?';
+
+    if (charset === '') return '';
+
+    let password = '';
+    for (let i = 0; i < length; i++) {
+        password += charset[secureRandomIndex(charset.length)];
+    }
+    return password;
+}
+
+/**
+ * Uniformly pick an index in [0, max) using rejection sampling so that no
+ * character is statistically favoured (plain `random % max` is biased unless
+ * max divides 2^32).
+ */
+function secureRandomIndex(max) {
+    const range = 2 ** 32;
+    const limit = Math.floor(range / max) * max;
+    const buf = new Uint32Array(1);
+    let x;
+    do {
+        window.crypto.getRandomValues(buf);
+        x = buf[0];
+    } while (x >= limit);
+    return x % max;
+}
