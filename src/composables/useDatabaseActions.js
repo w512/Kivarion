@@ -10,7 +10,7 @@ export function useDatabaseActions(store) {
         return !!saveError.value || store.dbVersion > lastSavedDbVersion.value;
     });
 
-    let saveQueued = false;
+    let pendingSaveVersion = null;
     let activeSavePromise = null;
 
     /**
@@ -30,7 +30,7 @@ export function useDatabaseActions(store) {
     function saveDatabaseChanges() {
         if (!store.db) return Promise.resolve(false);
 
-        saveQueued = true;
+        pendingSaveVersion = store.dbVersion;
 
         if (!activeSavePromise) {
             activeSavePromise = flushSaveQueue()
@@ -44,21 +44,27 @@ export function useDatabaseActions(store) {
 
     async function flushSaveQueue() {
         isSaving.value = true;
-        saveError.value = null;
         let ok = true;
 
         try {
-            while (saveQueued && store.db) {
-                saveQueued = false;
-                const versionToSave = store.dbVersion;
+            while (pendingSaveVersion !== null && store.db) {
+                const versionToSave = pendingSaveVersion;
+                pendingSaveVersion = null;
+
+                // A duplicate request for a version that has just been saved
+                // does not need another disk write.
+                if (!saveError.value && versionToSave <= lastSavedDbVersion.value) {
+                    continue;
+                }
 
                 try {
+                    saveError.value = null;
                     await saveDatabase(store.db, store.fileName);
                     lastSavedDbVersion.value = versionToSave;
                 } catch (error) {
                     console.error('Failed to save changes:', error);
                     saveError.value = error?.message || String(error) || 'Unknown error';
-                    saveQueued = false;
+                    pendingSaveVersion = null;
                     ok = false;
                     break;
                 }

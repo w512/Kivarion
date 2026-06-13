@@ -73,6 +73,17 @@
             </aside>
         </div>
 
+        <!-- Save Error Close Confirmation -->
+        <ConfirmModal
+            :show="showCloseAfterSaveErrorConfirm"
+            title="Close without saving?"
+            :message="`The latest changes could not be saved${saveError ? ': ' + saveError : ''}. Closing now will discard unsaved changes.`"
+            confirm-text="Close without saving"
+            confirm-variant="danger"
+            @confirm="forceCloseDatabase"
+            @cancel="cancelCloseAfterSaveError"
+        />
+
         <!-- Delete Entry Confirmation -->
         <ConfirmModal
             :show="showDeleteConfirm"
@@ -188,6 +199,7 @@ const groupToDelete = ref(null);
 const homeDirPath = ref('');
 
 const showSettingsModal = ref(false);
+const showCloseAfterSaveErrorConfirm = ref(false);
 
 let lockTimer = null;
 function resetLockTimer() {
@@ -351,12 +363,24 @@ function onEntryUpdated() {
 }
 
 async function closeDatabase() {
-    if (!await ensureSavedBeforeClose()) return;
+    if (!await ensureSavedBeforeClose()) {
+        showCloseAfterSaveErrorConfirm.value = true;
+        return;
+    }
 
+    forceCloseDatabase();
+}
+
+function forceCloseDatabase() {
+    showCloseAfterSaveErrorConfirm.value = false;
     store.db = null;
     store.fileName = '';
     store.selectedGroupUuid = null;
     router.push({ name: 'home' });
+}
+
+function cancelCloseAfterSaveError() {
+    showCloseAfterSaveErrorConfirm.value = false;
 }
 
 async function ensureSavedBeforeClose() {
