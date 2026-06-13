@@ -30,3 +30,4 @@ TestVault.kdbx
 AGENTS.md
 CLAUDE.md
 docs/
+*.kdbx.bak
