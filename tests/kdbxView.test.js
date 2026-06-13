@@ -7,6 +7,7 @@ import {
     groupContainsGroupUuid,
     getUniqueGroupName,
     groupNameExistsInParent,
+    resolveGroupMove,
     toEntryListItem,
     toGroupTreeNode,
 } from '../src/kdbxView.js';
@@ -99,6 +100,49 @@ describe('kdbx view helpers', () => {
             title: 'Child Entry',
             iconSrc: null,
         });
+    });
+
+    test('resolves valid group moves into move() arguments', () => {
+        const db = makeDb();
+
+        // Nest 'duplicate' inside sibling 'child' → append (no index).
+        expect(resolveGroupMove(db, 'duplicate', 'child', 'inside')).toEqual({
+            group: db.duplicateGroup,
+            toGroup: db.childGroup,
+            atIndex: undefined,
+        });
+
+        // root.groups order: [child(0), recycle(1), duplicate(2)].
+        // Reorder 'duplicate' before 'child' → lands at index 0.
+        expect(resolveGroupMove(db, 'duplicate', 'child', 'before')).toMatchObject({
+            group: db.duplicateGroup,
+            toGroup: db.root,
+            atIndex: 0,
+        });
+
+        // Same-parent shift: drag 'child' (idx 0) after 'duplicate' (idx 2).
+        // Raw insert index is 3, decremented to 2 because the splice removes
+        // 'child' from an earlier position first.
+        expect(resolveGroupMove(db, 'child', 'duplicate', 'after')).toMatchObject({
+            group: db.childGroup,
+            toGroup: db.root,
+            atIndex: 2,
+        });
+    });
+
+    test('rejects invalid group moves', () => {
+        const db = makeDb();
+
+        // Give 'child' a descendant so we can test the cycle guard.
+        const grand = { uuid: uuid('grand'), name: 'Grand', entries: [], groups: [] };
+        grand.parentGroup = db.childGroup;
+        db.childGroup.groups.push(grand);
+
+        expect(resolveGroupMove(db, 'child', 'child', 'inside')).toBe(null); // onto self
+        expect(resolveGroupMove(db, 'child', 'grand', 'inside')).toBe(null); // into own descendant
+        expect(resolveGroupMove(db, 'root', 'child', 'inside')).toBe(null);  // root can't move
+        expect(resolveGroupMove(db, 'child', 'root', 'before')).toBe(null);  // root has no siblings
+        expect(resolveGroupMove(db, 'child', 'missing', 'inside')).toBe(null);
     });
 
     test('validates group sibling names and generates unique defaults', () => {

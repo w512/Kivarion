@@ -109,6 +109,45 @@ function collectEntries(db, group, entries) {
     }
 }
 
+// Resolves a drag-and-drop group move into the arguments for `Kdbx.move`, or
+// returns null when the move is invalid (self, descendant cycle, root, etc.).
+// `position` is 'before' | 'after' | 'inside'. Pure: only reads the tree, never
+// mutates — so the index math stays unit-testable.
+export function resolveGroupMove(db, draggedUuid, targetUuid, position) {
+    if (!db || !draggedUuid || !targetUuid || draggedUuid === targetUuid) return null;
+
+    const dragged = findGroupByUuid(db, draggedUuid);
+    const target = findGroupByUuid(db, targetUuid);
+    if (!dragged || !target) return null;
+
+    // The root group can't be moved.
+    if (dragged === getDefaultGroup(db)) return null;
+
+    const toGroup = position === 'inside' ? target : target.parentGroup;
+    // before/after the root has no valid parent to land in.
+    if (!toGroup) return null;
+
+    // Block dropping a group into itself or any of its descendants.
+    if (groupContainsGroupUuid(dragged, getObjectUuid(toGroup))) return null;
+
+    if (position === 'inside') {
+        return { group: dragged, toGroup, atIndex: undefined };
+    }
+
+    const siblings = toGroup.groups || [];
+    let idx = siblings.indexOf(target);
+    if (position === 'after') idx += 1;
+
+    // `move` splices the dragged item out before inserting; when reordering
+    // within the same parent that shifts later indices down by one.
+    if (dragged.parentGroup === toGroup) {
+        const fromIdx = siblings.indexOf(dragged);
+        if (fromIdx >= 0 && fromIdx < idx) idx -= 1;
+    }
+
+    return { group: dragged, toGroup, atIndex: idx };
+}
+
 export function getRecycleBinGroup(db) {
     if (!db?.meta?.recycleBinUuid) return null;
     return findGroupInTree(getDefaultGroup(db), db.meta.recycleBinUuid.id) || null;

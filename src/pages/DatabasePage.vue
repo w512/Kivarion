@@ -43,6 +43,7 @@
                     @rename-group="requestRenameGroup"
                     @delete-group="requestDeleteGroup"
                     @empty-recycle-bin="requestEmptyRecycleBin"
+                    @move-group="moveGroup"
                 />
             </aside>
 
@@ -175,6 +176,7 @@ import {
     groupContainsGroupUuid,
     groupNameExistsInParent,
     normalizeGroupName,
+    resolveGroupMove,
     toEntryListItem,
     toGroupTreeNode,
 } from '../kdbxView.js';
@@ -574,6 +576,15 @@ function deleteConfirmedGroup() {
     store.db.remove(group);
     groupToDeleteUuid.value = null;
     showDeleteGroupConfirm.value = false;
+    store.touchDb();
+    saveDatabaseChanges();
+}
+
+function moveGroup({ draggedUuid, targetUuid, position }) {
+    const plan = resolveGroupMove(store.db, draggedUuid, targetUuid, position);
+    if (!plan) return;
+
+    store.db.move(plan.group, plan.toGroup, plan.atIndex);
     store.touchDb();
     saveDatabaseChanges();
 }

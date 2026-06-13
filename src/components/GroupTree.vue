@@ -25,6 +25,7 @@
                 @rename-group="emit('rename-group', $event)"
                 @delete-group="emit('delete-group', $event)"
                 @empty-recycle-bin="emit('empty-recycle-bin', $event)"
+                @move-group="handleMoveGroup"
             />
 
             <GroupTree
@@ -39,6 +40,7 @@
                 @rename-group="(uuid) => emit('rename-group', uuid)"
                 @delete-group="(uuid) => emit('delete-group', uuid)"
                 @empty-recycle-bin="(uuid) => emit('empty-recycle-bin', uuid)"
+                @move-group="handleMoveGroup"
             />
         </div>
     </div>
@@ -62,6 +64,7 @@ const emit = defineEmits([
     'rename-group',
     'delete-group',
     'empty-recycle-bin',
+    'move-group',
 ]);
 
 const collapsedGroups = ref({});
@@ -79,6 +82,15 @@ function handleAddGroup(uuid) {
     // the newly-created child is visible instead of appearing as if nothing happened.
     collapsedGroups.value[uuid] = false;
     emit('add-group', uuid);
+}
+
+function handleMoveGroup(payload) {
+    // When nesting a group into a collapsed target, expand it so the moved group
+    // is visible instead of seeming to vanish.
+    if (payload?.position === 'inside' && payload.targetUuid) {
+        collapsedGroups.value[payload.targetUuid] = false;
+    }
+    emit('move-group', payload);
 }
 </script>
 

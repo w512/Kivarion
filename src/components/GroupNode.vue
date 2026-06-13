@@ -1,10 +1,23 @@
 <template>
     <div
         class="group-node"
-        :class="{ active: isSelected, nested: depth > 0 }"
+        :class="{
+            active: isSelected,
+            nested: depth > 0,
+            dragging: isDragging,
+            'drag-over-inside': dropClass === 'inside',
+            'drag-over-before': dropClass === 'before',
+            'drag-over-after': dropClass === 'after',
+        }"
         :style="{ paddingLeft: depth * 16 + 10 + 'px' }"
+        :draggable="isDraggable"
         @click="$emit('select', group.uuid)"
         @contextmenu.prevent="onRightClick"
+        @dragstart="onDragStart"
+        @dragover="onDragOver"
+        @dragleave="onDragLeave"
+        @drop.prevent="onDrop"
+        @dragend="onDragEnd"
     >
         <svg
             width="14"
@@ -15,7 +28,9 @@
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
+            class="collapse-toggle"
             @click.stop="toggleCollapse"
+            @mousedown.stop
             :class="{
                 'has-children': hasChildren,
                 collapsed: isCollapsed,
@@ -92,6 +107,7 @@
 
 <script setup>
 import { computed, ref, onMounted, onUnmounted } from 'vue';
+import { useGroupDragDrop } from '../composables/useGroupDragDrop.js';
 
 const props = defineProps({
     group: { type: Object, required: true },
@@ -109,10 +125,12 @@ const emit = defineEmits([
     'rename-group',
     'delete-group',
     'empty-recycle-bin',
+    'move-group',
 ]);
 
 const isAllEntries = computed(() => props.group.uuid === 'all');
 const isRecycleBin = computed(() => props.group.isRecycleBin === true);
+const isRoot = computed(() => props.depth === 0 && !isAllEntries.value);
 const isSelected = computed(() => props.group.uuid === props.selectedGroupUuid);
 const hasChildren = computed(() => {
     props.refreshKey;
@@ -157,6 +175,59 @@ function handleAction(action) {
     contextMenu.value.visible = false;
 }
 
+// Drag and drop
+const { draggingUuid, dropTarget, startDrag, endDrag, setDropTarget, clearDropTarget, isInvalidTarget } =
+    useGroupDragDrop();
+
+const isDraggable = computed(() => !isAllEntries.value && !isRoot.value);
+const isDragging = computed(() => draggingUuid.value === props.group.uuid);
+const dropClass = computed(() =>
+    dropTarget.value?.uuid === props.group.uuid ? dropTarget.value.position : null
+);
+
+function onDragStart(event) {
+    // Don't start a drag from the collapse/expand icon — let its click toggle.
+    if (!isDraggable.value || event.target.closest?.('.collapse-toggle')) {
+        event.preventDefault();
+        return;
+    }
+    startDrag(props.group);
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', props.group.uuid);
+}
+
+function onDragOver(event) {
+    if (isAllEntries.value || !draggingUuid.value || isInvalidTarget(props.group.uuid)) return;
+
+    let position = 'inside';
+    if (!isRoot.value) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const offset = event.clientY - rect.top;
+        if (offset < rect.height * 0.3) position = 'before';
+        else if (offset > rect.height * 0.7) position = 'after';
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropTarget(props.group.uuid, position);
+}
+
+function onDragLeave() {
+    if (dropTarget.value?.uuid === props.group.uuid) clearDropTarget();
+}
+
+function onDrop() {
+    const draggedUuid = draggingUuid.value;
+    const position = dropTarget.value?.uuid === props.group.uuid ? dropTarget.value.position : null;
+    clearDropTarget();
+    if (!draggedUuid || !position) return;
+    emit('move-group', { draggedUuid, targetUuid: props.group.uuid, position });
+}
+
+function onDragEnd() {
+    endDrag();
+}
+
 function onGlobalClick() {
     if (contextMenu.value.visible) contextMenu.value.visible = false;
 }
@@ -191,6 +262,47 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
 
 .group-node.active svg {
     color: var(--accent-color);
+}
+
+/* Drag and drop */
+.group-node[draggable="true"] {
+    cursor: grab;
+}
+
+.group-node.dragging {
+    opacity: 0.4;
+}
+
+.group-node.drag-over-inside {
+    background: rgba(99, 102, 241, 0.15);
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+
+/* Sibling insert line for before/after drops. The node is positioned so the
+   pseudo-element line can sit on its top/bottom edge. */
+.group-node.drag-over-before,
+.group-node.drag-over-after {
+    position: relative;
+}
+
+.group-node.drag-over-before::before,
+.group-node.drag-over-after::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    height: 2px;
+    background: var(--accent-color);
+    border-radius: 1px;
+}
+
+.group-node.drag-over-before::before {
+    top: -1px;
+}
+
+.group-node.drag-over-after::after {
+    bottom: -1px;
 }
 
 .group-node svg {
