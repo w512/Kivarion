@@ -55,17 +55,14 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { getField } from '../../utils';
-import { useStore } from '../../store';
-
-const store = useStore();
+import { useClipboard } from '../../composables/useClipboard';
 
 const props = defineProps({
     entry: { type: Object, required: true },
 });
 
 const showPassword = ref(false);
-const activeCopyField = ref(null);
-let toastTimeout = null;
+const { activeCopyField, copy: copyToClipboard } = useClipboard();
 
 const standardFields = computed(() => [
     { id: 'Title', label: 'Title', value: getField(props.entry, 'Title') },
@@ -85,29 +82,8 @@ function ensureProtocol(url) {
     return 'https://' + url;
 }
 
-async function copy(text, fieldId) {
-    if (!text) return;
-    try {
-        await navigator.clipboard.writeText(text);
-        activeCopyField.value = fieldId;
-        if (toastTimeout) clearTimeout(toastTimeout);
-        toastTimeout = setTimeout(() => {
-            activeCopyField.value = null;
-        }, 1500);
-
-        // Auto-clear clipboard if it's a password or if timeout is set
-        const timeout = store.clipboardTimeout;
-        if (timeout > 0) {
-            setTimeout(async () => {
-                const currentText = await navigator.clipboard.readText();
-                if (currentText === text) {
-                    await navigator.clipboard.writeText('');
-                }
-            }, timeout * 1000);
-        }
-    } catch (err) {
-        console.error('Failed to copy', err);
-    }
+function copy(text, fieldId) {
+    return copyToClipboard(text, fieldId, { autoClear: true });
 }
 </script>
 

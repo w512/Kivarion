@@ -82,8 +82,8 @@
 </template>
 
 <script setup>
-import { onUnmounted, ref, watch } from 'vue';
-import { useStore } from '../../store';
+import { ref, watch } from 'vue';
+import { useClipboard } from '../../composables/useClipboard';
 
 const props = defineProps({
     isEditing: { type: Boolean, default: false },
@@ -93,17 +93,11 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue']);
 
-const store = useStore();
-const activeCopyField = ref(null);
+const { activeCopyField, copy: copyToClipboard } = useClipboard();
 const visibleProtectedFields = ref({});
-let toastTimeout = null;
 
 watch(() => props.fields.map(field => field.key).join('\0'), () => {
     visibleProtectedFields.value = {};
-});
-
-onUnmounted(() => {
-    if (toastTimeout) clearTimeout(toastTimeout);
 });
 
 function addField() {
@@ -133,32 +127,8 @@ function toggleProtectedField(key) {
     };
 }
 
-async function copy(text, fieldId, isProtected = false) {
-    if (!text) return;
-    try {
-        await navigator.clipboard.writeText(text);
-        activeCopyField.value = fieldId;
-        if (toastTimeout) clearTimeout(toastTimeout);
-        toastTimeout = setTimeout(() => {
-            activeCopyField.value = null;
-        }, 1500);
-
-        const timeout = isProtected ? store.clipboardTimeout : 0;
-        if (timeout > 0) {
-            setTimeout(async () => {
-                try {
-                    const currentText = await navigator.clipboard.readText();
-                    if (currentText === text) {
-                        await navigator.clipboard.writeText('');
-                    }
-                } catch (err) {
-                    console.error('Failed to clear clipboard', err);
-                }
-            }, timeout * 1000);
-        }
-    } catch (err) {
-        console.error('Failed to copy', err);
-    }
+function copy(text, fieldId, isProtected = false) {
+    return copyToClipboard(text, fieldId, { autoClear: isProtected });
 }
 </script>
 

@@ -3,8 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { save } from '@tauri-apps/plugin-dialog';
 import { isImage, getMimeType } from '../utils';
+import { useClipboard } from './useClipboard';
 
 export function useEntryAttachments(entryRef, isMac) {
+    const { copy } = useClipboard();
     const attachmentThumbnails = ref(new Map());
     const showPreview = ref(false);
     const previewUrl = ref(null);
@@ -96,7 +98,7 @@ export function useEntryAttachments(entryRef, isMac) {
     }
 
     function copyAttachmentName(name) {
-        navigator.clipboard.writeText(name);
+        copy(name);
     }
 
     return {
