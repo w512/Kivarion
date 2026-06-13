@@ -6,8 +6,10 @@ import {
     isImage,
     getMimeType,
     isViewableInBrowser,
+    estimatePasswordEntropy,
     generatePassword,
     isProtectedValue,
+    passwordStrengthLabel,
     isUnsafeAttachmentPreview,
     isStandardFieldName,
     normalizeHttpUrl,
@@ -201,6 +203,26 @@ describe('generatePassword', () => {
         const pw = generatePassword({ upper: false, lower: false, numbers: false, symbols: false });
         expect(pw).toBe('');
     });
+    test('returns empty string when length cannot cover all selected classes', () => {
+        const pw = generatePassword({ length: 3, upper: true, lower: true, numbers: true, symbols: true });
+        expect(pw).toBe('');
+    });
+    test('covers every selected character class', () => {
+        for (let i = 0; i < 50; i++) {
+            const pw = generatePassword({ length: 12, upper: true, lower: true, numbers: true, symbols: true, excludeSimilar: true });
+            expect(pw).toMatch(/[A-HJ-NP-Z]/);
+            expect(pw).toMatch(/[a-km-z]/);
+            expect(pw).toMatch(/[2-9]/);
+            expect(pw).toMatch(/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/);
+        }
+    });
+    test('covers every selected character class when similar characters are allowed', () => {
+        const pw = generatePassword({ length: 4, upper: true, lower: true, numbers: true, symbols: true, excludeSimilar: false });
+        expect(pw).toMatch(/[A-Z]/);
+        expect(pw).toMatch(/[a-z]/);
+        expect(pw).toMatch(/[0-9]/);
+        expect(pw).toMatch(/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/);
+    });
     test('lowercase-only with excludeSimilar omits the ambiguous "l"', () => {
         const pw = generatePassword({ length: 300, upper: false, lower: true, numbers: false, symbols: false, excludeSimilar: true });
         expect(pw).toMatch(/^[a-z]+$/);
@@ -214,5 +236,16 @@ describe('generatePassword', () => {
     test('numbers-only with excludeSimilar omits 0 and 1', () => {
         const pw = generatePassword({ length: 300, upper: false, lower: false, numbers: true, symbols: false, excludeSimilar: true });
         expect(pw).toMatch(/^[2-9]+$/);
+    });
+    test('estimates entropy from length and selected charset size', () => {
+        const entropy = estimatePasswordEntropy({ length: 8, upper: false, lower: false, numbers: true, symbols: false, excludeSimilar: true });
+        expect(entropy).toBeCloseTo(8 * Math.log2(8));
+    });
+    test('maps entropy to strength labels', () => {
+        expect(passwordStrengthLabel(20)).toBe('Weak');
+        expect(passwordStrengthLabel(45)).toBe('Fair');
+        expect(passwordStrengthLabel(65)).toBe('Good');
+        expect(passwordStrengthLabel(85)).toBe('Strong');
+        expect(passwordStrengthLabel(105)).toBe('Excellent');
     });
 });

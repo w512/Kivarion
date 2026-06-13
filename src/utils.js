@@ -115,9 +115,10 @@ export function isUnsafeAttachmentPreview(name) {
     return !!fileInfo(name)?.unsafePreview;
 }
 
-export function generatePassword(options = {}) {
+const PASSWORD_SYMBOLS = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+
+function passwordCharClasses(options = {}) {
     const {
-        length = 20,
         upper = true,
         lower = true,
         numbers = true,
@@ -125,25 +126,50 @@ export function generatePassword(options = {}) {
         excludeSimilar = true
     } = options;
 
-    let charset = '';
-    if (upper) charset += 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // Excluded I, O
-    if (!excludeSimilar && upper) charset += 'IO';
-    
-    if (lower) charset += 'abcdefghijkmnopqrstuvwxyz'; // Excluded l
-    if (!excludeSimilar && lower) charset += 'l';
+    const classes = [];
+    if (upper) classes.push(excludeSimilar ? 'ABCDEFGHJKLMNPQRSTUVWXYZ' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ');
+    if (lower) classes.push(excludeSimilar ? 'abcdefghijkmnopqrstuvwxyz' : 'abcdefghijklmnopqrstuvwxyz');
+    if (numbers) classes.push(excludeSimilar ? '23456789' : '0123456789');
+    if (symbols) classes.push(PASSWORD_SYMBOLS);
+    return classes;
+}
 
-    if (numbers) charset += '23456789'; // Excluded 0, 1
-    if (!excludeSimilar && numbers) charset += '01';
+export function estimatePasswordEntropy(options = {}) {
+    const length = Math.max(0, Math.floor(options.length ?? 20));
+    const charsetSize = passwordCharClasses(options).join('').length;
+    if (!length || !charsetSize) return 0;
+    return length * Math.log2(charsetSize);
+}
 
-    if (symbols) charset += '!@#$%^&*()_+-=[]{}|;:,.<>?';
+export function passwordStrengthLabel(entropyBits) {
+    if (entropyBits >= 100) return 'Excellent';
+    if (entropyBits >= 80) return 'Strong';
+    if (entropyBits >= 60) return 'Good';
+    if (entropyBits >= 40) return 'Fair';
+    return 'Weak';
+}
 
-    if (charset === '') return '';
+export function generatePassword(options = {}) {
+    const length = Math.max(0, Math.floor(options.length ?? 20));
+    const classes = passwordCharClasses(options);
 
-    let password = '';
-    for (let i = 0; i < length; i++) {
-        password += charset[secureRandomIndex(charset.length)];
+    if (length === 0 || classes.length === 0) return '';
+    if (length < classes.length) return '';
+
+    const charset = classes.join('');
+    const chars = [];
+
+    // Guarantee at least one character from every selected class.
+    for (const charClass of classes) {
+        chars.push(charClass[secureRandomIndex(charClass.length)]);
     }
-    return password;
+
+    for (let i = chars.length; i < length; i++) {
+        chars.push(charset[secureRandomIndex(charset.length)]);
+    }
+
+    secureShuffle(chars);
+    return chars.join('');
 }
 
 /**
@@ -161,4 +187,11 @@ function secureRandomIndex(max) {
         x = buf[0];
     } while (x >= limit);
     return x % max;
+}
+
+function secureShuffle(items) {
+    for (let i = items.length - 1; i > 0; i--) {
+        const j = secureRandomIndex(i + 1);
+        [items[i], items[j]] = [items[j], items[i]];
+    }
 }

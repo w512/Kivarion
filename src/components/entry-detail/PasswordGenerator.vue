@@ -16,6 +16,16 @@
                     </button>
                 </div>
 
+                <div class="strength-area" :class="strengthClass">
+                    <div class="strength-header">
+                        <span>{{ strengthLabel }}</span>
+                        <span>{{ entropyBits }} bits</span>
+                    </div>
+                    <div class="strength-track">
+                        <div class="strength-fill" :style="{ width: strengthPercent + '%' }"></div>
+                    </div>
+                </div>
+
                 <div class="options-area">
                     <div class="option-row">
                         <div class="option-label">
@@ -51,7 +61,7 @@
                 </div>
 
                 <div class="modal-footer">
-                    <button class="apply-btn" @click="apply">Use Password</button>
+                    <button class="apply-btn" @click="apply" :disabled="!currentPassword">Use Password</button>
                     <button class="cancel-btn" @click="close">Cancel</button>
                 </div>
             </div>
@@ -61,8 +71,8 @@
 
 
 <script setup>
-import { ref, reactive, watch } from 'vue';
-import { generatePassword } from '../../utils';
+import { computed, ref, reactive, watch } from 'vue';
+import { estimatePasswordEntropy, generatePassword, passwordStrengthLabel } from '../../utils';
 
 const props = defineProps({
     show: Boolean
@@ -70,16 +80,43 @@ const props = defineProps({
 
 const emit = defineEmits(['close', 'apply']);
 
-const options = reactive({
+const SETTINGS_KEY = 'kivarion-password-generator-options';
+const DEFAULT_OPTIONS = {
     length: 20,
     upper: true,
     lower: true,
     numbers: true,
     symbols: true,
     excludeSimilar: true
-});
+};
+
+function loadOptions() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        return {
+            ...DEFAULT_OPTIONS,
+            ...saved,
+            length: Math.min(64, Math.max(4, Number(saved.length) || DEFAULT_OPTIONS.length)),
+            upper: typeof saved.upper === 'boolean' ? saved.upper : DEFAULT_OPTIONS.upper,
+            lower: typeof saved.lower === 'boolean' ? saved.lower : DEFAULT_OPTIONS.lower,
+            numbers: typeof saved.numbers === 'boolean' ? saved.numbers : DEFAULT_OPTIONS.numbers,
+            symbols: typeof saved.symbols === 'boolean' ? saved.symbols : DEFAULT_OPTIONS.symbols,
+            excludeSimilar: typeof saved.excludeSimilar === 'boolean' ? saved.excludeSimilar : DEFAULT_OPTIONS.excludeSimilar,
+        };
+    } catch {
+        return { ...DEFAULT_OPTIONS };
+    }
+}
+
+const options = reactive(loadOptions());
 
 const currentPassword = ref('');
+
+const entropy = computed(() => estimatePasswordEntropy(options));
+const entropyBits = computed(() => Math.round(entropy.value));
+const strengthLabel = computed(() => passwordStrengthLabel(entropy.value));
+const strengthPercent = computed(() => Math.min(100, Math.round((entropy.value / 120) * 100)));
+const strengthClass = computed(() => `strength-${strengthLabel.value.toLowerCase()}`);
 
 const regenerate = () => {
     currentPassword.value = generatePassword(options);
@@ -93,6 +130,12 @@ const apply = () => {
     emit('apply', currentPassword.value);
     close();
 };
+
+watch(options, () => {
+    try {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...options }));
+    } catch {}
+}, { deep: true });
 
 // Initialize on show
 watch(() => props.show, (newVal) => {
@@ -198,6 +241,39 @@ watch(() => props.show, (newVal) => {
     transform: rotate(30deg);
 }
 
+.strength-area {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.strength-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+}
+
+.strength-track {
+    height: 7px;
+    background: var(--badge-bg);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.strength-fill {
+    height: 100%;
+    border-radius: 999px;
+    transition: width 0.2s ease, background 0.2s ease;
+}
+
+.strength-weak .strength-fill { background: #ef4444; }
+.strength-fair .strength-fill { background: #f97316; }
+.strength-good .strength-fill { background: #eab308; }
+.strength-strong .strength-fill { background: #22c55e; }
+.strength-excellent .strength-fill { background: var(--accent-color); }
+
 .options-area {
     display: flex;
     flex-direction: column;
@@ -283,11 +359,16 @@ input[type="range"] {
     transition: background 0.2s, transform 0.1s;
 }
 
-.apply-btn:hover {
+.apply-btn:hover:not(:disabled) {
     background: var(--accent-hover);
 }
 
-.apply-btn:active {
+.apply-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.apply-btn:active:not(:disabled) {
     transform: scale(0.98);
 }
 
