@@ -118,7 +118,7 @@ onMounted(() => {
                     </button>
                 </div>
 
-                <form @submit.prevent="decrypt" class="password-form">
+                <form @submit.prevent="decrypt()" class="password-form">
                     <div class="input-group">
                         <div class="password-wrapper">
                             <input

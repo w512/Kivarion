@@ -64,7 +64,7 @@ src/
 └── utils.js             # Formatting and password generation utilities
 
 src-tauri/
-├── capabilities/        # Plugin permission configuration (fs, http, dialog)
+├── capabilities/        # Plugin permission configuration (http, dialog)
 ├── src/
 │   ├── main.rs          # Rust entry point
 │   └── lib.rs           # Plugin registration and custom commands
@@ -73,6 +73,7 @@ src-tauri/
 
 ## Security
 
-- The master password is never stored in plaintext.
+- The master password is not persisted by default. **If you enable Touch ID unlock, the password is stored in the macOS Keychain** so it can be retrieved (as plaintext, into the app) after a successful biometric check. It is protected at rest by the OS Keychain, not "never stored". Touch ID is only triggered by an explicit action — Kivarion never prompts for it automatically.
 - Sensitive fields are handled through the `kdbxweb` library's `ProtectedValue`.
-- Native operating system APIs are accessed through Tauri to isolate filesystem access.
+- The webview has **no direct filesystem access**: all database/attachment file I/O goes through dedicated Rust commands operating only on a path you picked via a native dialog.
+- On macOS, previewing an attachment with Quick Look writes the decrypted file to a private temporary location and deletes it after the preview closes; the OS may still cache previews.

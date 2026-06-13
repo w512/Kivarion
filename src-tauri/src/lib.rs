@@ -146,12 +146,14 @@ fn is_biometric_available() -> bool {
 async fn verify_biometric(reason: &str) -> Result<(), String> {
     use std::sync::mpsc;
 
-    let (tx, rx) = mpsc::channel();
-    let reason_ns = NSString::from_str(reason);
+    let (tx, rx) = mpsc::channel::<Result<(), String>>();
 
+    // Confine every (non-Send) Objective-C object to this block so they are
+    // dropped before the `.await` below — otherwise the resulting future would
+    // not be `Send` and Tauri couldn't run it.
     unsafe {
         let context = LAContext::new();
-        let tx = tx.clone();
+        let reason_ns = NSString::from_str(reason);
 
         let reply = RcBlock::new(move |success: objc2::runtime::Bool, error: *mut objc2_foundation::NSError| {
             if success.as_bool() {
@@ -166,6 +168,8 @@ async fn verify_biometric(reason: &str) -> Result<(), String> {
             }
         });
 
+        // `evaluatePolicy` returns immediately and invokes `reply` later on a
+        // system queue once the user responds to the Touch ID prompt.
         context.evaluatePolicy_localizedReason_reply(
             LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
             &reason_ns,
@@ -173,7 +177,13 @@ async fn verify_biometric(reason: &str) -> Result<(), String> {
         );
     }
 
-    rx.recv().unwrap_or(Err("Internal error".to_string()))
+    // Park the wait on the blocking pool so we never block an async executor
+    // thread while the (possibly long) Touch ID prompt is on screen.
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv().unwrap_or_else(|_| Err("Internal error".to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -183,9 +193,10 @@ async fn save_biometric_password(id: String, pass: String) -> Result<(), String>
         // 1. Confirm the user's identity before storing the secret.
         verify_biometric("Authorize Kivarion to save this database password").await?;
 
-        // 2. Save to the keychain.
-        let _ = delete_generic_password_options(PasswordOptions::new_generic_password("Kivarion", &id));
-
+        // 2. Save to the keychain. `set_generic_password_options` adds the item
+        //    or updates it in place (SecItemAdd → SecItemUpdate on duplicate),
+        //    so we must NOT delete the existing item first — doing so would
+        //    leave the user with no stored secret if the write below failed.
         #[allow(unused_mut)]
         let mut options = PasswordOptions::new_generic_password("Kivarion", &id);
 

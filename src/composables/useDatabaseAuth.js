@@ -81,23 +81,26 @@ export function useDatabaseAuth(router, passwordInputRef) {
     }
 
     function checkBiometricsPreference(path) {
+        // Only surface the Touch ID button; never trigger the OS prompt without
+        // an explicit user action. The user clicks the button to unlock.
         const pref = localStorage.getItem(`kivarion-biometrics-${path}`);
-        if (pref === 'true') {
-            useBiometrics.value = true;
-            attemptBiometricUnlock(path);
-        } else {
-            useBiometrics.value = false;
-        }
+        useBiometrics.value = pref === 'true';
     }
 
     async function attemptBiometricUnlock(path) {
+        // Bind this unlock to the file the user is looking at right now.
+        if (!path || path !== store.filePath) return;
+
         isLoading.value = true;
         try {
             const pass = await invoke('load_biometric_password', { id: path });
+            // The user may have switched files while the OS prompt was open;
+            // never apply a secret loaded for one file to a different one.
+            if (path !== store.filePath) return;
             if (pass) {
                 password.value = pass;
                 isBiometricAuthenticated.value = true;
-                await decrypt();
+                await decrypt(path);
             }
         } catch (err) {
             console.error('Biometric unlock failed or cancelled:', err);
@@ -107,8 +110,17 @@ export function useDatabaseAuth(router, passwordInputRef) {
         }
     }
 
-    async function decrypt() {
-        if (!store.filePath || !password.value) {
+    async function decrypt(expectedPath = null) {
+        // Snapshot the target file up front and use it for the whole flow, so a
+        // file switch mid-decrypt can never cross-apply a password to the wrong
+        // database.
+        const path = store.filePath;
+        if (!path || !password.value) {
+            return;
+        }
+        // Only enforce the guard when an explicit path was passed (e.g. from a
+        // biometric unlock); a stray event arg from a template handler is ignored.
+        if (typeof expectedPath === 'string' && expectedPath !== path) {
             return;
         }
 
@@ -116,7 +128,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
         errorMessage.value = '';
 
         try {
-            const fileContents = await invoke('read_database', { path: store.filePath });
+            const fileContents = await invoke('read_database', { path });
             const arrayBuffer = toExactArrayBuffer(fileContents);
 
             const credentials = new kdbxweb.Credentials(
@@ -125,6 +137,12 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
             const db = await kdbxweb.Kdbx.load(arrayBuffer, credentials);
 
+            // The selection may have changed during the async read/KDF; discard
+            // this result rather than opening a stale database.
+            if (store.filePath !== path) {
+                return;
+            }
+
             store.db = db;
             store.fileName = fileName.value;
 
@@ -132,19 +150,19 @@ export function useDatabaseAuth(router, passwordInputRef) {
             // Skip saving if we just authenticated via biometrics (avoids a redundant prompt).
             if (useBiometrics.value && !isBiometricAuthenticated.value) {
                 try {
-                    await invoke('save_biometric_password', { id: store.filePath, pass: password.value });
-                    localStorage.setItem(`kivarion-biometrics-${store.filePath}`, 'true');
+                    await invoke('save_biometric_password', { id: path, pass: password.value });
+                    localStorage.setItem(`kivarion-biometrics-${path}`, 'true');
                 } catch (e) {
                     console.error('Failed to save biometric password:', e);
                 }
             } else if (!useBiometrics.value) {
                 try {
-                    await invoke('delete_biometric_password', { id: store.filePath });
-                    localStorage.removeItem(`kivarion-biometrics-${store.filePath}`);
+                    await invoke('delete_biometric_password', { id: path });
+                    localStorage.removeItem(`kivarion-biometrics-${path}`);
                 } catch (e) {}
             }
 
-            localStorage.setItem('kivarion-last-db-path', store.filePath);
+            localStorage.setItem('kivarion-last-db-path', path);
             password.value = '';
             isBiometricAuthenticated.value = false;
             router.push({ name: 'database' });
