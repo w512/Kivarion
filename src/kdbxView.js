@@ -109,12 +109,18 @@ function collectEntries(db, group, entries) {
     }
 }
 
-export function toGroupTreeNode(group) {
+export function getRecycleBinGroup(db) {
+    if (!db?.meta?.recycleBinUuid) return null;
+    return findGroupInTree(getDefaultGroup(db), db.meta.recycleBinUuid.id) || null;
+}
+
+export function toGroupTreeNode(group, db) {
     return {
         uuid: getObjectUuid(group),
         name: group?.name || '',
         entryCount: group?.entries?.length || 0,
-        children: (group?.groups || []).map(toGroupTreeNode),
+        isRecycleBin: isRecycleBinGroup(db, group),
+        children: (group?.groups || []).map(child => toGroupTreeNode(child, db)),
     };
 }
 

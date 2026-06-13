@@ -82,14 +82,15 @@ describe('kdbx view helpers', () => {
     test('maps groups and entries to plain view models', () => {
         const db = makeDb();
 
-        expect(toGroupTreeNode(db.root)).toEqual({
+        expect(toGroupTreeNode(db.root, db)).toEqual({
             uuid: 'root',
             name: 'Root',
             entryCount: 1,
+            isRecycleBin: false,
             children: [
-                { uuid: 'child', name: 'Child', entryCount: 1, children: [] },
-                { uuid: 'recycle', name: 'Recycle Bin', entryCount: 1, children: [] },
-                { uuid: 'duplicate', name: 'New group', entryCount: 0, children: [] },
+                { uuid: 'child', name: 'Child', entryCount: 1, isRecycleBin: false, children: [] },
+                { uuid: 'recycle', name: 'Recycle Bin', entryCount: 1, isRecycleBin: true, children: [] },
+                { uuid: 'duplicate', name: 'New group', entryCount: 0, isRecycleBin: false, children: [] },
             ],
         });
 

@@ -42,6 +42,7 @@
                     @add-group="addGroup"
                     @rename-group="requestRenameGroup"
                     @delete-group="requestDeleteGroup"
+                    @empty-recycle-bin="requestEmptyRecycleBin"
                 />
             </aside>
 
@@ -133,6 +134,17 @@
             @cancel="cancelGroupAction"
         />
 
+        <!-- Empty Recycle Bin Confirmation -->
+        <ConfirmModal
+            :show="showEmptyRecycleBinConfirm"
+            title="Empty Recycle Bin?"
+            message="All items in the Recycle Bin will be permanently deleted. This action cannot be undone."
+            confirm-text="Empty"
+            confirm-variant="danger"
+            @confirm="confirmEmptyRecycleBin"
+            @cancel="cancelGroupAction"
+        />
+
         <!-- Database Settings Modal -->
         <DatabaseSettingsModal
             :show="showSettingsModal"
@@ -158,6 +170,7 @@ import {
     getAllEntries,
     getDefaultGroup,
     getObjectUuid,
+    getRecycleBinGroup,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
     groupNameExistsInParent,
@@ -225,6 +238,7 @@ const newGroupName = ref('');
 const groupNameError = ref('');
 
 const showDeleteGroupConfirm = ref(false);
+const showEmptyRecycleBinConfirm = ref(false);
 const groupToDeleteUuid = ref(null);
 const groupToDeleteName = computed(() => getGroupName(groupToDeleteUuid.value));
 const homeDirPath = ref('');
@@ -293,8 +307,11 @@ const rootGroup = computed(() => {
 });
 
 const groupTree = computed(() => {
+    // Depend on dbVersion directly: rootGroup keeps the same object identity
+    // across mutations, so without this the snapshot below would never rebuild.
+    store.dbVersion;
     const root = rootGroup.value;
-    return root ? [toGroupTreeNode(root)] : [];
+    return root ? [toGroupTreeNode(root, store.db)] : [];
 });
 
 const selectedGroup = computed(() => {
@@ -381,8 +398,13 @@ function addEntry() {
 }
 
 function addGroup(parentGroupUuid) {
-    const groupUuid = performAddGroup(parentGroupUuid);
-    if (groupUuid) store.selectedGroupUuid = groupUuid;
+    requestNavigation(() => {
+        const groupUuid = performAddGroup(parentGroupUuid);
+        if (groupUuid) {
+            store.selectedGroupUuid = groupUuid;
+            selectedEntryUuid.value = null;
+        }
+    });
 }
 
 function requestDelete(entryOrUuid) {
@@ -556,11 +578,43 @@ function deleteConfirmedGroup() {
     saveDatabaseChanges();
 }
 
+function requestEmptyRecycleBin() {
+    const bin = getRecycleBinGroup(store.db);
+    if (!bin || (!bin.entries?.length && !bin.groups?.length)) return;
+    showEmptyRecycleBinConfirm.value = true;
+}
+
+function confirmEmptyRecycleBin() {
+    requestNavigation(emptyConfirmedRecycleBin);
+}
+
+function emptyConfirmedRecycleBin() {
+    const bin = getRecycleBinGroup(store.db);
+    if (!store.db || !bin) return;
+
+    // If the current selection lives inside the bin, fall back to the root.
+    if (groupContainsGroupUuid(bin, store.selectedGroupUuid)) {
+        store.selectedGroupUuid = getObjectUuid(rootGroup.value);
+    }
+    if (groupContainsEntryUuid(bin, selectedEntryUuid.value)) {
+        selectedEntryUuid.value = null;
+    }
+
+    // Permanently delete everything in the bin (move to null records tombstones).
+    for (const entry of [...(bin.entries || [])]) store.db.move(entry, null);
+    for (const child of [...(bin.groups || [])]) store.db.move(child, null);
+
+    showEmptyRecycleBinConfirm.value = false;
+    store.touchDb();
+    saveDatabaseChanges();
+}
+
 function cancelGroupAction() {
     showRenameModal.value = false;
     groupToRenameUuid.value = null;
     groupNameError.value = '';
     showDeleteGroupConfirm.value = false;
+    showEmptyRecycleBinConfirm.value = false;
     groupToDeleteUuid.value = null;
 }
 

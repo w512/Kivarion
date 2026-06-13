@@ -21,9 +21,10 @@
                 :depth="depth"
                 @select="emit('select', $event)"
                 @toggle-collapse="toggleCollapse"
-                @add-group="emit('add-group', $event)"
+                @add-group="handleAddGroup"
                 @rename-group="emit('rename-group', $event)"
                 @delete-group="emit('delete-group', $event)"
+                @empty-recycle-bin="emit('empty-recycle-bin', $event)"
             />
 
             <GroupTree
@@ -34,9 +35,10 @@
                 :refresh-key="refreshKey"
                 :depth="depth + 1"
                 @select="(uuid) => emit('select', uuid)"
-                @add-group="(uuid) => emit('add-group', uuid)"
+                @add-group="handleAddGroup"
                 @rename-group="(uuid) => emit('rename-group', uuid)"
                 @delete-group="(uuid) => emit('delete-group', uuid)"
+                @empty-recycle-bin="(uuid) => emit('empty-recycle-bin', uuid)"
             />
         </div>
     </div>
@@ -59,6 +61,7 @@ const emit = defineEmits([
     'add-group',
     'rename-group',
     'delete-group',
+    'empty-recycle-bin',
 ]);
 
 const collapsedGroups = ref({});
@@ -69,6 +72,13 @@ function isCollapsed(uuid) {
 
 function toggleCollapse(uuid) {
     collapsedGroups.value[uuid] = !collapsedGroups.value[uuid];
+}
+
+function handleAddGroup(uuid) {
+    // If a subgroup is added to a collapsed parent, expand it immediately so
+    // the newly-created child is visible instead of appearing as if nothing happened.
+    collapsedGroups.value[uuid] = false;
+    emit('add-group', uuid);
 }
 </script>
 
