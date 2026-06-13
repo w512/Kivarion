@@ -1,6 +1,5 @@
 import { ref, computed, watch, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { writeFile } from '@tauri-apps/plugin-fs';
 import { save } from '@tauri-apps/plugin-dialog';
 import { isImage, getMimeType } from '../utils';
 import { useClipboard } from './useClipboard';
@@ -91,7 +90,7 @@ export function useEntryAttachments(entryRef, isMac) {
     async function exportAttachment(att) {
         try {
             const filePath = await save({ defaultPath: att.name });
-            if (filePath) await writeFile(filePath, att.data);
+            if (filePath) await invoke('export_file', { path: filePath, data: att.data });
         } catch (err) {
             console.error('Failed to export attachment:', err);
         }

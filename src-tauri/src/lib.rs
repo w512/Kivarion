@@ -1,5 +1,69 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+// --- Filesystem commands -------------------------------------------------
+//
+// All database/attachment file I/O lives in the backend so the webview never
+// holds a broad `fs` scope. The frontend can only invoke these specific
+// operations on a path the user picked through a native dialog (or the saved
+// last-database path). This keeps an XSS-compromised frontend from reading or
+// writing arbitrary files under the user's home directory.
+
+/// Read a file's raw bytes (used to load the selected `.kdbx`).
+///
+/// Returned as a raw IPC `Response` so the bytes reach the webview as an
+/// `ArrayBuffer` instead of an inflated JSON number array.
+#[tauri::command]
+fn read_database(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Check whether a path exists (used to validate the remembered last DB path).
+#[tauri::command]
+fn file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+/// Atomically save the database.
+///
+/// Writes to a sibling temp file, backs up the current file to `<path>.bak`,
+/// then renames the temp file over the original. A crash mid-write leaves the
+/// original `.kdbx` intact. `std::fs::rename` replaces an existing destination
+/// on every platform (including Windows), so the swap is atomic everywhere.
+#[tauri::command]
+fn save_database(path: String, data: Vec<u8>) -> Result<(), String> {
+    let target = std::path::Path::new(&path);
+    let tmp = target.with_extension("kdbx.tmp");
+    let backup = target.with_extension("kdbx.bak");
+
+    // 1. Write the new contents to the temp file; the original is untouched.
+    if let Err(e) = std::fs::write(&tmp, &data) {
+        return Err(e.to_string());
+    }
+
+    // 2. Back up the current good file before replacing it.
+    if target.exists() {
+        if let Err(e) = std::fs::copy(target, &backup) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+    }
+
+    // 3. Atomically replace the original with the temp file.
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+
+    Ok(())
+}
+
+/// Write bytes to a user-chosen path (used to export a decrypted attachment).
+#[tauri::command]
+fn export_file(path: String, data: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, &data).map_err(|e| e.to_string())
+}
+
 /// Strip any directory components from an attachment name so it can never
 /// escape the temp directory (path-traversal protection).
 #[cfg(target_os = "macos")]
@@ -185,8 +249,11 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
+            read_database,
+            file_exists,
+            save_database,
+            export_file,
             quick_look_attachment,
             is_biometric_available,
             save_biometric_password,

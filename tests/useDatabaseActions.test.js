@@ -2,23 +2,21 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import { reactive } from 'vue';
 
 let currentStore;
-let writeFileMock = mock(async () => {});
-let renameMock = mock(async () => {});
-let copyFileMock = mock(async () => {});
-let existsMock = mock(async () => true);
-let removeMock = mock(async () => {});
+// The backend `save_database` command now performs the atomic temp/backup/rename
+// write, so the frontend only issues a single invoke per save. We mock that
+// invoke to drive the save-queue behaviour under test.
+let saveInvokeMock = mock(async () => {});
 let consoleErrorSpy;
 
 mock.module('../src/store.js', () => ({
     useStore: () => currentStore,
 }));
 
-mock.module('@tauri-apps/plugin-fs', () => ({
-    writeFile: (...args) => writeFileMock(...args),
-    rename: (...args) => renameMock(...args),
-    copyFile: (...args) => copyFileMock(...args),
-    exists: (...args) => existsMock(...args),
-    remove: (...args) => removeMock(...args),
+mock.module('@tauri-apps/api/core', () => ({
+    invoke: (cmd, args) => {
+        if (cmd === 'save_database') return saveInvokeMock(cmd, args);
+        return Promise.resolve();
+    },
 }));
 
 const { useDatabaseActions } = await import('../src/composables/useDatabaseActions.js');
@@ -65,11 +63,7 @@ async function waitFor(assertion, attempts = 20) {
 
 beforeEach(() => {
     currentStore = null;
-    writeFileMock = mock(async () => {});
-    renameMock = mock(async () => {});
-    copyFileMock = mock(async () => {});
-    existsMock = mock(async () => true);
-    removeMock = mock(async () => {});
+    saveInvokeMock = mock(async () => {});
     consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
 });
 
@@ -87,7 +81,7 @@ describe('useDatabaseActions save queue', () => {
         let maxActiveWrites = 0;
         let writeIndex = 0;
 
-        writeFileMock = mock(async () => {
+        saveInvokeMock = mock(async () => {
             activeWrites++;
             maxActiveWrites = Math.max(maxActiveWrites, activeWrites);
             const current = writeIndex++ === 0 ? firstWrite : secondWrite;
@@ -102,7 +96,7 @@ describe('useDatabaseActions save queue', () => {
         const firstResult = actions.saveDatabaseChanges();
         await tick();
 
-        expect(writeFileMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
         expect(actions.isSaving.value).toBe(true);
 
         store.dbVersion = 2;
@@ -110,17 +104,16 @@ describe('useDatabaseActions save queue', () => {
         await tick();
 
         expect(secondResult).toBe(firstResult);
-        expect(writeFileMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
         expect(maxActiveWrites).toBe(1);
 
         firstWrite.resolve();
         await waitFor(() => {
-            expect(writeFileMock.mock.calls.length).toBe(2);
+            expect(saveInvokeMock.mock.calls.length).toBe(2);
         });
 
-        expect(writeFileMock.mock.calls.length).toBe(2);
+        expect(saveInvokeMock.mock.calls.length).toBe(2);
         expect(maxActiveWrites).toBe(1);
-        expect(writeFileMock.mock.calls[0][0]).not.toBe(writeFileMock.mock.calls[1][0]);
 
         secondWrite.resolve();
 
@@ -128,7 +121,7 @@ describe('useDatabaseActions save queue', () => {
         await expect(secondResult).resolves.toBe(true);
         expect(maxActiveWrites).toBe(1);
         expect(dbSaveMock.mock.calls.length).toBe(2);
-        expect(renameMock.mock.calls.length).toBe(2);
+        expect(saveInvokeMock.mock.calls.length).toBe(2);
         expect(actions.lastSavedDbVersion.value).toBe(2);
         expect(actions.hasUnsavedChanges.value).toBe(false);
         expect(actions.saveError.value).toBe(null);
@@ -139,7 +132,7 @@ describe('useDatabaseActions save queue', () => {
         const actions = useDatabaseActions(store);
         const firstWrite = deferred();
 
-        writeFileMock = mock(async () => {
+        saveInvokeMock = mock(async () => {
             await firstWrite.promise;
         });
 
@@ -150,14 +143,13 @@ describe('useDatabaseActions save queue', () => {
         await tick();
 
         expect(secondResult).toBe(firstResult);
-        expect(writeFileMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
 
         firstWrite.resolve();
 
         await expect(firstResult).resolves.toBe(true);
-        expect(writeFileMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
         expect(dbSaveMock.mock.calls.length).toBe(1);
-        expect(renameMock.mock.calls.length).toBe(1);
         expect(actions.lastSavedDbVersion.value).toBe(1);
         expect(actions.hasUnsavedChanges.value).toBe(false);
     });
@@ -169,33 +161,32 @@ describe('useDatabaseActions save queue', () => {
         actions.saveError.value = 'previous disk error';
 
         await expect(actions.saveDatabaseChanges()).resolves.toBe(true);
-        expect(writeFileMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
         expect(actions.saveError.value).toBe(null);
         expect(actions.hasUnsavedChanges.value).toBe(false);
         expect(actions.lastSavedDbVersion.value).toBe(0);
     });
 
-    test('keeps database dirty after a failed fs write and allows retry', async () => {
+    test('keeps database dirty after a failed save and allows retry', async () => {
         const { store } = makeStore();
         const actions = useDatabaseActions(store);
 
-        writeFileMock = mock(async () => {
+        saveInvokeMock = mock(async () => {
             throw new Error('disk full');
         });
 
         store.dbVersion = 1;
 
         await expect(actions.saveDatabaseChanges()).resolves.toBe(false);
-        expect(writeFileMock.mock.calls.length).toBe(1);
-        expect(removeMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
         expect(actions.saveError.value).toBe('disk full');
         expect(actions.hasUnsavedChanges.value).toBe(true);
         expect(actions.lastSavedDbVersion.value).toBe(0);
 
-        writeFileMock = mock(async () => {});
+        saveInvokeMock = mock(async () => {});
 
         await expect(actions.saveDatabaseChanges()).resolves.toBe(true);
-        expect(writeFileMock.mock.calls.length).toBe(1);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
         expect(actions.saveError.value).toBe(null);
         expect(actions.hasUnsavedChanges.value).toBe(false);
         expect(actions.lastSavedDbVersion.value).toBe(1);

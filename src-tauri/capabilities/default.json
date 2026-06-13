@@ -8,20 +8,7 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "fs:default",
-    "fs:allow-read-file",
-    "fs:allow-write-file",
-    "fs:allow-rename",
-    "fs:allow-copy-file",
-    "fs:allow-exists",
-    "fs:allow-remove",
     "dialog:default",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        "$HOME/**"
-      ]
-    },
     {
       "identifier": "http:default",
       "allow": [{ "url": "https://icon.horse/*" }]

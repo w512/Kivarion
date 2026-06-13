@@ -1,7 +1,6 @@
 import { ref, nextTick } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 import { open } from '@tauri-apps/plugin-dialog';
-import { readFile, exists } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
 import { toExactArrayBuffer } from '../utils.js';
@@ -32,7 +31,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
         const lastPath = localStorage.getItem('kivarion-last-db-path');
         if (lastPath) {
             try {
-                if (await exists(lastPath)) {
+                if (await invoke('file_exists', { path: lastPath })) {
                     store.filePath = lastPath;
                     fileName.value = lastPath.split(/[\\/]/).pop();
                     step.value = 2;
@@ -117,7 +116,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
         errorMessage.value = '';
 
         try {
-            const fileContents = await readFile(store.filePath);
+            const fileContents = await invoke('read_database', { path: store.filePath });
             const arrayBuffer = toExactArrayBuffer(fileContents);
 
             const credentials = new kdbxweb.Credentials(

@@ -1,13 +1,14 @@
-import { writeFile, rename, copyFile, exists, remove } from '@tauri-apps/plugin-fs';
+import { invoke } from '@tauri-apps/api/core';
 import { useStore } from './store.js';
 
 /**
  * Save the database to disk.
  *
- * The write is atomic: the new contents are first written to a temporary file,
- * the current good file is backed up (`<file>.bak`), and only then is the temp
- * file renamed over the original. A crash or I/O error at any point leaves the
- * original `.kdbx` intact, so we never end up with a half-written database.
+ * The actual write happens in the Rust backend (`save_database` command), which
+ * performs an atomic temp-write → `.bak` backup → rename. The webview never has
+ * direct filesystem access; it only hands the serialized bytes and target path
+ * to the backend. A crash or I/O error mid-write leaves the original `.kdbx`
+ * intact.
  *
  * Credentials are taken from the db itself (`db.save()` uses `db.credentials`),
  * so they are not passed separately.
@@ -33,39 +34,12 @@ export async function saveDatabase(db, fileName) {
         return;
     }
 
-    const targetPath = store.filePath;
-    const tmpPath = `${targetPath}.${uniqueSaveToken()}.tmp`;
-    const backupPath = `${targetPath}.bak`;
-
-    try {
-        // 1. Write the new database to a temp file; the original is untouched.
-        await writeFile(tmpPath, bytes);
-
-        // 2. Back up the current good file before replacing it.
-        if (await exists(targetPath)) {
-            await copyFile(targetPath, backupPath);
-        }
-
-        // 3. Atomically replace the original with the temp file.
-        await rename(tmpPath, targetPath);
-    } catch (error) {
-        // Best-effort cleanup so we don't leave a stray temp file behind.
-        try {
-            if (await exists(tmpPath)) await remove(tmpPath);
-        } catch {
-            /* ignore cleanup failures */
-        }
-        throw error;
-    }
+    await invoke('save_database', { path: store.filePath, data: bytes });
 }
 
 /**
  * Browser fallback: trigger a download of the serialized database.
  */
-function uniqueSaveToken() {
-    return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
 function downloadFile(bytes, fileName) {
     const blob = new Blob([bytes], { type: 'application/octet-stream' });
     const url = URL.createObjectURL(blob);
