@@ -48,6 +48,63 @@ fn backup_path(target: &std::path::Path, index: u32) -> std::path::PathBuf {
     }
 }
 
+/// Lock file used to serialize writers across Kivarion processes.
+fn lock_path(target: &std::path::Path) -> std::path::PathBuf {
+    with_suffix(target, ".lock")
+}
+
+struct SaveLockGuard {
+    path: std::path::PathBuf,
+    file: Option<std::fs::File>,
+}
+
+impl SaveLockGuard {
+    fn acquire(target: &std::path::Path) -> Result<Self, String> {
+        use std::io::Write;
+
+        let path = lock_path(target);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    format!(
+                        "SAVE_LOCKED: another Kivarion process is already saving this database ({})",
+                        path.to_string_lossy()
+                    )
+                } else {
+                    e.to_string()
+                }
+            })?;
+
+        let _ = writeln!(
+            file,
+            "pid={} created_ms={}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        );
+        let _ = file.sync_all();
+
+        Ok(Self {
+            path,
+            file: Some(file),
+        })
+    }
+}
+
+impl Drop for SaveLockGuard {
+    fn drop(&mut self) {
+        // Close the handle before deleting the lock file; Windows refuses to
+        // remove an open file even if this process owns the handle.
+        let _ = self.file.take();
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// File modification time in milliseconds since the Unix epoch, if available.
 fn modified_ms(path: &std::path::Path) -> Option<f64> {
     let modified = std::fs::metadata(path).ok()?.modified().ok()?;
@@ -84,11 +141,13 @@ fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
 
 /// Atomically and durably save the database.
 ///
-/// Writes to a sibling temp file (fsync'd), optionally rotates `.bak` backups,
-/// then renames the temp file over the original and fsyncs the directory. A
-/// crash mid-write leaves the original `.kdbx` intact; `std::fs::rename`
-/// replaces an existing destination on every platform (including Windows via
-/// `MoveFileEx`), so the swap is atomic everywhere.
+/// First acquires a sibling lock file with atomic `create_new`, serializing all
+/// Kivarion writers for this target across processes. Then writes to a sibling
+/// temp file (fsync'd), optionally rotates `.bak` backups, renames the temp file
+/// over the original and fsyncs the directory. A crash mid-write leaves the
+/// original `.kdbx` intact; `std::fs::rename` replaces an existing destination
+/// on every platform (including Windows via `MoveFileEx`), so the swap is
+/// atomic everywhere.
 ///
 /// `expected_mtime` (ms since epoch) implements optimistic concurrency: when it
 /// is `Some` and the target's current mtime differs, the save is refused with an
@@ -103,9 +162,12 @@ fn save_database(
     backup_depth: Option<u32>,
 ) -> Result<f64, String> {
     let target = std::path::Path::new(&path);
+    let _lock = SaveLockGuard::acquire(target)?;
     let tmp = with_suffix(target, ".tmp");
 
-    // Optimistic concurrency: bail out if the file changed under us.
+    // Optimistic concurrency: bail out if the file changed under us. This check
+    // happens after the lock is acquired, so no other Kivarion writer can pass
+    // the same check and race us to the rename.
     if let Some(expected) = expected_mtime {
         if let Some(current) = modified_ms(target) {
             if current != expected {
@@ -169,7 +231,11 @@ fn list_backups(path: String) -> Vec<BackupInfo> {
         let p = backup_path(target, index);
         let Ok(meta) = std::fs::metadata(&p) else {
             // Slots are contiguous from 0; the first gap means we're done.
-            if index == 0 { continue; } else { break; }
+            if index == 0 {
+                continue;
+            } else {
+                break;
+            }
         };
         out.push(BackupInfo {
             path: p.to_string_lossy().into_owned(),
@@ -177,7 +243,11 @@ fn list_backups(path: String) -> Vec<BackupInfo> {
             size: meta.len(),
         });
     }
-    out.sort_by(|a, b| b.mtime.partial_cmp(&a.mtime).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        b.mtime
+            .partial_cmp(&a.mtime)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     out
 }
 
@@ -242,13 +312,16 @@ async fn quick_look_attachment(file_name: String, data: Vec<u8>) -> Result<(), S
 }
 
 #[cfg(target_os = "macos")]
-use security_framework::passwords::{set_generic_password_options, PasswordOptions, generic_password, delete_generic_password_options};
-#[cfg(target_os = "macos")]
-use objc2_local_authentication::{LAContext, LAPolicy};
+use block2::RcBlock;
 #[cfg(target_os = "macos")]
 use objc2_foundation::NSString;
 #[cfg(target_os = "macos")]
-use block2::RcBlock;
+use objc2_local_authentication::{LAContext, LAPolicy};
+#[cfg(target_os = "macos")]
+use security_framework::passwords::{
+    delete_generic_password_options, generic_password, set_generic_password_options,
+    PasswordOptions,
+};
 
 #[tauri::command]
 fn is_biometric_available() -> bool {
@@ -256,7 +329,9 @@ fn is_biometric_available() -> bool {
     {
         unsafe {
             let context = LAContext::new();
-            context.canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics).is_ok()
+            context
+                .canEvaluatePolicy_error(LAPolicy::DeviceOwnerAuthenticationWithBiometrics)
+                .is_ok()
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -278,32 +353,35 @@ async fn verify_biometric(reason: &str) -> Result<(), String> {
         let context = LAContext::new();
         let reason_ns = NSString::from_str(reason);
 
-        let reply = RcBlock::new(move |success: objc2::runtime::Bool, error: *mut objc2_foundation::NSError| {
-            if success.as_bool() {
-                let _ = tx.send(Ok(()));
-            } else {
-                let err_msg = if !error.is_null() {
-                    format!("Auth failed: {:?}", (*error).localizedDescription())
+        let reply = RcBlock::new(
+            move |success: objc2::runtime::Bool, error: *mut objc2_foundation::NSError| {
+                if success.as_bool() {
+                    let _ = tx.send(Ok(()));
                 } else {
-                    "Auth cancelled or failed".to_string()
-                };
-                let _ = tx.send(Err(err_msg));
-            }
-        });
+                    let err_msg = if !error.is_null() {
+                        format!("Auth failed: {:?}", (*error).localizedDescription())
+                    } else {
+                        "Auth cancelled or failed".to_string()
+                    };
+                    let _ = tx.send(Err(err_msg));
+                }
+            },
+        );
 
         // `evaluatePolicy` returns immediately and invokes `reply` later on a
         // system queue once the user responds to the Touch ID prompt.
         context.evaluatePolicy_localizedReason_reply(
             LAPolicy::DeviceOwnerAuthenticationWithBiometrics,
             &reason_ns,
-            &reply
+            &reply,
         );
     }
 
     // Park the wait on the blocking pool so we never block an async executor
     // thread while the (possibly long) Touch ID prompt is on screen.
     tauri::async_runtime::spawn_blocking(move || {
-        rx.recv().unwrap_or_else(|_| Err("Internal error".to_string()))
+        rx.recv()
+            .unwrap_or_else(|_| Err("Internal error".to_string()))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -367,7 +445,8 @@ async fn load_biometric_password(id: String) -> Result<String, String> {
 fn delete_biometric_password(id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        delete_generic_password_options(PasswordOptions::new_generic_password("Kivarion", id)).map_err(|e| e.to_string())
+        delete_generic_password_options(PasswordOptions::new_generic_password("Kivarion", id))
+            .map_err(|e| e.to_string())
     }
     #[cfg(not(target_os = "macos"))]
     {
