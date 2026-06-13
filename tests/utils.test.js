@@ -8,6 +8,7 @@ import {
     isViewableInBrowser,
     generatePassword,
     isProtectedValue,
+    isUnsafeAttachmentPreview,
     isStandardFieldName,
     normalizeHttpUrl,
     STANDARD_FIELDS,
@@ -136,10 +137,11 @@ describe('isImage', () => {
     test('recognizes image extensions, case-insensitive', () => {
         expect(isImage('photo.png')).toBe(true);
         expect(isImage('PIC.JPEG')).toBe(true);
-        expect(isImage('icon.svg')).toBe(true);
+        expect(isImage('icon.webp')).toBe(true);
     });
     test('rejects non-images and extensionless names', () => {
         expect(isImage('doc.pdf')).toBe(false);
+        expect(isImage('icon.svg')).toBe(false);
         expect(isImage('archive.zip')).toBe(false);
         expect(isImage('README')).toBe(false);
     });
@@ -169,6 +171,22 @@ describe('isViewableInBrowser', () => {
     test('false for unknown / binary types', () => {
         expect(isViewableInBrowser('a.exe')).toBe(false);
         expect(isViewableInBrowser('a.zip')).toBe(false);
+    });
+    test('false for active document/script formats', () => {
+        expect(isViewableInBrowser('a.html')).toBe(false);
+        expect(isViewableInBrowser('a.svg')).toBe(false);
+        expect(isViewableInBrowser('a.js')).toBe(false);
+        expect(isViewableInBrowser('a.css')).toBe(false);
+    });
+});
+
+describe('isUnsafeAttachmentPreview', () => {
+    test('recognizes active document/script formats', () => {
+        expect(isUnsafeAttachmentPreview('a.html')).toBe(true);
+        expect(isUnsafeAttachmentPreview('a.svg')).toBe(true);
+        expect(isUnsafeAttachmentPreview('a.js')).toBe(true);
+        expect(isUnsafeAttachmentPreview('a.css')).toBe(true);
+        expect(isUnsafeAttachmentPreview('a.png')).toBe(false);
     });
 });
 

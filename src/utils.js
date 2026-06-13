@@ -67,23 +67,26 @@ export function normalizeHttpUrl(value) {
 
 // Single source of truth for file-type handling, keyed by extension.
 // `image` marks files shown as inline thumbnails; `viewable` marks files the
-// browser can render in the preview modal. Images are always viewable.
+// browser can render in the preview modal. Active document/script formats are
+// intentionally not viewable: attachments are untrusted content.
 const FILE_TYPES = {
-    // Images
+    // Safe raster images
     png: { mime: 'image/png', image: true },
     jpg: { mime: 'image/jpeg', image: true },
     jpeg: { mime: 'image/jpeg', image: true },
     gif: { mime: 'image/gif', image: true },
-    svg: { mime: 'image/svg+xml', image: true },
     webp: { mime: 'image/webp', image: true },
-    // Documents & text
+    // Documents & text that can be rendered without executing attachment code
     pdf: { mime: 'application/pdf', viewable: true },
     txt: { mime: 'text/plain', viewable: true },
     md: { mime: 'text/markdown', viewable: true },
-    html: { mime: 'text/html', viewable: true },
-    js: { mime: 'text/javascript', viewable: true },
-    css: { mime: 'text/css', viewable: true },
     json: { mime: 'application/json', viewable: true },
+    // Active/untrusted formats: know their MIME, but do not preview inline
+    html: { mime: 'text/html', unsafePreview: true },
+    htm: { mime: 'text/html', unsafePreview: true },
+    svg: { mime: 'image/svg+xml', unsafePreview: true },
+    js: { mime: 'text/javascript', unsafePreview: true },
+    css: { mime: 'text/css', unsafePreview: true },
     // Media
     mp4: { mime: 'video/mp4', viewable: true },
     mp3: { mime: 'audio/mpeg', viewable: true },
@@ -105,7 +108,11 @@ export function getMimeType(name) {
 
 export function isViewableInBrowser(name) {
     const info = fileInfo(name);
-    return !!info && (info.viewable || info.image);
+    return !!info && !info.unsafePreview && (info.viewable || info.image);
+}
+
+export function isUnsafeAttachmentPreview(name) {
+    return !!fileInfo(name)?.unsafePreview;
 }
 
 export function generatePassword(options = {}) {
