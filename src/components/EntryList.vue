@@ -19,10 +19,10 @@
         <div v-else class="entries-container">
             <EntryItem
                 v-for="entry in sortedEntries"
-                :key="entry.uuid?.id"
+                :key="entry.uuid"
                 :entry="entry"
                 :selected="isSelected(entry)"
-                @select="emit('select', entry)"
+                @select="emit('select', entry.uuid)"
             />
         </div>
     </div>
@@ -30,7 +30,6 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
-import { getField } from '../utils';
 import EntryItem from './entry-list/EntryItem.vue';
 import EntrySort from './entry-list/EntrySort.vue';
 import EntryListEmpty from './entry-list/EntryListEmpty.vue';
@@ -71,14 +70,14 @@ const sortedEntries = computed(() => {
     return list.sort((a, b) => {
         let valA, valB;
         if (sortBy.value === 'title') {
-            valA = (getField(a, 'Title') || '').toLowerCase();
-            valB = (getField(b, 'Title') || '').toLowerCase();
+            valA = (a.title || '').toLowerCase();
+            valB = (b.title || '').toLowerCase();
         } else if (sortBy.value === 'modified') {
-            valA = a.times?.lastModTime || new Date(0);
-            valB = b.times?.lastModTime || new Date(0);
+            valA = a.modifiedAt || new Date(0);
+            valB = b.modifiedAt || new Date(0);
         } else {
-            valA = a.times?.creationTime || new Date(0);
-            valB = b.times?.creationTime || new Date(0);
+            valA = a.createdAt || new Date(0);
+            valB = b.createdAt || new Date(0);
         }
         if (valA < valB) return sortDesc.value ? 1 : -1;
         if (valA > valB) return sortDesc.value ? -1 : 1;
@@ -86,7 +85,7 @@ const sortedEntries = computed(() => {
     });
 });
 
-const isSelected = (entry) => entry.uuid?.id === props.selectedEntryUuid;
+const isSelected = (entry) => entry.uuid === props.selectedEntryUuid;
 </script>
 
 <style scoped>

@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue';
 import { saveDatabase } from '../dbHelper.js';
+import { ALL_ENTRIES_UUID, findGroupByUuid, getDefaultGroup, getObjectUuid } from '../kdbxView.js';
 
 export function useDatabaseActions(store) {
     // Surfaced to the UI so a failed save is never silent.
@@ -76,29 +77,36 @@ export function useDatabaseActions(store) {
         return ok && !hasUnsavedChanges.value;
     }
 
-    function addEntry(selectedGroup, selectedEntryRef) {
-        if (!store.db) return;
+    function addEntry(targetGroupUuid) {
+        if (!store.db) return null;
 
-        let targetGroup = selectedGroup.value;
-        if (targetGroup?.uuid?.id === 'all') {
-            targetGroup = store.db.getDefaultGroup();
-        }
+        const targetGroup = targetGroupUuid === ALL_ENTRIES_UUID
+            ? getDefaultGroup(store.db)
+            : findGroupByUuid(store.db, targetGroupUuid);
 
-        if (!targetGroup) return;
+        if (!targetGroup) return null;
 
         const entry = store.db.createEntry(targetGroup);
         entry.fields.set('Title', 'New entry');
         entry.times.update();
         store.touchDb();
-        selectedEntryRef.value = entry;
         saveDatabaseChanges();
+        return getObjectUuid(entry);
     }
 
-    function addGroup(parentGroup) {
-        if (!store.db || !parentGroup) return;
-        store.db.createGroup(parentGroup, 'New group');
+    function addGroup(parentGroupUuid) {
+        if (!store.db || !parentGroupUuid) return null;
+
+        const parentGroup = parentGroupUuid === ALL_ENTRIES_UUID
+            ? getDefaultGroup(store.db)
+            : findGroupByUuid(store.db, parentGroupUuid);
+
+        if (!parentGroup) return null;
+
+        const group = store.db.createGroup(parentGroup, 'New group');
         store.touchDb();
         saveDatabaseChanges();
+        return getObjectUuid(group);
     }
 
     return {

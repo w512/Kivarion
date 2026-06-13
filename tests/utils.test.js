@@ -7,6 +7,9 @@ import {
     getMimeType,
     isViewableInBrowser,
     generatePassword,
+    isProtectedValue,
+    STANDARD_FIELDS,
+    toExactArrayBuffer,
 } from '../src/utils.js';
 
 // `generatePassword` reads `window.crypto`. Bun exposes Web Crypto on globalThis
@@ -43,6 +46,45 @@ describe('formatDate', () => {
         const out = formatDate(new Date('2024-01-15T10:30:00Z'));
         expect(typeof out).toBe('string');
         expect(out.length).toBeGreaterThan(0);
+    });
+});
+
+describe('field helpers', () => {
+    test('exports the standard KeePass fields', () => {
+        expect(STANDARD_FIELDS).toEqual(['Title', 'UserName', 'Password', 'URL', 'Notes']);
+    });
+
+    test('detects protected values', () => {
+        expect(isProtectedValue(protectedValue('s3cret'))).toBe(true);
+        expect(isProtectedValue('plain')).toBe(false);
+        expect(isProtectedValue(null)).toBe(false);
+    });
+});
+
+describe('toExactArrayBuffer', () => {
+    test('returns only the visible bytes of a typed array with byteOffset', () => {
+        const backing = new Uint8Array([9, 1, 2, 3, 9]);
+        const view = backing.subarray(1, 4);
+        const out = toExactArrayBuffer(view);
+
+        expect(out.byteLength).toBe(3);
+        expect([...new Uint8Array(out)]).toEqual([1, 2, 3]);
+    });
+
+    test('copies a full typed array', () => {
+        const bytes = new Uint8Array([1, 2, 3]);
+        const out = toExactArrayBuffer(bytes);
+
+        expect(out).not.toBe(bytes.buffer);
+        expect([...new Uint8Array(out)]).toEqual([1, 2, 3]);
+    });
+
+    test('copies an ArrayBuffer', () => {
+        const buffer = new Uint8Array([4, 5, 6]).buffer;
+        const out = toExactArrayBuffer(buffer);
+
+        expect(out).not.toBe(buffer);
+        expect([...new Uint8Array(out)]).toEqual([4, 5, 6]);
     });
 });
 

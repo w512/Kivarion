@@ -34,7 +34,7 @@
             <aside class="sidebar">
                 <div class="sidebar-title">Groups</div>
                 <GroupTree
-                    :groups="allGroups"
+                    :groups="groupTree"
                     :selected-group-uuid="store.selectedGroupUuid"
                     :all-entries-count="totalEntriesCount"
                     :refresh-key="store.dbVersion"
@@ -52,7 +52,7 @@
             <main class="entries-column">
                 <EntryList
                     :entries="filteredEntries"
-                    :selected-entry-uuid="selectedEntry?.uuid?.id"
+                    :selected-entry-uuid="selectedEntryUuid"
                     @select="selectEntry"
                     @add="addEntry"
                     @delete="requestDelete"
@@ -67,8 +67,8 @@
                 <EntryDetail
                     :entry="selectedEntry"
                     @updated="onEntryUpdated"
-                    @delete="requestDelete"
-                    @close="selectedEntry = null"
+                    @delete="requestDelete(selectedEntry)"
+                    @close="selectedEntryUuid = null"
                 />
             </aside>
         </div>
@@ -110,7 +110,7 @@
         <ConfirmModal
             :show="showDeleteGroupConfirm"
             title="Delete group?"
-            :message="`“${groupToDelete?.name}” and all its entries will be deleted. This action cannot be undone.`"
+            :message="`“${groupToDeleteName}” and all its entries will be deleted. This action cannot be undone.`"
             confirm-text="Delete"
             confirm-variant="danger"
             @confirm="confirmDeleteGroup"
@@ -134,7 +134,19 @@ import * as kdbxweb from 'kdbxweb';
 import { useStore } from '../store.js';
 import { homeDir } from '@tauri-apps/api/path';
 import { invoke } from '@tauri-apps/api/core';
-import { getField } from '../utils';
+import { getField, isProtectedValue, STANDARD_FIELDS } from '../utils';
+import {
+    ALL_ENTRIES_UUID,
+    findEntryByUuid,
+    findGroupByUuid,
+    getAllEntries,
+    getDefaultGroup,
+    getObjectUuid,
+    groupContainsEntryUuid,
+    groupContainsGroupUuid,
+    toEntryListItem,
+    toGroupTreeNode,
+} from '../kdbxView.js';
 
 // Components
 import GroupTree from '../components/GroupTree.vue';
@@ -158,10 +170,9 @@ onMounted(() => {
         return;
     }
     // Select root group by default
-    const root = store.db.getDefaultGroup();
+    const root = getDefaultGroup(store.db);
     if (root) {
-        selectedGroup.value = root;
-        store.selectedGroupUuid = root.uuid?.id;
+        store.selectedGroupUuid = getObjectUuid(root);
     }
 
     // Get home directory for path display
@@ -183,19 +194,19 @@ onUnmounted(() => {
     window.removeEventListener('mousedown', onActivity);
 });
 
-const selectedGroup = ref(null);
-const selectedEntry = ref(null);
+const selectedEntryUuid = ref(null);
 const searchQuery = ref('');
 const showDeleteConfirm = ref(false);
-const entryToDelete = ref(null);
+const entryToDeleteUuid = ref(null);
 
 // Group management state
 const showRenameModal = ref(false);
-const groupToRename = ref(null);
+const groupToRenameUuid = ref(null);
 const newGroupName = ref('');
 
 const showDeleteGroupConfirm = ref(false);
-const groupToDelete = ref(null);
+const groupToDeleteUuid = ref(null);
+const groupToDeleteName = computed(() => getGroupName(groupToDeleteUuid.value));
 const homeDirPath = ref('');
 
 const showSettingsModal = ref(false);
@@ -251,37 +262,55 @@ const displayPath = computed(() => {
     return fp;
 });
 
-const allGroups = computed(() => {
+const rootGroup = computed(() => {
     store.dbVersion;
-    if (!store.db) return [];
-    const root = store.db.getDefaultGroup();
-    return root ? [root] : [];
+    return getDefaultGroup(store.db);
+});
+
+const groupTree = computed(() => {
+    const root = rootGroup.value;
+    return root ? [toGroupTreeNode(root)] : [];
+});
+
+const selectedGroup = computed(() => {
+    store.dbVersion;
+    if (!store.db || !store.selectedGroupUuid) return null;
+    if (store.selectedGroupUuid === ALL_ENTRIES_UUID) return { uuid: ALL_ENTRIES_UUID };
+    return findGroupByUuid(store.db, store.selectedGroupUuid);
+});
+
+const selectedEntry = computed(() => {
+    store.dbVersion;
+    return findEntryByUuid(store.db, selectedEntryUuid.value);
+});
+
+const entryToDelete = computed(() => {
+    store.dbVersion;
+    return findEntryByUuid(store.db, entryToDeleteUuid.value);
 });
 
 const totalEntriesCount = computed(() => {
     store.dbVersion;
     if (!store.db) return 0;
-    return getAllEntries(store.db.getDefaultGroup()).length;
+    return getAllEntries(store.db).length;
 });
 
-const currentEntries = computed(() => {
+const currentRawEntries = computed(() => {
     store.dbVersion;
-    if (!selectedGroup.value) return [];
+    if (!store.db || !selectedGroup.value) return [];
 
-    if (selectedGroup.value.uuid?.id === 'all') {
-        return getAllEntries(store.db.getDefaultGroup());
+    if (store.selectedGroupUuid === ALL_ENTRIES_UUID) {
+        return getAllEntries(store.db);
     }
 
     return selectedGroup.value.entries || [];
 });
 
-const STANDARD_FIELDS = ['Title', 'UserName', 'Password', 'URL', 'Notes'];
-
 function entryMatches(entry, q) {
     if (!entry?.fields) return false;
     for (const [key, val] of entry.fields) {
         // Skip protected fields entirely (Password and any protected custom field).
-        // Protected values are ProtectedValue objects; plain fields are strings.
+        if (isProtectedValue(val)) continue;
         if (typeof val !== 'string') continue;
         // For custom fields the field name itself is user content — match it too.
         if (!STANDARD_FIELDS.includes(key) && key.toLowerCase().includes(q)) return true;
@@ -293,67 +322,56 @@ function entryMatches(entry, q) {
 const filteredEntries = computed(() => {
     store.dbVersion;
     const q = searchQuery.value.trim().toLowerCase();
-    if (!q) return currentEntries.value;
-    // While searching, look across the whole database, not just the selected group.
-    const scope = store.db ? getAllEntries(store.db.getDefaultGroup()) : [];
-    return scope.filter((entry) => entryMatches(entry, q));
+    const rawEntries = q
+        ? getAllEntries(store.db).filter((entry) => entryMatches(entry, q))
+        : currentRawEntries.value;
+
+    return rawEntries.map(entry => toEntryListItem(entry, store.db));
 });
 
-function getAllEntries(group) {
-    let entries = [];
-    if (!group) return entries;
-
-    if (store.db.meta.recycleBinUuid && group.uuid.equals(store.db.meta.recycleBinUuid)) {
-        return entries;
-    }
-
-    if (group.entries) entries.push(...group.entries);
-    if (group.groups) {
-        for (const subgroup of group.groups) {
-            entries.push(...getAllEntries(subgroup));
-        }
-    }
-    return entries;
-}
-
-function selectGroup(group) {
-    selectedGroup.value = group;
-    store.selectedGroupUuid = group.uuid?.id === 'all' ? 'all' : group.uuid?.id;
-    selectedEntry.value = null;
+function selectGroup(groupUuid) {
+    store.selectedGroupUuid = groupUuid;
+    selectedEntryUuid.value = null;
     searchQuery.value = '';
 }
 
-function selectEntry(entry) {
-    selectedEntry.value = entry;
+function selectEntry(entryUuid) {
+    selectedEntryUuid.value = entryUuid;
 }
 
 function addEntry() {
-    performAddEntry(selectedGroup, selectedEntry);
+    const entryUuid = performAddEntry(store.selectedGroupUuid);
+    if (entryUuid) selectedEntryUuid.value = entryUuid;
 }
 
-function addGroup(parentGroup) {
-    performAddGroup(parentGroup);
+function addGroup(parentGroupUuid) {
+    const groupUuid = performAddGroup(parentGroupUuid);
+    if (groupUuid) store.selectedGroupUuid = groupUuid;
 }
 
-function requestDelete(entry) {
-    entryToDelete.value = entry;
+function requestDelete(entryOrUuid) {
+    const uuid = typeof entryOrUuid === 'string' ? entryOrUuid : getObjectUuid(entryOrUuid);
+    if (!uuid) return;
+    entryToDeleteUuid.value = uuid;
     showDeleteConfirm.value = true;
 }
 
 function confirmDelete() {
-    if (!store.db || !entryToDelete.value) return;
-    store.db.remove(entryToDelete.value);
-    if (selectedEntry.value?.uuid?.id === entryToDelete.value.uuid?.id) {
-        selectedEntry.value = null;
+    const entry = entryToDelete.value;
+    if (!store.db || !entry) return;
+
+    store.db.remove(entry);
+    if (selectedEntryUuid.value === entryToDeleteUuid.value) {
+        selectedEntryUuid.value = null;
     }
-    entryToDelete.value = null;
+    entryToDeleteUuid.value = null;
     showDeleteConfirm.value = false;
     store.touchDb();
     saveDatabaseChanges();
 }
 
 function cancelDelete() {
-    entryToDelete.value = null;
+    entryToDeleteUuid.value = null;
     showDeleteConfirm.value = false;
 }
 
@@ -376,6 +394,7 @@ function forceCloseDatabase() {
     store.db = null;
     store.fileName = '';
     store.selectedGroupUuid = null;
+    selectedEntryUuid.value = null;
     router.push({ name: 'home' });
 }
 
@@ -396,42 +415,49 @@ function getEntryTitle(entry) {
 }
 
 // Group Actions
-function requestRenameGroup(group) {
-    groupToRename.value = group;
+function requestRenameGroup(groupUuid) {
+    const group = findGroupByUuid(store.db, groupUuid);
+    if (!group) return;
+
+    groupToRenameUuid.value = groupUuid;
     newGroupName.value = group.name || '';
     showRenameModal.value = true;
 }
 
 function confirmRenameGroup() {
-    if (!groupToRename.value) return;
-    groupToRename.value.name = newGroupName.value;
-    if (groupToRename.value.times) groupToRename.value.times.update();
+    const group = findGroupByUuid(store.db, groupToRenameUuid.value);
+    if (!group) return;
+
+    group.name = newGroupName.value;
+    if (group.times) group.times.update();
     store.touchDb();
-    groupToRename.value = null;
+    groupToRenameUuid.value = null;
     showRenameModal.value = false;
     saveDatabaseChanges();
 }
 
-function requestDeleteGroup(group) {
-    if (group === store.db.getDefaultGroup()) return;
-    groupToDelete.value = group;
+function requestDeleteGroup(groupUuid) {
+    const root = rootGroup.value;
+    if (!store.db || !groupUuid || groupUuid === getObjectUuid(root)) return;
+
+    groupToDeleteUuid.value = groupUuid;
     showDeleteGroupConfirm.value = true;
 }
 
 function confirmDeleteGroup() {
-    if (!store.db || !groupToDelete.value) return;
+    const group = findGroupByUuid(store.db, groupToDeleteUuid.value);
+    if (!store.db || !group) return;
 
-    if (selectedGroup.value?.uuid?.id === groupToDelete.value.uuid?.id) {
-        const root = store.db.getDefaultGroup();
-        if (root) selectGroup(root);
-        else {
-            selectedGroup.value = null;
-            store.selectedGroupUuid = null;
-        }
+    if (groupContainsGroupUuid(group, store.selectedGroupUuid)) {
+        const root = rootGroup.value;
+        store.selectedGroupUuid = getObjectUuid(root);
+    }
+    if (groupContainsEntryUuid(group, selectedEntryUuid.value)) {
+        selectedEntryUuid.value = null;
     }
 
-    store.db.remove(groupToDelete.value);
-    groupToDelete.value = null;
+    store.db.remove(group);
+    groupToDeleteUuid.value = null;
     showDeleteGroupConfirm.value = false;
     store.touchDb();
     saveDatabaseChanges();
@@ -439,9 +465,15 @@ function confirmDeleteGroup() {
 
 function cancelGroupAction() {
     showRenameModal.value = false;
-    groupToRename.value = null;
+    groupToRenameUuid.value = null;
     showDeleteGroupConfirm.value = false;
-    groupToDelete.value = null;
+    groupToDeleteUuid.value = null;
+}
+
+function getGroupName(groupUuid) {
+    if (!groupUuid) return '';
+    if (groupUuid === ALL_ENTRIES_UUID) return 'All Entries';
+    return findGroupByUuid(store.db, groupUuid)?.name || '';
 }
 
 async function confirmDatabaseSettings({ name, password }) {
@@ -452,9 +484,9 @@ async function confirmDatabaseSettings({ name, password }) {
         store.db.credentials.setPassword(kdbxweb.ProtectedValue.fromString(password));
     }
 
+    store.touchDb();
     showSettingsModal.value = false;
     const saved = await saveDatabaseChanges();
-    store.touchDb();
 
     // If the master password changed, the stored biometric secret is now stale.
     // Update it (or drop it) so Touch ID doesn't keep unlocking with the old password.

@@ -3,7 +3,7 @@
         class="group-node"
         :class="{ active: isSelected, nested: depth > 0 }"
         :style="{ paddingLeft: depth * 16 + 10 + 'px' }"
-        @click="$emit('select', group)"
+        @click="$emit('select', group.uuid)"
         @contextmenu.prevent="onRightClick"
     >
         <svg
@@ -102,11 +102,11 @@ const emit = defineEmits([
     'delete-group',
 ]);
 
-const isAllEntries = computed(() => props.group.uuid?.id === 'all');
-const isSelected = computed(() => props.group.uuid?.id === props.selectedGroupUuid);
+const isAllEntries = computed(() => props.group.uuid === 'all');
+const isSelected = computed(() => props.group.uuid === props.selectedGroupUuid);
 const hasChildren = computed(() => {
     props.refreshKey;
-    return props.group.groups?.length > 0;
+    return props.group.children?.length > 0;
 });
 const groupName = computed(() => {
     props.refreshKey;
@@ -114,7 +114,7 @@ const groupName = computed(() => {
 });
 const entryCount = computed(() => {
     props.refreshKey;
-    return isAllEntries.value ? props.allEntriesCount : (props.group.entries?.length || 0);
+    return isAllEntries.value ? props.allEntriesCount : (props.group.entryCount || 0);
 });
 
 const contextMenu = ref({
@@ -125,7 +125,7 @@ const contextMenu = ref({
 
 function toggleCollapse() {
     if (hasChildren.value) {
-        emit('toggle-collapse', props.group);
+        emit('toggle-collapse', props.group.uuid);
     }
 }
 
@@ -140,9 +140,9 @@ function onRightClick(event) {
 }
 
 function handleAction(action) {
-    if (action === 'add') emit('add-group', props.group);
-    else if (action === 'rename') emit('rename-group', props.group);
-    else if (action === 'delete') emit('delete-group', props.group);
+    if (action === 'add') emit('add-group', props.group.uuid);
+    else if (action === 'rename') emit('rename-group', props.group.uuid);
+    else if (action === 'delete') emit('delete-group', props.group.uuid);
     contextMenu.value.visible = false;
 }
 

@@ -64,6 +64,7 @@
         <form v-else id="entry-edit-form" class="detail-scroll-content" @submit.prevent="saveEdit">
             <EntryEditFields v-model="form" />
             <EntryCustomFields is-editing v-model="form.CustomFields" />
+            <p v-if="formError" class="form-error">{{ formError }}</p>
         </form>
 
         <AttachmentPreviewModal 
@@ -78,6 +79,7 @@
 <script setup>
 import { ref, watch, computed, onMounted, onUnmounted, toRef } from 'vue';
 import { type } from '@tauri-apps/plugin-os';
+import { useStore } from '../store';
 
 // Sub-components
 import EntryViewFields from './entry-detail/EntryViewFields.vue';
@@ -93,27 +95,34 @@ import { useEntryIcons } from '../composables/useEntryIcons';
 import { useEntryForm } from '../composables/useEntryForm';
 
 // Utils
-import { getField } from '../utils';
+import { getField, isProtectedValue, STANDARD_FIELDS } from '../utils';
 
 const props = defineProps({
     entry: { type: Object, required: true },
 });
 
 const emit = defineEmits(['updated', 'close', 'delete']);
+const store = useStore();
 
 const showMenu = ref(false);
 const isMac = ref(false);
 
-const displayTitle = computed(() => getField(props.entry, 'Title') || 'No title');
+const displayTitle = computed(() => {
+    store.dbVersion;
+    return getField(props.entry, 'Title') || 'No title';
+});
 
 const customFields = computed(() => {
+    store.dbVersion;
     const fields = [];
-    const standardFields = ['Title', 'UserName', 'Password', 'URL', 'Notes'];
     if (props.entry?.fields) {
-        for (const [key] of props.entry.fields) {
-            if (!standardFields.includes(key)) {
-                const stringValue = getField(props.entry, key);
-                if (stringValue) fields.push({ key, value: stringValue });
+        for (const [key, val] of props.entry.fields) {
+            if (!STANDARD_FIELDS.includes(key)) {
+                fields.push({
+                    key,
+                    value: getField(props.entry, key),
+                    protected: isProtectedValue(val),
+                });
             }
         }
     }
@@ -126,6 +135,7 @@ const { downloadIcon } = useEntryIcons(emit);
 const {
     isEditing,
     form,
+    formError,
     startEdit,
     cancelEdit,
     saveEdit
@@ -291,6 +301,14 @@ onUnmounted(() => {
     color: var(--text-secondary);
     font-size: 0.8rem;
     cursor: pointer;
+}
+
+.form-error {
+    padding: 0.6rem 0.75rem;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--error-color);
+    font-size: 0.85rem;
 }
 
 .dropdown-enter-active, .dropdown-leave-active { transition: all 0.2s ease; }

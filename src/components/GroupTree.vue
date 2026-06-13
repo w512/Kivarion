@@ -3,7 +3,7 @@
         <!-- Virtual "All Entries" group -->
         <GroupNode
             v-if="depth === 0"
-            :group="{ uuid: { id: 'all' }, name: 'All Entries' }"
+            :group="{ uuid: 'all', name: 'All Entries', entryCount: allEntriesCount, children: [] }"
             :selected-group-uuid="selectedGroupUuid"
             :all-entries-count="allEntriesCount"
             :refresh-key="refreshKey"
@@ -12,11 +12,11 @@
         />
 
         <!-- Regular groups -->
-        <div v-for="group in groups" :key="group.uuid?.id">
+        <div v-for="group in groups" :key="group.uuid">
             <GroupNode
                 :group="group"
                 :selected-group-uuid="selectedGroupUuid"
-                :is-collapsed="isCollapsed(group)"
+                :is-collapsed="isCollapsed(group.uuid)"
                 :refresh-key="refreshKey"
                 :depth="depth"
                 @select="emit('select', $event)"
@@ -27,16 +27,16 @@
             />
 
             <GroupTree
-                v-if="group.groups?.length && !isCollapsed(group)"
-                :groups="group.groups"
+                v-if="group.children?.length && !isCollapsed(group.uuid)"
+                :groups="group.children"
                 :selected-group-uuid="selectedGroupUuid"
                 :all-entries-count="allEntriesCount"
                 :refresh-key="refreshKey"
                 :depth="depth + 1"
-                @select="(g) => emit('select', g)"
-                @add-group="(g) => emit('add-group', g)"
-                @rename-group="(g) => emit('rename-group', g)"
-                @delete-group="(g) => emit('delete-group', g)"
+                @select="(uuid) => emit('select', uuid)"
+                @add-group="(uuid) => emit('add-group', uuid)"
+                @rename-group="(uuid) => emit('rename-group', uuid)"
+                @delete-group="(uuid) => emit('delete-group', uuid)"
             />
         </div>
     </div>
@@ -63,13 +63,12 @@ const emit = defineEmits([
 
 const collapsedGroups = ref({});
 
-function isCollapsed(group) {
-    return !!collapsedGroups.value[group.uuid?.id];
+function isCollapsed(uuid) {
+    return !!collapsedGroups.value[uuid];
 }
 
-function toggleCollapse(group) {
-    const id = group.uuid?.id;
-    collapsedGroups.value[id] = !collapsedGroups.value[id];
+function toggleCollapse(uuid) {
+    collapsedGroups.value[uuid] = !collapsedGroups.value[uuid];
 }
 </script>
 
@@ -80,4 +79,3 @@ function toggleCollapse(group) {
     gap: 1px;
 }
 </style>
-

@@ -43,6 +43,12 @@ bun run tauri dev
 bun run tauri build
 ```
 
+## Test Database
+
+`TestDatabase.kdbx` is a sample database for local testing only. It contains no real secrets.
+
+Password: `123`
+
 ## Project Structure
 
 ```

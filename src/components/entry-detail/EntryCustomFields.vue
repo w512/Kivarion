@@ -9,12 +9,30 @@
                 <div v-for="field in fields" :key="field.key" class="field-row">
                     <label>{{ field.key }}</label>
                     <div class="field-value-row">
-                        <div class="field-value">{{ field.value }}</div>
+                        <div class="field-value">
+                            {{ field.protected && !isProtectedFieldVisible(field.key) ? maskedValue(field.value) : field.value }}
+                        </div>
                         <div class="field-actions">
+                            <button
+                                v-if="field.protected"
+                                class="toggle-btn"
+                                @click="toggleProtectedField(field.key)"
+                                :title="isProtectedFieldVisible(field.key) ? 'Hide' : 'Show'"
+                            >
+                                <svg v-if="!isProtectedFieldVisible(field.key)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                    <circle cx="12" cy="12" r="3" />
+                                </svg>
+                                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                                    <line x1="1" y1="1" x2="23" y2="23" />
+                                </svg>
+                            </button>
                             <transition name="mini-toast">
                                 <div v-if="activeCopyField === field.key" class="mini-toast">Copied!</div>
                             </transition>
-                            <button class="copy-btn" @click="copy(field.value, field.key)" title="Copy">
+                            <button class="copy-btn" @click="copy(field.value, field.key, field.protected)" title="Copy">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -46,8 +64,12 @@
                     <input v-model="field.key" placeholder="Name" />
                 </div>
                 <div class="form-group field-value-group">
-                    <input v-model="field.value" placeholder="Value" />
+                    <input :type="field.protected ? 'password' : 'text'" v-model="field.value" placeholder="Value" />
                 </div>
+                <label class="protected-toggle" title="Store this custom field as a protected KeePass value">
+                    <input type="checkbox" v-model="field.protected" />
+                    <span>Protected</span>
+                </label>
                 <button type="button" class="remove-field-btn" @click="removeField(index)" title="Remove field">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18" />
@@ -60,7 +82,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
+import { useStore } from '../../store';
 
 const props = defineProps({
     isEditing: { type: Boolean, default: false },
@@ -70,11 +93,21 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue']);
 
+const store = useStore();
 const activeCopyField = ref(null);
+const visibleProtectedFields = ref({});
 let toastTimeout = null;
 
+watch(() => props.fields.map(field => field.key).join('\0'), () => {
+    visibleProtectedFields.value = {};
+});
+
+onUnmounted(() => {
+    if (toastTimeout) clearTimeout(toastTimeout);
+});
+
 function addField() {
-    const newFields = [...props.modelValue, { key: '', value: '' }];
+    const newFields = [...props.modelValue, { key: '', value: '', protected: false }];
     emit('update:modelValue', newFields);
 }
 
@@ -84,7 +117,23 @@ function removeField(index) {
     emit('update:modelValue', newFields);
 }
 
-async function copy(text, fieldId) {
+function maskedValue(value) {
+    const length = Math.min((value || '').length || 8, 20);
+    return '•'.repeat(length);
+}
+
+function isProtectedFieldVisible(key) {
+    return !!visibleProtectedFields.value[key];
+}
+
+function toggleProtectedField(key) {
+    visibleProtectedFields.value = {
+        ...visibleProtectedFields.value,
+        [key]: !visibleProtectedFields.value[key],
+    };
+}
+
+async function copy(text, fieldId, isProtected = false) {
     if (!text) return;
     try {
         await navigator.clipboard.writeText(text);
@@ -93,6 +142,20 @@ async function copy(text, fieldId) {
         toastTimeout = setTimeout(() => {
             activeCopyField.value = null;
         }, 1500);
+
+        const timeout = isProtected ? store.clipboardTimeout : 0;
+        if (timeout > 0) {
+            setTimeout(async () => {
+                try {
+                    const currentText = await navigator.clipboard.readText();
+                    if (currentText === text) {
+                        await navigator.clipboard.writeText('');
+                    }
+                } catch (err) {
+                    console.error('Failed to clear clipboard', err);
+                }
+            }, timeout * 1000);
+        }
     } catch (err) {
         console.error('Failed to copy', err);
     }
@@ -164,7 +227,8 @@ async function copy(text, fieldId) {
     flex-shrink: 0;
 }
 
-.copy-btn {
+.copy-btn,
+.toggle-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -177,7 +241,8 @@ async function copy(text, fieldId) {
     transition: all 0.15s;
 }
 
-.copy-btn:hover {
+.copy-btn:hover,
+.toggle-btn:hover {
     color: var(--accent-color);
     background: rgba(99, 102, 241, 0.1);
 }
@@ -233,7 +298,8 @@ async function copy(text, fieldId) {
     flex: 2;
 }
 
-.custom-field-edit-row input {
+.custom-field-edit-row input[type='text'],
+.custom-field-edit-row input[type='password'] {
     width: 100%;
     padding: 0.5rem 0.75rem;
     border-radius: 8px;
@@ -242,6 +308,21 @@ async function copy(text, fieldId) {
     color: var(--text-primary);
     font-size: 0.85rem;
     outline: none;
+}
+
+.protected-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.5rem 0;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.protected-toggle input {
+    accent-color: var(--accent-color);
 }
 
 .remove-field-btn {

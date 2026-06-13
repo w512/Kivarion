@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { readFile, exists } from '@tauri-apps/plugin-fs';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
+import { toExactArrayBuffer } from '../utils.js';
 
 export function useDatabaseAuth(router, passwordInputRef) {
     const store = useStore();
@@ -117,7 +118,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
         try {
             const fileContents = await readFile(store.filePath);
-            const arrayBuffer = fileContents.buffer;
+            const arrayBuffer = toExactArrayBuffer(fileContents);
 
             const credentials = new kdbxweb.Credentials(
                 kdbxweb.ProtectedValue.fromString(password.value),

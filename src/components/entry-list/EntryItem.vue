@@ -5,14 +5,14 @@
         @click="$emit('select')"
     >
         <div class="entry-icon">
-            <img v-if="icon" :src="icon" class="custom-icon-img" alt="" />
+            <img v-if="entry.iconSrc" :src="entry.iconSrc" class="custom-icon-img" alt="" />
             <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
         </div>
         <div class="entry-info">
-            <span class="entry-title">{{ title }}</span>
+            <span class="entry-title">{{ entry.title || 'No title' }}</span>
             <div class="entry-meta">
                 <span class="entry-date">{{ formattedDate }}</span>
             </div>
@@ -22,9 +22,6 @@
 
 <script setup>
 import { computed } from 'vue';
-import { getField, formatDate } from '../../utils';
-import * as kdbxweb from 'kdbxweb';
-import { useStore } from '../../store';
 
 const props = defineProps({
     entry: { type: Object, required: true },
@@ -33,11 +30,8 @@ const props = defineProps({
 
 defineEmits(['select']);
 
-const store = useStore();
-
-const title = computed(() => getField(props.entry, 'Title') || 'No title');
 const formattedDate = computed(() => {
-    const date = props.entry.times?.lastModTime;
+    const date = props.entry.modifiedAt;
     if (!date) return '';
     return new Intl.DateTimeFormat('default', {
         month: 'short',
@@ -45,21 +39,6 @@ const formattedDate = computed(() => {
         hour: '2-digit',
         minute: '2-digit',
     }).format(date);
-});
-
-const icon = computed(() => {
-    // Re-evaluate when the database changes (e.g. icon downloaded for this entry).
-    store.dbVersion;
-
-    if (props.entry.customIcon && store.db?.meta?.customIcons) {
-        const iconId = props.entry.customIcon.id || props.entry.customIcon;
-        const customIcon = store.db.meta.customIcons.get(iconId);
-        if (customIcon && customIcon.data) {
-            const b64 = kdbxweb.ByteUtils.bytesToBase64(new Uint8Array(customIcon.data));
-            return `data:image/png;base64,${b64}`;
-        }
-    }
-    return null;
 });
 </script>
 
