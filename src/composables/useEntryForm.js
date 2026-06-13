@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 import { getField, isStandardFieldName, normalizeFieldName, STANDARD_FIELDS } from '../utils';
 
@@ -13,6 +13,8 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         CustomFields: [],
     });
     const formError = ref('');
+    const initialFormSnapshot = ref('');
+    const isDirty = computed(() => isEditing.value && snapshotForm(form.value) !== initialFormSnapshot.value);
 
     function loadForm() {
         formError.value = '';
@@ -28,6 +30,11 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
                 protected: !!f.protected,
             })),
         };
+        initialFormSnapshot.value = snapshotForm(form.value);
+    }
+
+    function snapshotForm(value) {
+        return JSON.stringify(value);
     }
 
     watch(() => props.entry?.uuid?.id, () => {
@@ -79,6 +86,7 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         }
 
         entry.times.update();
+        initialFormSnapshot.value = snapshotForm(form.value);
         isEditing.value = false;
         emit('updated');
         
@@ -121,6 +129,7 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
 
     return {
         isEditing,
+        isDirty,
         form,
         formError,
         startEdit,

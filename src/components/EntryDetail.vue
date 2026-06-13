@@ -134,6 +134,7 @@ const { downloadIcon } = useEntryIcons(emit);
 
 const {
     isEditing,
+    isDirty,
     form,
     formError,
     startEdit,
@@ -152,6 +153,24 @@ const {
     exportAttachment,
     copyAttachmentName
 } = useEntryAttachments(toRef(props, 'entry'), isMac);
+
+function hasUnsavedChanges() {
+    return isDirty.value;
+}
+
+function savePendingEdit() {
+    return saveEdit();
+}
+
+function discardPendingEdit() {
+    cancelEdit();
+}
+
+defineExpose({
+    hasUnsavedChanges,
+    savePendingEdit,
+    discardPendingEdit,
+});
 
 const handleClickOutside = () => { if (showMenu.value) showMenu.value = false; };
 const handleKeyDown = (e) => { 

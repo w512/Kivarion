@@ -15,6 +15,29 @@ function protectedValue(text) {
 }
 
 describe('useEntryForm custom fields', () => {
+    test('tracks dirty edit state and resets after cancel/save', () => {
+        const entry = makeEntry({ Title: 'Entry' });
+        const emit = mock(() => {});
+        const customFields = ref([]);
+        const form = useEntryForm({ entry }, emit, customFields);
+
+        expect(form.isDirty.value).toBe(false);
+        form.startEdit();
+        expect(form.isDirty.value).toBe(false);
+
+        form.form.value.Title = 'Changed';
+        expect(form.isDirty.value).toBe(true);
+
+        form.cancelEdit();
+        expect(form.isDirty.value).toBe(false);
+
+        form.startEdit();
+        form.form.value.Title = 'Saved';
+        expect(form.isDirty.value).toBe(true);
+        expect(form.saveEdit()).toBe(true);
+        expect(form.isDirty.value).toBe(false);
+    });
+
     test('keeps empty custom field values instead of deleting them', () => {
         const entry = makeEntry({
             Title: 'Entry',

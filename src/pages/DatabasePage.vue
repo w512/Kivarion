@@ -65,12 +65,26 @@
             <!-- Column 3: Entry detail -->
             <aside class="detail-column" v-if="selectedEntry">
                 <EntryDetail
+                    ref="entryDetailRef"
                     :entry="selectedEntry"
                     @updated="onEntryUpdated"
                     @delete="requestDelete(selectedEntry)"
-                    @close="selectedEntryUuid = null"
+                    @close="requestCloseEntryDetail"
                 />
             </aside>
+        </div>
+
+        <!-- Unsaved Edit Confirmation -->
+        <div v-if="showUnsavedEditConfirm" class="modal-overlay" @click="continueEditing">
+            <div class="modal-card unsaved-modal" @click.stop>
+                <h3>Unsaved changes</h3>
+                <p>You have unsaved changes in the current entry. What would you like to do?</p>
+                <div class="modal-actions modal-actions--stacked">
+                    <button class="confirm-btn" @click="saveUnsavedEditAndContinue">Save and continue</button>
+                    <button class="danger-btn" @click="discardUnsavedEditAndContinue">Discard changes</button>
+                    <button class="cancel-btn" @click="continueEditing">Continue editing</button>
+                </div>
+            </div>
         </div>
 
         <!-- Save Error Close Confirmation -->
@@ -199,6 +213,7 @@ onUnmounted(() => {
 });
 
 const selectedEntryUuid = ref(null);
+const entryDetailRef = ref(null);
 const searchQuery = ref('');
 const showDeleteConfirm = ref(false);
 const entryToDeleteUuid = ref(null);
@@ -216,6 +231,8 @@ const homeDirPath = ref('');
 
 const showSettingsModal = ref(false);
 const showCloseAfterSaveErrorConfirm = ref(false);
+const showUnsavedEditConfirm = ref(false);
+const pendingNavigation = ref(null);
 
 let lockTimer = null;
 function resetLockTimer() {
@@ -338,13 +355,24 @@ const filteredEntries = computed(() => {
 });
 
 function selectGroup(groupUuid) {
-    store.selectedGroupUuid = groupUuid;
-    selectedEntryUuid.value = null;
-    searchQuery.value = '';
+    requestNavigation(() => {
+        store.selectedGroupUuid = groupUuid;
+        selectedEntryUuid.value = null;
+        searchQuery.value = '';
+    });
 }
 
 function selectEntry(entryUuid) {
-    selectedEntryUuid.value = entryUuid;
+    if (entryUuid === selectedEntryUuid.value) return;
+    requestNavigation(() => {
+        selectedEntryUuid.value = entryUuid;
+    });
+}
+
+function requestCloseEntryDetail() {
+    requestNavigation(() => {
+        selectedEntryUuid.value = null;
+    });
 }
 
 function addEntry() {
@@ -389,12 +417,53 @@ function onEntryUpdated() {
 }
 
 async function closeDatabase() {
-    if (!await ensureSavedBeforeClose()) {
-        showCloseAfterSaveErrorConfirm.value = true;
+    requestNavigation(async () => {
+        if (!await ensureSavedBeforeClose()) {
+            showCloseAfterSaveErrorConfirm.value = true;
+            return;
+        }
+
+        forceCloseDatabase();
+    });
+}
+
+function requestNavigation(action) {
+    if (entryDetailRef.value?.hasUnsavedChanges?.()) {
+        pendingNavigation.value = action;
+        showUnsavedEditConfirm.value = true;
+        return false;
+    }
+
+    action();
+    return true;
+}
+
+async function saveUnsavedEditAndContinue() {
+    const action = pendingNavigation.value;
+    if (!entryDetailRef.value?.savePendingEdit?.()) {
+        // Validation failed; return to the edit form so its inline error is visible.
+        pendingNavigation.value = null;
+        showUnsavedEditConfirm.value = false;
         return;
     }
 
-    forceCloseDatabase();
+    pendingNavigation.value = null;
+    showUnsavedEditConfirm.value = false;
+    await action?.();
+}
+
+async function discardUnsavedEditAndContinue() {
+    const action = pendingNavigation.value;
+    entryDetailRef.value?.discardPendingEdit?.();
+
+    pendingNavigation.value = null;
+    showUnsavedEditConfirm.value = false;
+    await action?.();
+}
+
+function continueEditing() {
+    pendingNavigation.value = null;
+    showUnsavedEditConfirm.value = false;
 }
 
 function forceCloseDatabase() {
@@ -465,6 +534,10 @@ function requestDeleteGroup(groupUuid) {
 }
 
 function confirmDeleteGroup() {
+    requestNavigation(deleteConfirmedGroup);
+}
+
+function deleteConfirmedGroup() {
     const group = findGroupByUuid(store.db, groupToDeleteUuid.value);
     if (!store.db || !group) return;
 
@@ -588,6 +661,88 @@ async function confirmDatabaseSettings({ name, password }) {
 
 .save-error-dismiss:hover {
     background: rgba(239, 68, 68, 0.18);
+}
+
+/* Unsaved edit modal */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 120;
+}
+
+.modal-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.5rem;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+}
+
+.unsaved-modal {
+    width: 380px;
+}
+
+.unsaved-modal h3 {
+    margin: 0 0 0.5rem;
+    color: var(--text-primary);
+    font-size: 1.1rem;
+}
+
+.unsaved-modal p {
+    margin: 0 0 1rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.modal-actions--stacked {
+    flex-direction: column;
+}
+
+.confirm-btn,
+.danger-btn,
+.cancel-btn {
+    padding: 0.65rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.confirm-btn {
+    border: none;
+    background: var(--accent-color);
+    color: #fff;
+}
+
+.confirm-btn:hover {
+    background: var(--accent-hover);
+}
+
+.danger-btn {
+    border: none;
+    background: var(--error-color);
+    color: #fff;
+}
+
+.cancel-btn {
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-secondary);
+}
+
+.cancel-btn:hover {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
 }
 
 /* Main layout */
