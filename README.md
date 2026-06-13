@@ -77,3 +77,4 @@ src-tauri/
 - Sensitive fields are handled through the `kdbxweb` library's `ProtectedValue`.
 - The webview has **no direct filesystem access**: all database/attachment file I/O goes through dedicated Rust commands operating only on a path you picked via a native dialog.
 - On macOS, previewing an attachment with Quick Look writes the decrypted file to a private temporary location and deletes it after the preview closes; the OS may still cache previews.
+- Saves are durable and atomic (temp file → fsync → rename), and detect external modification before overwriting. Rotating `.bak` backups (configurable in Settings) are kept next to the database; they are encrypted KDBX copies, not plaintext.

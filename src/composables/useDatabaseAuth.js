@@ -145,6 +145,12 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
             store.db = db;
             store.fileName = fileName.value;
+            // Track the file's mtime so later saves can detect external changes.
+            try {
+                store.knownMtime = await invoke('file_mtime', { path });
+            } catch {
+                store.knownMtime = null;
+            }
 
             // Save or delete biometric password based on user preference.
             // Skip saving if we just authenticated via biometrics (avoids a redundant prompt).

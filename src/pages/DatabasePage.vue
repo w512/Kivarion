@@ -146,6 +146,18 @@
             @cancel="cancelGroupAction"
         />
 
+        <!-- External Modification Conflict -->
+        <ConfirmModal
+            :show="saveConflict"
+            title="File changed on disk"
+            message="This database was modified by another program (or another Kivarion window) since you opened it. Overwriting will replace those changes with your version."
+            confirm-text="Overwrite"
+            confirm-variant="danger"
+            cancel-text="Not now"
+            @confirm="overwriteOnConflict"
+            @cancel="dismissConflict"
+        />
+
         <!-- Database Settings Modal -->
         <DatabaseSettingsModal
             :show="showSettingsModal"
@@ -285,8 +297,17 @@ const { width: entriesWidth, isResizing: isResizingEntries, startResize: startRe
     useResizable('kivarion_entriesWidth', 300, 200, 800, sidebarWidth);
 
 // Database Actions logic
-const { saveDatabaseChanges, addEntry: performAddEntry, addGroup: performAddGroup, isSaving, saveError, hasUnsavedChanges } =
+const { saveDatabaseChanges, addEntry: performAddEntry, addGroup: performAddGroup, isSaving, saveError, saveConflict, hasUnsavedChanges } =
     useDatabaseActions(store);
+
+function overwriteOnConflict() {
+    saveConflict.value = false;
+    saveDatabaseChanges({ force: true });
+}
+
+function dismissConflict() {
+    saveConflict.value = false;
+}
 
 const dbName = computed(() => {
     store.dbVersion;

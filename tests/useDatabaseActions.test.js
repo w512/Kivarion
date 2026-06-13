@@ -167,6 +167,30 @@ describe('useDatabaseActions save queue', () => {
         expect(actions.lastSavedDbVersion.value).toBe(0);
     });
 
+    test('raises a conflict on external modification and clears it on force overwrite', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+
+        // The backend refuses the save because the file changed on disk.
+        saveInvokeMock = mock(async () => {
+            throw new Error('EXTERNAL_CONFLICT: the file was modified on disk');
+        });
+        store.dbVersion = 1;
+
+        await expect(actions.saveDatabaseChanges()).resolves.toBe(false);
+        expect(actions.saveConflict.value).toBe(true);
+        // A conflict is not a generic error.
+        expect(actions.saveError.value).toBe(null);
+        expect(actions.hasUnsavedChanges.value).toBe(true);
+
+        // The user chooses to overwrite; the forced save succeeds.
+        saveInvokeMock = mock(async () => 1234);
+        await expect(actions.saveDatabaseChanges({ force: true })).resolves.toBe(true);
+        expect(actions.saveConflict.value).toBe(false);
+        expect(actions.hasUnsavedChanges.value).toBe(false);
+        expect(actions.lastSavedDbVersion.value).toBe(1);
+    });
+
     test('keeps database dirty after a failed save and allows retry', async () => {
         const { store } = makeStore();
         const actions = useDatabaseActions(store);

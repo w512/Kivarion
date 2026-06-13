@@ -13,11 +13,16 @@ import { useStore } from './store.js';
  * Credentials are taken from the db itself (`db.save()` uses `db.credentials`),
  * so they are not passed separately.
  *
+ * Passing `{ force: true }` skips the optimistic-concurrency check, used when
+ * the user has chosen to overwrite an externally-modified file.
+ *
  * @param {kdbxweb.Kdbx} db - The database instance
  * @param {string} fileName - Name of the file (used for the download fallback)
- * @returns {Promise<void>} Rejects if the database could not be saved.
+ * @param {{ force?: boolean }} [options]
+ * @returns {Promise<void>} Rejects if the database could not be saved. On an
+ *   external-modification conflict the rejection has `.code === 'EXTERNAL_CONFLICT'`.
  */
-export async function saveDatabase(db, fileName) {
+export async function saveDatabase(db, fileName, { force = false } = {}) {
     const store = useStore();
 
     if (!db || !fileName) {
@@ -34,7 +39,24 @@ export async function saveDatabase(db, fileName) {
         return;
     }
 
-    await invoke('save_database', { path: store.filePath, data: bytes });
+    try {
+        const newMtime = await invoke('save_database', {
+            path: store.filePath,
+            data: bytes,
+            expectedMtime: force ? null : (store.knownMtime ?? null),
+            backup: store.backupEnabled !== false,
+            backupDepth: store.backupDepth || 3,
+        });
+        store.knownMtime = newMtime;
+    } catch (error) {
+        const message = error?.message || String(error);
+        if (message.includes('EXTERNAL_CONFLICT')) {
+            const conflict = new Error(message);
+            conflict.code = 'EXTERNAL_CONFLICT';
+            throw conflict;
+        }
+        throw error;
+    }
 }
 
 /**

@@ -6,13 +6,17 @@ export function useDatabaseActions(store) {
     // Surfaced to the UI so a failed save is never silent.
     const isSaving = ref(false);
     const saveError = ref(null);
+    // Distinct from saveError: the file was changed on disk by another writer.
+    // The UI offers an explicit "overwrite" rather than treating it as a fault.
+    const saveConflict = ref(false);
     const lastSavedDbVersion = ref(store.dbVersion);
     const hasUnsavedChanges = computed(() => {
-        return !!saveError.value || store.dbVersion > lastSavedDbVersion.value;
+        return !!saveError.value || saveConflict.value || store.dbVersion > lastSavedDbVersion.value;
     });
 
     let pendingSaveVersion = null;
     let activeSavePromise = null;
+    let forceNextSave = false;
 
     /**
      * Persist the current database through a single in-process queue.
@@ -28,9 +32,10 @@ export function useDatabaseActions(store) {
      *
      * @returns {Promise<boolean>} true when the latest database version is saved.
      */
-    function saveDatabaseChanges() {
+    function saveDatabaseChanges({ force = false } = {}) {
         if (!store.db) return Promise.resolve(false);
 
+        if (force) forceNextSave = true;
         pendingSaveVersion = store.dbVersion;
 
         if (!activeSavePromise) {
@@ -60,11 +65,19 @@ export function useDatabaseActions(store) {
 
                 try {
                     saveError.value = null;
-                    await saveDatabase(store.db, store.fileName);
+                    const force = forceNextSave;
+                    forceNextSave = false;
+                    await saveDatabase(store.db, store.fileName, { force });
+                    saveConflict.value = false;
                     lastSavedDbVersion.value = versionToSave;
                 } catch (error) {
                     console.error('Failed to save changes:', error);
-                    saveError.value = error?.message || String(error) || 'Unknown error';
+                    if (error?.code === 'EXTERNAL_CONFLICT') {
+                        // Let the UI ask the user; don't treat it as a hard error.
+                        saveConflict.value = true;
+                    } else {
+                        saveError.value = error?.message || String(error) || 'Unknown error';
+                    }
                     pendingSaveVersion = null;
                     ok = false;
                     break;
@@ -72,6 +85,8 @@ export function useDatabaseActions(store) {
             }
         } finally {
             isSaving.value = false;
+            // Never carry a force request past the flush that requested it.
+            forceNextSave = false;
         }
 
         return ok && !hasUnsavedChanges.value;
@@ -115,6 +130,7 @@ export function useDatabaseActions(store) {
         addGroup,
         isSaving,
         saveError,
+        saveConflict,
         hasUnsavedChanges,
         lastSavedDbVersion
     };
