@@ -91,6 +91,7 @@ const props = defineProps({
     isCollapsed: { type: Boolean, default: false },
     depth: { type: Number, default: 0 },
     allEntriesCount: { type: Number, default: 0 },
+    refreshKey: { type: Number, default: 0 },
 });
 
 const emit = defineEmits([
@@ -103,9 +104,18 @@ const emit = defineEmits([
 
 const isAllEntries = computed(() => props.group.uuid?.id === 'all');
 const isSelected = computed(() => props.group.uuid?.id === props.selectedGroupUuid);
-const hasChildren = computed(() => props.group.groups?.length > 0);
-const groupName = computed(() => props.group.name);
-const entryCount = computed(() => isAllEntries.value ? props.allEntriesCount : (props.group.entries?.length || 0));
+const hasChildren = computed(() => {
+    props.refreshKey;
+    return props.group.groups?.length > 0;
+});
+const groupName = computed(() => {
+    props.refreshKey;
+    return props.group.name;
+});
+const entryCount = computed(() => {
+    props.refreshKey;
+    return isAllEntries.value ? props.allEntriesCount : (props.group.entries?.length || 0);
+});
 
 const contextMenu = ref({
     visible: false,

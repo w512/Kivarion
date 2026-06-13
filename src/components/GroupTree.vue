@@ -6,6 +6,7 @@
             :group="{ uuid: { id: 'all' }, name: 'All Entries' }"
             :selected-group-uuid="selectedGroupUuid"
             :all-entries-count="allEntriesCount"
+            :refresh-key="refreshKey"
             :depth="0"
             @select="emit('select', $event)"
         />
@@ -16,6 +17,7 @@
                 :group="group"
                 :selected-group-uuid="selectedGroupUuid"
                 :is-collapsed="isCollapsed(group)"
+                :refresh-key="refreshKey"
                 :depth="depth"
                 @select="emit('select', $event)"
                 @toggle-collapse="toggleCollapse"
@@ -29,6 +31,7 @@
                 :groups="group.groups"
                 :selected-group-uuid="selectedGroupUuid"
                 :all-entries-count="allEntriesCount"
+                :refresh-key="refreshKey"
                 :depth="depth + 1"
                 @select="(g) => emit('select', g)"
                 @add-group="(g) => emit('add-group', g)"
@@ -48,6 +51,7 @@ const props = defineProps({
     selectedGroupUuid: { type: String, default: null },
     depth: { type: Number, default: 0 },
     allEntriesCount: { type: Number, default: 0 },
+    refreshKey: { type: Number, default: 0 },
 });
 
 const emit = defineEmits([

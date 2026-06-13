@@ -37,6 +37,7 @@
                     :groups="allGroups"
                     :selected-group-uuid="store.selectedGroupUuid"
                     :all-entries-count="totalEntriesCount"
+                    :refresh-key="store.dbVersion"
                     @select="selectGroup"
                     @add-group="addGroup"
                     @rename-group="requestRenameGroup"
@@ -371,6 +372,7 @@ function confirmRenameGroup() {
     if (!groupToRename.value) return;
     groupToRename.value.name = newGroupName.value;
     if (groupToRename.value.times) groupToRename.value.times.update();
+    store.touchDb();
     groupToRename.value = null;
     showRenameModal.value = false;
     saveDatabaseChanges();
