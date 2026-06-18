@@ -10,6 +10,8 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 
 - **Full KDBX 4 support** — securely work with KeePass 2.x databases.
 - **Secure decryption** — uses **Argon2** (WASM) for key derivation.
+- **Flexible unlock** — open a database with a master password, a key file, or both. The key file is remembered per database.
+- **Create databases** — make a brand-new `.kdbx` from the app, protected by a master password.
 - **Three-column interface** — convenient navigation with a group tree, entry list, and resizable detail panel.
 - **Structure management** — create, rename, and delete groups and entries.
 - **Global search** — the search field in the top bar filters entries across the entire database, regardless of the selected group. It searches the **Title**, **UserName**, **URL**, **Notes**, and **custom fields** by both name and value. Matching is case-insensitive and substring-based. Protected fields, including passwords and hidden custom fields, are excluded from search.
@@ -31,8 +33,6 @@ Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. Some features 
 
 These are known gaps (tracked in `docs/ToDo.md`), called out here so expectations are honest:
 
-- **Unlock credentials** — password-only. **Key files** (and key file + password) are **not yet supported**.
-- **Creating a new database** from within the app is not yet supported — open an existing `.kdbx`.
 - **Attachments** are **view / preview / export only**; adding, renaming, or deleting attachments inside Kivarion is not yet implemented.
 - **Recycle Bin** — deleting an entry moves it to the KeePass Recycle Bin (when the database has one enabled), but **restoring** items from the bin inside the app is not yet implemented (you can empty it).
 

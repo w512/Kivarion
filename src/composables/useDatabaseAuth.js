@@ -1,20 +1,56 @@
 import { ref, nextTick } from 'vue';
 import * as kdbxweb from 'kdbxweb';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
+import { saveDatabase } from '../dbHelper.js';
 import { toExactArrayBuffer } from '../utils.js';
+
+// Per-database key-file association. KeePass remembers which key file unlocks a
+// given database; we mirror that by storing the key file's path (not its bytes)
+// keyed by the database path.
+function keyFileStorageKey(dbPath) {
+    return `kivarion-keyfile-${dbPath}`;
+}
+
+// Map a kdbxweb load error to a message a user can act on. Codes are the stable
+// string values of `kdbxweb.Consts.ErrorCodes`.
+function describeLoadError(code, hasKeyFile) {
+    switch (code) {
+        case 'InvalidKey':
+            return hasKeyFile
+                ? 'Incorrect password or key file. Please try again.'
+                : 'Incorrect password. Please try again.';
+        case 'BadSignature':
+            return 'This file is not a valid KDBX database.';
+        case 'FileCorrupt':
+            return 'The database file appears to be corrupted.';
+        case 'InvalidVersion':
+            return 'This KDBX format version is not supported.';
+        case 'Unsupported':
+            return 'This database uses a feature or algorithm that is not supported.';
+        default:
+            return 'Failed to open database. Check the file and password.';
+    }
+}
 
 export function useDatabaseAuth(router, passwordInputRef) {
     const store = useStore();
     const fileName = ref('');
     const password = ref('');
+    const keyFilePath = ref(null);
     const isLoading = ref(false);
     const errorMessage = ref('');
-    const step = ref(1); // 1 = file selection, 2 = password input
+    // 1 = file selection, 2 = unlock (password / key file), 3 = create database.
+    const step = ref(1);
     const isBiometricsSupported = ref(false);
     const useBiometrics = ref(false);
     const isBiometricAuthenticated = ref(false);
+
+    // New-database form state (step 3).
+    const newDbName = ref('');
+    const newPassword = ref('');
+    const newPasswordConfirm = ref('');
 
     // Check if biometrics are supported and available
     async function checkBiometrics() {
@@ -29,6 +65,14 @@ export function useDatabaseAuth(router, passwordInputRef) {
     }
     checkBiometrics();
 
+    function keyFileName() {
+        return keyFilePath.value ? keyFilePath.value.split(/[\\/]/).pop() : '';
+    }
+
+    function restoreKeyFilePreference(path) {
+        keyFilePath.value = localStorage.getItem(keyFileStorageKey(path));
+    }
+
     async function checkLastPath() {
         const lastPath = localStorage.getItem('kivarion-last-db-path');
         if (lastPath) {
@@ -38,6 +82,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
                     fileName.value = lastPath.split(/[\\/]/).pop();
                     step.value = 2;
                     checkBiometricsPreference(lastPath);
+                    restoreKeyFilePreference(lastPath);
                     nextTick(() => {
                         passwordInputRef.value?.focus();
                     });
@@ -61,6 +106,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
                 errorMessage.value = '';
                 step.value = 2;
                 checkBiometricsPreference(selected);
+                restoreKeyFilePreference(selected);
                 nextTick(() => {
                     passwordInputRef.value?.focus();
                 });
@@ -71,10 +117,32 @@ export function useDatabaseAuth(router, passwordInputRef) {
         }
     }
 
+    async function selectKeyFile() {
+        try {
+            const selected = await open({ multiple: false });
+            if (selected) {
+                keyFilePath.value = selected;
+                errorMessage.value = '';
+                nextTick(() => {
+                    passwordInputRef.value?.focus();
+                });
+            }
+        } catch (err) {
+            console.error('Failed to open key file dialog:', err);
+            errorMessage.value =
+                'Failed to open key file dialog: ' + err.message;
+        }
+    }
+
+    function clearKeyFile() {
+        keyFilePath.value = null;
+    }
+
     function resetFile() {
         store.filePath = null;
         fileName.value = '';
         password.value = '';
+        keyFilePath.value = null;
         errorMessage.value = '';
         step.value = 1;
         useBiometrics.value = false;
@@ -110,12 +178,45 @@ export function useDatabaseAuth(router, passwordInputRef) {
         }
     }
 
+    // Build credentials from the current password and/or key file. Reading the
+    // key file goes through the backend (the webview has no fs access). Throws
+    // a tagged error if the key file can't be read so the caller can report it.
+    async function buildCredentials(passwordText, keyPath) {
+        const passwordValue = passwordText
+            ? kdbxweb.ProtectedValue.fromString(passwordText)
+            : null;
+
+        let keyFileBuffer = null;
+        if (keyPath) {
+            try {
+                const keyBytes = await invoke('read_database', {
+                    path: keyPath,
+                });
+                keyFileBuffer = toExactArrayBuffer(keyBytes);
+            } catch (err) {
+                const wrapped = new Error(err?.message || String(err));
+                wrapped.code = 'KEYFILE_READ_FAILED';
+                throw wrapped;
+            }
+        }
+
+        const credentials = new kdbxweb.Credentials(
+            passwordValue,
+            keyFileBuffer,
+        );
+        // setPassword/setKeyFile are async; wait for the hashes to be ready
+        // before handing the credentials to Kdbx.load.
+        await credentials.ready;
+        return credentials;
+    }
+
     async function decrypt(expectedPath = null) {
         // Snapshot the target file up front and use it for the whole flow, so a
         // file switch mid-decrypt can never cross-apply a password to the wrong
         // database.
         const path = store.filePath;
-        if (!path || !password.value) {
+        const keyPath = keyFilePath.value;
+        if (!path || (!password.value && !keyPath)) {
             return;
         }
         // Only enforce the guard when an explicit path was passed (e.g. from a
@@ -131,9 +232,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
             const fileContents = await invoke('read_database', { path });
             const arrayBuffer = toExactArrayBuffer(fileContents);
 
-            const credentials = new kdbxweb.Credentials(
-                kdbxweb.ProtectedValue.fromString(password.value),
-            );
+            const credentials = await buildCredentials(password.value, keyPath);
 
             const db = await kdbxweb.Kdbx.load(arrayBuffer, credentials);
 
@@ -150,6 +249,13 @@ export function useDatabaseAuth(router, passwordInputRef) {
                 store.knownMtime = await invoke('file_mtime', { path });
             } catch {
                 store.knownMtime = null;
+            }
+
+            // Remember (or forget) the key file association for this database.
+            if (keyPath) {
+                localStorage.setItem(keyFileStorageKey(path), keyPath);
+            } else {
+                localStorage.removeItem(keyFileStorageKey(path));
             }
 
             // Save or delete biometric password based on user preference.
@@ -178,12 +284,88 @@ export function useDatabaseAuth(router, passwordInputRef) {
         } catch (err) {
             console.error('Decryption failed:', err);
             isBiometricAuthenticated.value = false;
-            if (err.code === 'InvalidKey') {
-                errorMessage.value = 'Incorrect password. Please try again.';
-            } else {
+            if (err.code === 'KEYFILE_READ_FAILED') {
                 errorMessage.value =
-                    'Failed to open database. Check the file and password.';
+                    'Could not read the key file. Make sure it still exists.';
+            } else {
+                errorMessage.value = describeLoadError(err.code, !!keyPath);
             }
+        } finally {
+            isLoading.value = false;
+        }
+    }
+
+    function startCreate() {
+        errorMessage.value = '';
+        newDbName.value = '';
+        newPassword.value = '';
+        newPasswordConfirm.value = '';
+        step.value = 3;
+    }
+
+    function cancelCreate() {
+        errorMessage.value = '';
+        step.value = 1;
+    }
+
+    async function createDatabase() {
+        errorMessage.value = '';
+        const name = newDbName.value.trim();
+        if (!name) {
+            errorMessage.value = 'Enter a database name.';
+            return;
+        }
+        if (!newPassword.value) {
+            errorMessage.value = 'Enter a master password.';
+            return;
+        }
+        if (newPassword.value !== newPasswordConfirm.value) {
+            errorMessage.value = 'Passwords do not match.';
+            return;
+        }
+
+        let targetPath;
+        try {
+            targetPath = await save({
+                defaultPath: `${name}.kdbx`,
+                filters: [{ name: 'KDBX Database', extensions: ['kdbx'] }],
+            });
+        } catch (err) {
+            console.error('Failed to open save dialog:', err);
+            errorMessage.value = 'Failed to open save dialog: ' + err.message;
+            return;
+        }
+        if (!targetPath) return; // user cancelled
+        if (!targetPath.toLowerCase().endsWith('.kdbx')) {
+            targetPath += '.kdbx';
+        }
+
+        isLoading.value = true;
+        try {
+            const credentials = await buildCredentials(newPassword.value, null);
+            const db = kdbxweb.Kdbx.create(credentials, name);
+
+            const newName = targetPath.split(/[\\/]/).pop();
+            // Set the target before saving; saveDatabase reads store.filePath.
+            store.filePath = targetPath;
+            store.knownMtime = null;
+            await saveDatabase(db, newName);
+
+            store.db = db;
+            store.fileName = newName;
+            fileName.value = newName;
+            localStorage.setItem('kivarion-last-db-path', targetPath);
+            localStorage.removeItem(keyFileStorageKey(targetPath));
+
+            password.value = '';
+            newPassword.value = '';
+            newPasswordConfirm.value = '';
+            router.push({ name: 'database' });
+        } catch (err) {
+            console.error('Failed to create database:', err);
+            store.db = null;
+            errorMessage.value =
+                'Failed to create database: ' + (err?.message || err);
         } finally {
             isLoading.value = false;
         }
@@ -192,16 +374,26 @@ export function useDatabaseAuth(router, passwordInputRef) {
     return {
         fileName,
         password,
+        keyFilePath,
+        keyFileName,
         isLoading,
         errorMessage,
         step,
         useBiometrics,
         isBiometricsSupported,
+        newDbName,
+        newPassword,
+        newPasswordConfirm,
         checkLastPath,
         selectFile,
+        selectKeyFile,
+        clearKeyFile,
         resetFile,
         decrypt,
         attemptBiometricUnlock,
+        startCreate,
+        cancelCreate,
+        createDatabase,
         store,
     };
 }

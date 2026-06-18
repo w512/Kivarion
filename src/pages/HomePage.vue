@@ -10,16 +10,26 @@ const showPassword = ref(false);
 const {
     fileName,
     password,
+    keyFilePath,
+    keyFileName,
     isLoading,
     errorMessage,
     step,
     checkLastPath,
     selectFile,
+    selectKeyFile,
+    clearKeyFile,
     resetFile,
     decrypt,
     useBiometrics,
     isBiometricsSupported,
     attemptBiometricUnlock,
+    newDbName,
+    newPassword,
+    newPasswordConfirm,
+    startCreate,
+    cancelCreate,
+    createDatabase,
     store,
 } = useDatabaseAuth(router, passwordInput);
 
@@ -93,6 +103,9 @@ onMounted(() => {
                     </svg>
                     <span>Select .kdbx file</span>
                 </button>
+                <button class="text-link-btn" @click="startCreate">
+                    Create new database
+                </button>
             </div>
 
             <!-- Step 2: Password Input -->
@@ -130,7 +143,11 @@ onMounted(() => {
                                 ref="passwordInput"
                                 v-model="password"
                                 :type="showPassword ? 'text' : 'password'"
-                                placeholder="Enter master password"
+                                :placeholder="
+                                    keyFilePath
+                                        ? 'Master password (optional)'
+                                        : 'Enter master password'
+                                "
                                 autofocus
                                 :disabled="isLoading"
                             />
@@ -187,7 +204,7 @@ onMounted(() => {
                         </div>
                         <button
                             type="submit"
-                            :disabled="isLoading || !password"
+                            :disabled="isLoading || (!password && !keyFilePath)"
                         >
                             <span v-if="isLoading" class="spinner"></span>
                             <span v-else>Open</span>
@@ -228,6 +245,58 @@ onMounted(() => {
                             </svg>
                         </button>
                     </div>
+                    <div class="keyfile-row">
+                        <span v-if="keyFilePath" class="keyfile-chip">
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <circle cx="7.5" cy="15.5" r="5.5" />
+                                <path d="m21 2-9.6 9.6" />
+                                <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                            </svg>
+                            <span class="keyfile-name">{{
+                                keyFileName()
+                            }}</span>
+                            <button
+                                type="button"
+                                class="keyfile-remove"
+                                title="Remove key file"
+                                @click="clearKeyFile"
+                            >
+                                ✕
+                            </button>
+                        </span>
+                        <button
+                            v-else
+                            type="button"
+                            class="keyfile-add"
+                            @click="selectKeyFile"
+                        >
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <circle cx="7.5" cy="15.5" r="5.5" />
+                                <path d="m21 2-9.6 9.6" />
+                                <path d="m15.5 7.5 3 3L22 7l-3-3" />
+                            </svg>
+                            <span>Add key file (optional)</span>
+                        </button>
+                    </div>
+
                     <div v-if="isBiometricsSupported" class="biometric-toggle">
                         <label>
                             <input v-model="useBiometrics" type="checkbox" />
@@ -235,11 +304,71 @@ onMounted(() => {
                         </label>
                     </div>
                 </form>
-
-                <p v-if="errorMessage" class="error-message">
-                    {{ errorMessage }}
-                </p>
             </div>
+
+            <!-- Step 3: Create New Database -->
+            <div v-if="step === 3" class="step">
+                <form class="create-form" @submit.prevent="createDatabase">
+                    <div class="create-field">
+                        <label>Database name</label>
+                        <input
+                            v-model="newDbName"
+                            type="text"
+                            placeholder="My Vault"
+                            autofocus
+                            :disabled="isLoading"
+                        />
+                    </div>
+                    <div class="create-field">
+                        <label>Master password</label>
+                        <input
+                            v-model="newPassword"
+                            :type="showPassword ? 'text' : 'password'"
+                            placeholder="Choose a strong password"
+                            :disabled="isLoading"
+                        />
+                    </div>
+                    <div class="create-field">
+                        <label>Confirm password</label>
+                        <input
+                            v-model="newPasswordConfirm"
+                            :type="showPassword ? 'text' : 'password'"
+                            placeholder="Repeat password"
+                            :disabled="isLoading"
+                        />
+                    </div>
+                    <label class="show-password-toggle">
+                        <input v-model="showPassword" type="checkbox" />
+                        <span>Show password</span>
+                    </label>
+                    <p class="create-warning">
+                        There is no recovery if you lose this password — store
+                        it somewhere safe.
+                    </p>
+                    <div class="create-actions">
+                        <button
+                            type="submit"
+                            class="create-submit"
+                            :disabled="isLoading"
+                        >
+                            <span v-if="isLoading" class="spinner"></span>
+                            <span v-else>Create &amp; open</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="create-cancel"
+                            :disabled="isLoading"
+                            @click="cancelCreate"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <p v-if="errorMessage" class="error-message">
+                {{ errorMessage }}
+            </p>
         </div>
     </div>
 </template>
@@ -531,5 +660,200 @@ h1 {
 .biometric-toggle input[type='checkbox'] {
     accent-color: var(--accent-color);
     cursor: pointer;
+}
+
+/* Secondary "Create new database" link on step 1 */
+.text-link-btn {
+    display: block;
+    margin: 0.85rem auto 0;
+    padding: 0.4rem 0.6rem;
+    background: none;
+    border: none;
+    color: var(--accent-color);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: color 0.2s;
+    box-shadow: none;
+}
+
+.text-link-btn:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
+/* Key file row on step 2 */
+.keyfile-row {
+    margin-top: 0.85rem;
+    display: flex;
+    justify-content: flex-start;
+    padding: 0 0.25rem;
+}
+
+.keyfile-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.5rem;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: color 0.2s;
+    box-shadow: none;
+}
+
+.keyfile-add:hover {
+    color: var(--accent-color);
+}
+
+.keyfile-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 8px;
+    background: var(--badge-bg);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    max-width: 100%;
+}
+
+.keyfile-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 320px;
+}
+
+.keyfile-remove {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 0 0.15rem;
+    font-size: 0.8rem;
+    opacity: 0.7;
+    box-shadow: none;
+}
+
+.keyfile-remove:hover {
+    opacity: 1;
+    color: var(--error-color);
+}
+
+/* Create-database form (step 3) */
+.create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    text-align: left;
+}
+
+.create-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.create-field label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.create-field input {
+    width: 100%;
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.create-field input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.show-password-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.show-password-toggle input[type='checkbox'] {
+    accent-color: var(--accent-color);
+    cursor: pointer;
+}
+
+.create-warning {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin: 0;
+}
+
+.create-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+
+.create-submit {
+    flex: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.7rem 1.25rem;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent-color);
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: none;
+}
+
+.create-submit:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.create-submit:disabled,
+.create-cancel:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.create-cancel {
+    flex: 1;
+    padding: 0.7rem 1.25rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: none;
+}
+
+.create-cancel:hover:not(:disabled) {
+    border-color: var(--text-secondary);
+    color: var(--text-primary);
 }
 </style>

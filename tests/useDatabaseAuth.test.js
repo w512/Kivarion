@@ -24,13 +24,17 @@ let invokeHandlers;
 let kdbxLoadMock;
 let loadSpy;
 let consoleErrorSpy;
+let dialogOpenMock;
+let dialogSaveMock;
+let saveSpy;
 
 mock.module('../src/store.js', () => ({
     useStore: () => currentStore,
 }));
 
 mock.module('@tauri-apps/plugin-dialog', () => ({
-    open: mock(async () => null),
+    open: (...args) => dialogOpenMock(...args),
+    save: (...args) => dialogSaveMock(...args),
 }));
 
 mock.module('@tauri-apps/api/core', () => ({
@@ -81,6 +85,7 @@ beforeEach(() => {
         file_exists: async () => true,
         read_database: async () => new Uint8Array([1, 2, 3]),
         file_mtime: async () => 1000,
+        save_database: async () => 2000,
         load_biometric_password: async () => 'secret',
         save_biometric_password: async () => {},
         delete_biometric_password: async () => {},
@@ -89,11 +94,18 @@ beforeEach(() => {
     loadSpy = spyOn(kdbxweb.Kdbx, 'load').mockImplementation((...args) =>
         kdbxLoadMock(...args),
     );
+    // Avoid running the real Argon2 KDF when saving a freshly created database.
+    saveSpy = spyOn(kdbxweb.Kdbx.prototype, 'save').mockImplementation(
+        async () => new Uint8Array([1, 2, 3]).buffer,
+    );
+    dialogOpenMock = mock(async () => null);
+    dialogSaveMock = mock(async () => null);
     consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
 });
 
 afterEach(() => {
     loadSpy?.mockRestore();
+    saveSpy?.mockRestore();
     consoleErrorSpy?.mockRestore();
 });
 
@@ -215,5 +227,166 @@ describe('useDatabaseAuth.attemptBiometricUnlock', () => {
         expect(auth.password.value).toBe('');
         expect(currentStore.db).toBeUndefined();
         expect(auth.isLoading.value).toBe(false);
+    });
+});
+
+describe('useDatabaseAuth.decrypt error messages', () => {
+    const cases = [
+        ['BadSignature', 'This file is not a valid KDBX database.'],
+        ['FileCorrupt', 'The database file appears to be corrupted.'],
+        ['InvalidVersion', 'This KDBX format version is not supported.'],
+        [
+            'Unsupported',
+            'This database uses a feature or algorithm that is not supported.',
+        ],
+    ];
+
+    for (const [code, message] of cases) {
+        test(`maps ${code} to a clear message`, async () => {
+            const { auth } = makeAuth();
+            currentStore.filePath = '/a.kdbx';
+            auth.password.value = 'pw';
+            kdbxLoadMock = mock(async () => {
+                const err = new Error(code);
+                err.code = code;
+                throw err;
+            });
+
+            await auth.decrypt();
+
+            expect(auth.errorMessage.value).toBe(message);
+            expect(currentStore.db).toBeUndefined();
+        });
+    }
+});
+
+describe('useDatabaseAuth key file', () => {
+    test('reads the key file and builds credentials with a key-file hash', async () => {
+        const { auth, router } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        auth.keyFilePath.value = '/keys/secret.key';
+        const readPaths = [];
+        invokeHandlers.read_database = async ({ path }) => {
+            readPaths.push(path);
+            return new Uint8Array([9, 8, 7, 6, 5]);
+        };
+        let capturedCreds;
+        kdbxLoadMock = mock(async (_buf, creds) => {
+            capturedCreds = creds;
+            return { id: 'db' };
+        });
+
+        await auth.decrypt();
+
+        expect(readPaths).toContain('/keys/secret.key');
+        expect(capturedCreds.keyFileHash).toBeDefined();
+        expect(router.push).toHaveBeenCalledTimes(1);
+        expect(localStorage.getItem('kivarion-keyfile-/a.kdbx')).toBe(
+            '/keys/secret.key',
+        );
+    });
+
+    test('allows unlocking with a key file and no password', async () => {
+        const { auth, router } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        auth.password.value = '';
+        auth.keyFilePath.value = '/keys/k.key';
+        let capturedCreds;
+        kdbxLoadMock = mock(async (_buf, creds) => {
+            capturedCreds = creds;
+            return { id: 'db' };
+        });
+
+        await auth.decrypt();
+
+        expect(router.push).toHaveBeenCalledTimes(1);
+        expect(capturedCreds.passwordHash).toBeUndefined();
+        expect(capturedCreds.keyFileHash).toBeDefined();
+    });
+
+    test('surfaces a friendly error when the key file cannot be read', async () => {
+        const { auth, router } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        auth.keyFilePath.value = '/keys/missing.key';
+        auth.password.value = 'pw';
+        invokeHandlers.read_database = async ({ path }) => {
+            if (path === '/keys/missing.key') throw new Error('ENOENT');
+            return new Uint8Array([1, 2, 3]);
+        };
+
+        await auth.decrypt();
+
+        expect(auth.errorMessage.value).toBe(
+            'Could not read the key file. Make sure it still exists.',
+        );
+        expect(router.push).not.toHaveBeenCalled();
+    });
+});
+
+describe('useDatabaseAuth.createDatabase', () => {
+    function fillForm(auth, name = 'Vault', pw = 'pw', confirm = 'pw') {
+        auth.startCreate();
+        auth.newDbName.value = name;
+        auth.newPassword.value = pw;
+        auth.newPasswordConfirm.value = confirm;
+    }
+
+    test('rejects an empty name without opening the save dialog', async () => {
+        const { auth, router } = makeAuth();
+        fillForm(auth, '   ');
+
+        await auth.createDatabase();
+
+        expect(auth.errorMessage.value).toBe('Enter a database name.');
+        expect(dialogSaveMock).not.toHaveBeenCalled();
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(router.push).not.toHaveBeenCalled();
+    });
+
+    test('rejects mismatched passwords', async () => {
+        const { auth } = makeAuth();
+        fillForm(auth, 'Vault', 'a', 'b');
+
+        await auth.createDatabase();
+
+        expect(auth.errorMessage.value).toBe('Passwords do not match.');
+        expect(dialogSaveMock).not.toHaveBeenCalled();
+    });
+
+    test('creates, saves and opens the new database', async () => {
+        const { auth, router } = makeAuth();
+        fillForm(auth);
+        dialogSaveMock = mock(async () => '/Users/me/Vault.kdbx');
+
+        await auth.createDatabase();
+
+        expect(saveSpy).toHaveBeenCalledTimes(1);
+        expect(currentStore.filePath).toBe('/Users/me/Vault.kdbx');
+        expect(currentStore.db).toBeDefined();
+        expect(router.push).toHaveBeenCalledTimes(1);
+        expect(localStorage.getItem('kivarion-last-db-path')).toBe(
+            '/Users/me/Vault.kdbx',
+        );
+    });
+
+    test('appends .kdbx when the chosen path lacks the extension', async () => {
+        const { auth } = makeAuth();
+        fillForm(auth);
+        dialogSaveMock = mock(async () => '/Users/me/Vault');
+
+        await auth.createDatabase();
+
+        expect(currentStore.filePath).toBe('/Users/me/Vault.kdbx');
+    });
+
+    test('does nothing when the save dialog is cancelled', async () => {
+        const { auth, router } = makeAuth();
+        fillForm(auth);
+        dialogSaveMock = mock(async () => null);
+
+        await auth.createDatabase();
+
+        expect(saveSpy).not.toHaveBeenCalled();
+        expect(router.push).not.toHaveBeenCalled();
     });
 });
