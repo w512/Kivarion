@@ -1,81 +1,142 @@
 <template>
-    <Teleport to="body">
-        <div class="modal-overlay" v-if="show" @click="close">
-            <div class="modal-card" @click.stop>
-                <div class="modal-header">
-                    <h3>Password Generator</h3>
-                    <button class="close-btn" @click="close">✕</button>
+    <BaseModal
+        :show="show"
+        width="550px"
+        :z-index="2000"
+        labelledby="pg-title"
+        @close="close"
+    >
+        <div class="pg-content">
+            <div class="modal-header">
+                <h3 id="pg-title">Password Generator</h3>
+                <button class="close-btn" aria-label="Close" @click="close">
+                    ✕
+                </button>
+            </div>
+
+            <div class="preview-area">
+                <div class="generated-password">{{ currentPassword }}</div>
+                <button
+                    class="refresh-btn"
+                    title="Regenerate"
+                    @click.stop="regenerate"
+                >
+                    <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                        />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="strength-area" :class="strengthClass">
+                <div class="strength-header">
+                    <span>{{ strengthLabel }}</span>
+                    <span>{{ entropyBits }} bits</span>
+                </div>
+                <div class="strength-track">
+                    <div
+                        class="strength-fill"
+                        :style="{ width: strengthPercent + '%' }"
+                    ></div>
+                </div>
+            </div>
+
+            <div class="options-area">
+                <div class="option-row">
+                    <div class="option-label">
+                        <label>Length</label>
+                        <span class="length-value">{{ options.length }}</span>
+                    </div>
+                    <input
+                        v-model.number="options.length"
+                        type="range"
+                        min="4"
+                        max="64"
+                        step="1"
+                        @input="regenerate"
+                    />
                 </div>
 
-                <div class="preview-area">
-                    <div class="generated-password">{{ currentPassword }}</div>
-                    <button class="refresh-btn" @click.stop="regenerate" title="Regenerate">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                        </svg>
-                    </button>
-                </div>
-
-                <div class="strength-area" :class="strengthClass">
-                    <div class="strength-header">
-                        <span>{{ strengthLabel }}</span>
-                        <span>{{ entropyBits }} bits</span>
-                    </div>
-                    <div class="strength-track">
-                        <div class="strength-fill" :style="{ width: strengthPercent + '%' }"></div>
-                    </div>
-                </div>
-
-                <div class="options-area">
-                    <div class="option-row">
-                        <div class="option-label">
-                            <label>Length</label>
-                            <span class="length-value">{{ options.length }}</span>
-                        </div>
-                        <input type="range" v-model.number="options.length" min="4" max="64" step="1" @input="regenerate" />
-                    </div>
-
-                    <div class="checkbox-grid">
-                        <label class="checkbox-item">
-                            <input type="checkbox" v-model="options.upper" @change="regenerate" />
-                            <span>A-Z</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" v-model="options.lower" @change="regenerate" />
-                            <span>a-z</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" v-model="options.numbers" @change="regenerate" />
-                            <span>0-9</span>
-                        </label>
-                        <label class="checkbox-item">
-                            <input type="checkbox" v-model="options.symbols" @change="regenerate" />
-                            <span>!@#</span>
-                        </label>
-                    </div>
-
-                    <label class="checkbox-item exclude-similar">
-                        <input type="checkbox" v-model="options.excludeSimilar" @change="regenerate" />
-                        <span>Exclude similar characters (l, 1, O, 0)</span>
+                <div class="checkbox-grid">
+                    <label class="checkbox-item">
+                        <input
+                            v-model="options.upper"
+                            type="checkbox"
+                            @change="regenerate"
+                        />
+                        <span>A-Z</span>
+                    </label>
+                    <label class="checkbox-item">
+                        <input
+                            v-model="options.lower"
+                            type="checkbox"
+                            @change="regenerate"
+                        />
+                        <span>a-z</span>
+                    </label>
+                    <label class="checkbox-item">
+                        <input
+                            v-model="options.numbers"
+                            type="checkbox"
+                            @change="regenerate"
+                        />
+                        <span>0-9</span>
+                    </label>
+                    <label class="checkbox-item">
+                        <input
+                            v-model="options.symbols"
+                            type="checkbox"
+                            @change="regenerate"
+                        />
+                        <span>!@#</span>
                     </label>
                 </div>
 
-                <div class="modal-footer">
-                    <button class="apply-btn" @click="apply" :disabled="!currentPassword">Use Password</button>
-                    <button class="cancel-btn" @click="close">Cancel</button>
-                </div>
+                <label class="checkbox-item exclude-similar">
+                    <input
+                        v-model="options.excludeSimilar"
+                        type="checkbox"
+                        @change="regenerate"
+                    />
+                    <span>Exclude similar characters (l, 1, O, 0)</span>
+                </label>
+            </div>
+
+            <div class="modal-footer">
+                <button
+                    class="apply-btn"
+                    :disabled="!currentPassword"
+                    @click="apply"
+                >
+                    Use Password
+                </button>
+                <button class="cancel-btn" @click="close">Cancel</button>
             </div>
         </div>
-    </Teleport>
+    </BaseModal>
 </template>
-
 
 <script setup>
 import { computed, ref, reactive, watch } from 'vue';
-import { estimatePasswordEntropy, generatePassword, passwordStrengthLabel } from '../../utils';
+import BaseModal from '../BaseModal.vue';
+import {
+    estimatePasswordEntropy,
+    generatePassword,
+    passwordStrengthLabel,
+} from '../../utils';
 
 const props = defineProps({
-    show: Boolean
+    show: Boolean,
 });
 
 const emit = defineEmits(['close', 'apply']);
@@ -87,7 +148,7 @@ const DEFAULT_OPTIONS = {
     lower: true,
     numbers: true,
     symbols: true,
-    excludeSimilar: true
+    excludeSimilar: true,
 };
 
 function loadOptions() {
@@ -96,12 +157,30 @@ function loadOptions() {
         return {
             ...DEFAULT_OPTIONS,
             ...saved,
-            length: Math.min(64, Math.max(4, Number(saved.length) || DEFAULT_OPTIONS.length)),
-            upper: typeof saved.upper === 'boolean' ? saved.upper : DEFAULT_OPTIONS.upper,
-            lower: typeof saved.lower === 'boolean' ? saved.lower : DEFAULT_OPTIONS.lower,
-            numbers: typeof saved.numbers === 'boolean' ? saved.numbers : DEFAULT_OPTIONS.numbers,
-            symbols: typeof saved.symbols === 'boolean' ? saved.symbols : DEFAULT_OPTIONS.symbols,
-            excludeSimilar: typeof saved.excludeSimilar === 'boolean' ? saved.excludeSimilar : DEFAULT_OPTIONS.excludeSimilar,
+            length: Math.min(
+                64,
+                Math.max(4, Number(saved.length) || DEFAULT_OPTIONS.length),
+            ),
+            upper:
+                typeof saved.upper === 'boolean'
+                    ? saved.upper
+                    : DEFAULT_OPTIONS.upper,
+            lower:
+                typeof saved.lower === 'boolean'
+                    ? saved.lower
+                    : DEFAULT_OPTIONS.lower,
+            numbers:
+                typeof saved.numbers === 'boolean'
+                    ? saved.numbers
+                    : DEFAULT_OPTIONS.numbers,
+            symbols:
+                typeof saved.symbols === 'boolean'
+                    ? saved.symbols
+                    : DEFAULT_OPTIONS.symbols,
+            excludeSimilar:
+                typeof saved.excludeSimilar === 'boolean'
+                    ? saved.excludeSimilar
+                    : DEFAULT_OPTIONS.excludeSimilar,
         };
     } catch {
         return { ...DEFAULT_OPTIONS };
@@ -115,8 +194,12 @@ const currentPassword = ref('');
 const entropy = computed(() => estimatePasswordEntropy(options));
 const entropyBits = computed(() => Math.round(entropy.value));
 const strengthLabel = computed(() => passwordStrengthLabel(entropy.value));
-const strengthPercent = computed(() => Math.min(100, Math.round((entropy.value / 120) * 100)));
-const strengthClass = computed(() => `strength-${strengthLabel.value.toLowerCase()}`);
+const strengthPercent = computed(() =>
+    Math.min(100, Math.round((entropy.value / 120) * 100)),
+);
+const strengthClass = computed(
+    () => `strength-${strengthLabel.value.toLowerCase()}`,
+);
 
 const regenerate = () => {
     currentPassword.value = generatePassword(options);
@@ -131,54 +214,30 @@ const apply = () => {
     close();
 };
 
-watch(options, () => {
-    try {
-        localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...options }));
-    } catch {}
-}, { deep: true });
+watch(
+    options,
+    () => {
+        try {
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...options }));
+        } catch {}
+    },
+    { deep: true },
+);
 
 // Initialize on show
-watch(() => props.show, (newVal) => {
-    if (newVal) regenerate();
-});
+watch(
+    () => props.show,
+    (newVal) => {
+        if (newVal) regenerate();
+    },
+);
 </script>
 
 <style scoped>
-.modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-    animation: fadeIn 0.15s ease;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-.modal-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 1.5rem;
-    width: 550px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+.pg-content {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
-    animation: modalPop 0.2s ease;
-}
-
-@keyframes modalPop {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
 }
 
 .modal-header {
@@ -204,7 +263,9 @@ watch(() => props.show, (newVal) => {
     transition: opacity 0.2s;
 }
 
-.close-btn:hover { opacity: 1; }
+.close-btn:hover {
+    opacity: 1;
+}
 
 .preview-area {
     background: var(--input-bg);
@@ -233,10 +294,12 @@ watch(() => props.show, (newVal) => {
     cursor: pointer;
     display: flex;
     padding: 6px;
-    transition: color 0.2s, transform 0.2s;
+    transition:
+        color 0.2s,
+        transform 0.2s;
 }
 
-.refresh-btn:hover { 
+.refresh-btn:hover {
     color: var(--accent-color);
     transform: rotate(30deg);
 }
@@ -265,14 +328,26 @@ watch(() => props.show, (newVal) => {
 .strength-fill {
     height: 100%;
     border-radius: 999px;
-    transition: width 0.2s ease, background 0.2s ease;
+    transition:
+        width 0.2s ease,
+        background 0.2s ease;
 }
 
-.strength-weak .strength-fill { background: #ef4444; }
-.strength-fair .strength-fill { background: #f97316; }
-.strength-good .strength-fill { background: #eab308; }
-.strength-strong .strength-fill { background: #22c55e; }
-.strength-excellent .strength-fill { background: var(--accent-color); }
+.strength-weak .strength-fill {
+    background: #ef4444;
+}
+.strength-fair .strength-fill {
+    background: #f97316;
+}
+.strength-good .strength-fill {
+    background: #eab308;
+}
+.strength-strong .strength-fill {
+    background: #22c55e;
+}
+.strength-excellent .strength-fill {
+    background: var(--accent-color);
+}
 
 .options-area {
     display: flex;
@@ -307,7 +382,7 @@ watch(() => props.show, (newVal) => {
     border-radius: 6px;
 }
 
-input[type="range"] {
+input[type='range'] {
     width: 100%;
     accent-color: var(--accent-color);
 }
@@ -356,7 +431,9 @@ input[type="range"] {
     font-weight: 700;
     font-size: 0.9rem;
     cursor: pointer;
-    transition: background 0.2s, transform 0.1s;
+    transition:
+        background 0.2s,
+        transform 0.1s;
 }
 
 .apply-btn:hover:not(:disabled) {
@@ -390,4 +467,3 @@ input[type="range"] {
     color: var(--text-primary);
 }
 </style>
-

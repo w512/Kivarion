@@ -20,7 +20,7 @@ const {
     useBiometrics,
     isBiometricsSupported,
     attemptBiometricUnlock,
-    store
+    store,
 } = useDatabaseAuth(router, passwordInput);
 
 onMounted(() => {
@@ -28,10 +28,13 @@ onMounted(() => {
 });
 </script>
 
-
 <template>
     <div class="home-page">
-        <button class="settings-btn-home" @click="router.push({ name: 'settings' })" title="Settings">
+        <button
+            class="settings-btn-home"
+            title="Settings"
+            @click="router.push({ name: 'settings' })"
+        >
             <svg
                 width="20"
                 height="20"
@@ -43,7 +46,9 @@ onMounted(() => {
                 stroke-linejoin="round"
             >
                 <circle cx="12" cy="12" r="3"></circle>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                <path
+                    d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                ></path>
             </svg>
         </button>
 
@@ -111,37 +116,70 @@ onMounted(() => {
                     <span>{{ fileName }}</span>
                     <button
                         class="badge-close"
-                        @click="resetFile"
                         title="Select different file"
+                        @click="resetFile"
                     >
                         ✕
                     </button>
                 </div>
 
-                <form @submit.prevent="decrypt()" class="password-form">
+                <form class="password-form" @submit.prevent="decrypt()">
                     <div class="input-group">
                         <div class="password-wrapper">
                             <input
                                 ref="passwordInput"
-                                :type="showPassword ? 'text' : 'password'"
                                 v-model="password"
+                                :type="showPassword ? 'text' : 'password'"
                                 placeholder="Enter master password"
                                 autofocus
                                 :disabled="isLoading"
                             />
                             <div class="input-actions">
-                                <button 
-                                    type="button" 
-                                    class="action-btn toggle-password" 
+                                <button
+                                    type="button"
+                                    class="action-btn toggle-password"
+                                    :title="
+                                        showPassword
+                                            ? 'Hide password'
+                                            : 'Show password'
+                                    "
                                     @click="showPassword = !showPassword"
-                                    :title="showPassword ? 'Hide password' : 'Show password'"
                                 >
-                                    <svg v-if="showPassword" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                                    <svg
+                                        v-if="showPassword"
+                                        width="18"
+                                        height="18"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path
+                                            d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
+                                        ></path>
+                                        <line
+                                            x1="1"
+                                            y1="1"
+                                            x2="23"
+                                            y2="23"
+                                        ></line>
                                     </svg>
-                                    <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <svg
+                                        v-else
+                                        width="18"
+                                        height="18"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path
+                                            d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                        ></path>
                                         <circle cx="12" cy="12" r="3"></circle>
                                     </svg>
                                 </button>
@@ -158,18 +196,33 @@ onMounted(() => {
                             v-if="isBiometricsSupported && useBiometrics"
                             type="button"
                             class="biometric-submit-btn"
-                            @click="attemptBiometricUnlock(store.filePath)"
                             title="Unlock with Touch ID"
                             :disabled="isLoading"
+                            @click="attemptBiometricUnlock(store.filePath)"
                         >
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"></path>
+                            <svg
+                                width="20"
+                                height="20"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path
+                                    d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"
+                                ></path>
                                 <path d="M14 13.12c0 2.38 0 6.38-1 8.88"></path>
-                                <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"></path>
+                                <path
+                                    d="M17.29 21.02c.12-.6.43-2.3.5-3.02"
+                                ></path>
                                 <path d="M2 12a10 10 0 0 1 18-6"></path>
                                 <path d="M2 16h.01"></path>
                                 <path d="M21.8 16c.2-2 .131-5.354 0-6"></path>
-                                <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"></path>
+                                <path
+                                    d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"
+                                ></path>
                                 <path d="M8.65 22c.21-.66.45-1.32.57-2"></path>
                                 <path d="M9 6.8a6 6 0 0 1 9 5.2v2"></path>
                             </svg>
@@ -177,7 +230,7 @@ onMounted(() => {
                     </div>
                     <div v-if="isBiometricsSupported" class="biometric-toggle">
                         <label>
-                            <input type="checkbox" v-model="useBiometrics" />
+                            <input v-model="useBiometrics" type="checkbox" />
                             <span>Unlock with Touch ID next time</span>
                         </label>
                     </div>
@@ -475,7 +528,7 @@ h1 {
     cursor: pointer;
 }
 
-.biometric-toggle input[type="checkbox"] {
+.biometric-toggle input[type='checkbox'] {
     accent-color: var(--accent-color);
     cursor: pointer;
 }

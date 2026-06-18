@@ -34,7 +34,8 @@ export function useClipboard() {
                 clearTimer = setTimeout(async () => {
                     clearTimer = null;
                     try {
-                        const currentText = await navigator.clipboard.readText();
+                        const currentText =
+                            await navigator.clipboard.readText();
                         if (currentText === text) {
                             await navigator.clipboard.writeText('');
                         }

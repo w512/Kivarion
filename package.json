@@ -8,6 +8,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "bun test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -24,8 +28,14 @@
     "vue-router": "^5.0.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2.11.0",
     "@vitejs/plugin-vue": "^5.2.4",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "eslint": "^10.5.0",
+    "eslint-plugin-vue": "^10.9.2",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4",
     "vite": "^6.4.2"
   }
 }

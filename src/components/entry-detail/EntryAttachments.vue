@@ -3,49 +3,152 @@
         <div class="section-header">
             <h3>Attachments</h3>
         </div>
-        
+
         <div v-if="attachments.length === 0" class="no-attachments">
             No attachments
         </div>
 
         <div v-else class="attachments-grid">
-            <div v-for="att in attachments" :key="att.name" class="attachment-card">
+            <div
+                v-for="att in attachments"
+                :key="att.name"
+                class="attachment-card"
+            >
                 <div class="attachment-preview" @click="$emit('preview', att)">
-                    <img v-if="thumbnails.get(att.name)" :src="thumbnails.get(att.name)" alt="Preview" />
+                    <img
+                        v-if="thumbnails.get(att.name)"
+                        :src="thumbnails.get(att.name)"
+                        alt="Preview"
+                    />
                     <div v-else class="file-icon">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                            />
                             <polyline points="14 2 14 8 20 8" />
                         </svg>
                     </div>
                 </div>
                 <div class="attachment-info">
-                    <div class="attachment-name" :title="att.name">{{ att.name }}</div>
-                    <div class="attachment-size">{{ formatSize(att.size) }}</div>
+                    <div class="attachment-name" :title="att.name">
+                        {{ att.name }}
+                    </div>
+                    <div class="attachment-size">
+                        {{ formatSize(att.size) }}
+                    </div>
                 </div>
                 <div class="attachment-actions">
-                    <button class="menu-trigger" @click.stop="toggleMenu(att.name)" title="Attachment actions">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" />
+                    <button
+                        class="menu-trigger"
+                        title="Attachment actions"
+                        @click.stop="toggleMenu(att.name)"
+                    >
+                        <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <circle cx="12" cy="12" r="1" />
+                            <circle cx="12" cy="5" r="1" />
+                            <circle cx="12" cy="19" r="1" />
                         </svg>
                     </button>
                     <transition name="dropdown">
-                        <div v-if="activeMenu === att.name" class="dropdown-menu attachment-menu">
-                            <button class="menu-item" @click="$emit('preview', att); activeMenu = null">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                        <div
+                            v-if="activeMenu === att.name"
+                            class="dropdown-menu attachment-menu"
+                        >
+                            <button
+                                class="menu-item"
+                                @click="
+                                    $emit('preview', att);
+                                    activeMenu = null;
+                                "
+                            >
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path
+                                        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                    />
+                                    <circle cx="12" cy="12" r="3" />
                                 </svg>
                                 Preview
                             </button>
-                            <button class="menu-item" @click="$emit('copy-name', att.name); activeMenu = null">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            <button
+                                class="menu-item"
+                                @click="
+                                    $emit('copy-name', att.name);
+                                    activeMenu = null;
+                                "
+                            >
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <rect
+                                        x="9"
+                                        y="9"
+                                        width="13"
+                                        height="13"
+                                        rx="2"
+                                        ry="2"
+                                    />
+                                    <path
+                                        d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                                    />
                                 </svg>
                                 Copy Name
                             </button>
-                            <button class="menu-item" @click="$emit('export', att); activeMenu = null">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                            <button
+                                class="menu-item"
+                                @click="
+                                    $emit('export', att);
+                                    activeMenu = null;
+                                "
+                            >
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path
+                                        d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                                    />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" y1="15" x2="12" y2="3" />
                                 </svg>
                                 Export
                             </button>
@@ -61,7 +164,7 @@
 import { ref, onMounted, onUnmounted } from 'vue';
 import { formatSize } from '../../utils';
 
-const props = defineProps({
+defineProps({
     attachments: { type: Array, default: () => [] },
     thumbnails: { type: Map, default: () => new Map() },
 });
@@ -123,7 +226,9 @@ onUnmounted(() => {
     border-radius: 8px;
     overflow: hidden;
     position: relative;
-    transition: transform 0.2s, border-color 0.2s;
+    transition:
+        transform 0.2s,
+        border-color 0.2s;
 }
 
 .attachment-card:hover {
@@ -223,10 +328,12 @@ onUnmounted(() => {
     background: var(--badge-bg);
 }
 
-.dropdown-enter-active, .dropdown-leave-active {
+.dropdown-enter-active,
+.dropdown-leave-active {
     transition: all 0.15s ease;
 }
-.dropdown-enter-from, .dropdown-leave-to {
+.dropdown-enter-from,
+.dropdown-leave-to {
     opacity: 0;
     transform: translateY(-5px);
 }

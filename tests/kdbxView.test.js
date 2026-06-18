@@ -36,10 +36,30 @@ function makeDb() {
     const rootEntry = entry('entry-root', 'Root Entry');
     const childEntry = entry('entry-child', 'Child Entry');
     const recycleEntry = entry('entry-trash', 'Trash Entry');
-    const recycleGroup = { uuid: uuid('recycle'), name: 'Recycle Bin', entries: [recycleEntry], groups: [] };
-    const childGroup = { uuid: uuid('child'), name: 'Child', entries: [childEntry], groups: [] };
-    const duplicateGroup = { uuid: uuid('duplicate'), name: 'New group', entries: [], groups: [] };
-    const root = { uuid: uuid('root'), name: 'Root', entries: [rootEntry], groups: [childGroup, recycleGroup, duplicateGroup] };
+    const recycleGroup = {
+        uuid: uuid('recycle'),
+        name: 'Recycle Bin',
+        entries: [recycleEntry],
+        groups: [],
+    };
+    const childGroup = {
+        uuid: uuid('child'),
+        name: 'Child',
+        entries: [childEntry],
+        groups: [],
+    };
+    const duplicateGroup = {
+        uuid: uuid('duplicate'),
+        name: 'New group',
+        entries: [],
+        groups: [],
+    };
+    const root = {
+        uuid: uuid('root'),
+        name: 'Root',
+        entries: [rootEntry],
+        groups: [childGroup, recycleGroup, duplicateGroup],
+    };
     childGroup.parentGroup = root;
     recycleGroup.parentGroup = root;
     duplicateGroup.parentGroup = root;
@@ -77,7 +97,10 @@ describe('kdbx view helpers', () => {
     test('collects all entries excluding recycle bin', () => {
         const db = makeDb();
 
-        expect(getAllEntries(db).map(e => e.uuid.id)).toEqual(['entry-root', 'entry-child']);
+        expect(getAllEntries(db).map((e) => e.uuid.id)).toEqual([
+            'entry-root',
+            'entry-child',
+        ]);
     });
 
     test('maps groups and entries to plain view models', () => {
@@ -89,9 +112,27 @@ describe('kdbx view helpers', () => {
             entryCount: 1,
             isRecycleBin: false,
             children: [
-                { uuid: 'child', name: 'Child', entryCount: 1, isRecycleBin: false, children: [] },
-                { uuid: 'recycle', name: 'Recycle Bin', entryCount: 1, isRecycleBin: true, children: [] },
-                { uuid: 'duplicate', name: 'New group', entryCount: 0, isRecycleBin: false, children: [] },
+                {
+                    uuid: 'child',
+                    name: 'Child',
+                    entryCount: 1,
+                    isRecycleBin: false,
+                    children: [],
+                },
+                {
+                    uuid: 'recycle',
+                    name: 'Recycle Bin',
+                    entryCount: 1,
+                    isRecycleBin: true,
+                    children: [],
+                },
+                {
+                    uuid: 'duplicate',
+                    name: 'New group',
+                    entryCount: 0,
+                    isRecycleBin: false,
+                    children: [],
+                },
             ],
         });
 
@@ -114,7 +155,9 @@ describe('kdbx view helpers', () => {
 
         // root.groups order: [child(0), recycle(1), duplicate(2)].
         // Reorder 'duplicate' before 'child' → lands at index 0.
-        expect(resolveGroupMove(db, 'duplicate', 'child', 'before')).toMatchObject({
+        expect(
+            resolveGroupMove(db, 'duplicate', 'child', 'before'),
+        ).toMatchObject({
             group: db.duplicateGroup,
             toGroup: db.root,
             atIndex: 0,
@@ -123,7 +166,9 @@ describe('kdbx view helpers', () => {
         // Same-parent shift: drag 'child' (idx 0) after 'duplicate' (idx 2).
         // Raw insert index is 3, decremented to 2 because the splice removes
         // 'child' from an earlier position first.
-        expect(resolveGroupMove(db, 'child', 'duplicate', 'after')).toMatchObject({
+        expect(
+            resolveGroupMove(db, 'child', 'duplicate', 'after'),
+        ).toMatchObject({
             group: db.childGroup,
             toGroup: db.root,
             atIndex: 2,
@@ -134,21 +179,28 @@ describe('kdbx view helpers', () => {
         const db = makeDb();
 
         // Give 'child' a descendant so we can test the cycle guard.
-        const grand = { uuid: uuid('grand'), name: 'Grand', entries: [], groups: [] };
+        const grand = {
+            uuid: uuid('grand'),
+            name: 'Grand',
+            entries: [],
+            groups: [],
+        };
         grand.parentGroup = db.childGroup;
         db.childGroup.groups.push(grand);
 
         expect(resolveGroupMove(db, 'child', 'child', 'inside')).toBe(null); // onto self
         expect(resolveGroupMove(db, 'child', 'grand', 'inside')).toBe(null); // into own descendant
-        expect(resolveGroupMove(db, 'root', 'child', 'inside')).toBe(null);  // root can't move
-        expect(resolveGroupMove(db, 'child', 'root', 'before')).toBe(null);  // root has no siblings
+        expect(resolveGroupMove(db, 'root', 'child', 'inside')).toBe(null); // root can't move
+        expect(resolveGroupMove(db, 'child', 'root', 'before')).toBe(null); // root has no siblings
         expect(resolveGroupMove(db, 'child', 'missing', 'inside')).toBe(null);
     });
 
     test('validates group sibling names and generates unique defaults', () => {
         const db = makeDb();
 
-        expect(groupNameExistsInParent(db.childGroup, ' recycle bin ')).toBe(true);
+        expect(groupNameExistsInParent(db.childGroup, ' recycle bin ')).toBe(
+            true,
+        );
         expect(groupNameExistsInParent(db.childGroup, 'Child')).toBe(false);
         expect(getUniqueGroupName(db.root)).toBe('New group 2');
         expect(getUniqueGroupName(db.root, 'Project')).toBe('Project');

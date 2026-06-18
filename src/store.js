@@ -21,12 +21,20 @@ export const useStore = defineStore('main', () => {
     }
 
     const theme = ref(localStorage.getItem('kivarion-theme') || 'system');
-    const clipboardTimeout = ref(parseInt(localStorage.getItem('kivarion-clipboard-timeout')) || 30);
-    const autoLockTimeout = ref(parseInt(localStorage.getItem('kivarion-autolock-timeout')) || 0);
+    const clipboardTimeout = ref(
+        parseInt(localStorage.getItem('kivarion-clipboard-timeout')) || 30,
+    );
+    const autoLockTimeout = ref(
+        parseInt(localStorage.getItem('kivarion-autolock-timeout')) || 0,
+    );
 
     // Backup policy: keep rotating `.bak` copies on each save.
-    const backupEnabled = ref(localStorage.getItem('kivarion-backup-enabled') !== 'false');
-    const backupDepth = ref(parseInt(localStorage.getItem('kivarion-backup-depth')) || 3);
+    const backupEnabled = ref(
+        localStorage.getItem('kivarion-backup-enabled') !== 'false',
+    );
+    const backupDepth = ref(
+        parseInt(localStorage.getItem('kivarion-backup-depth')) || 3,
+    );
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -45,11 +53,15 @@ export const useStore = defineStore('main', () => {
     };
 
     mediaQuery.addEventListener('change', handleSystemThemeChange);
-    
-    watch(theme, (newTheme) => {
-        localStorage.setItem('kivarion-theme', newTheme);
-        applyTheme(newTheme);
-    }, { immediate: true });
+
+    watch(
+        theme,
+        (newTheme) => {
+            localStorage.setItem('kivarion-theme', newTheme);
+            applyTheme(newTheme);
+        },
+        { immediate: true },
+    );
 
     watch(clipboardTimeout, (newVal) => {
         localStorage.setItem('kivarion-clipboard-timeout', newVal);
@@ -60,7 +72,10 @@ export const useStore = defineStore('main', () => {
     });
 
     watch(backupEnabled, (newVal) => {
-        localStorage.setItem('kivarion-backup-enabled', newVal ? 'true' : 'false');
+        localStorage.setItem(
+            'kivarion-backup-enabled',
+            newVal ? 'true' : 'false',
+        );
     });
 
     watch(backupDepth, (newVal) => {
@@ -68,10 +83,17 @@ export const useStore = defineStore('main', () => {
     });
 
     return {
-        db, fileName, selectedGroupUuid, filePath,
+        db,
+        fileName,
+        selectedGroupUuid,
+        filePath,
         knownMtime,
-        dbVersion, touchDb,
-        theme, clipboardTimeout, autoLockTimeout,
-        backupEnabled, backupDepth
+        dbVersion,
+        touchDb,
+        theme,
+        clipboardTimeout,
+        autoLockTimeout,
+        backupEnabled,
+        backupDepth,
     };
 });

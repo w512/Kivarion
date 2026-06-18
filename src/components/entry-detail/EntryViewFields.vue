@@ -1,15 +1,33 @@
 <template>
     <div class="fields-view">
-        <div v-for="field in standardFields" :key="field.id" v-show="field.value" class="field-row">
+        <div
+            v-for="field in standardFields"
+            v-show="field.value"
+            :key="field.id"
+            class="field-row"
+        >
             <label>{{ field.label }}</label>
             <div class="field-value-row">
-                <div v-if="field.id === 'Password'" class="field-value password-value">
-                    {{ showPassword ? field.value : maskedPassword(field.value) }}
+                <div
+                    v-if="field.id === 'Password'"
+                    class="field-value password-value"
+                >
+                    {{
+                        showPassword ? field.value : maskedPassword(field.value)
+                    }}
                 </div>
                 <div v-else-if="field.id === 'URL'" class="field-value">
-                    <a :href="ensureProtocol(field.value)" target="_blank" rel="noopener">{{ field.value }}</a>
+                    <a
+                        :href="ensureProtocol(field.value)"
+                        target="_blank"
+                        rel="noopener"
+                        >{{ field.value }}</a
+                    >
                 </div>
-                <div v-else :class="['field-value', { notes: field.id === 'Notes' }]">
+                <div
+                    v-else
+                    :class="['field-value', { notes: field.id === 'Notes' }]"
+                >
                     {{ field.value }}
                 </div>
 
@@ -17,32 +35,81 @@
                     <button
                         v-if="field.id === 'Password'"
                         class="toggle-btn"
-                        @click="showPassword = !showPassword"
                         :title="showPassword ? 'Hide' : 'Show'"
+                        @click="showPassword = !showPassword"
                     >
-                        <svg v-if="!showPassword" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <svg
+                            v-if="!showPassword"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                            />
                             <circle cx="12" cy="12" r="3" />
                         </svg>
-                        <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                            <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                        <svg
+                            v-else
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
+                            />
+                            <path
+                                d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+                            />
                             <line x1="1" y1="1" x2="23" y2="23" />
                         </svg>
                     </button>
 
                     <div class="copy-btn-wrapper">
                         <transition name="mini-toast">
-                            <div v-if="activeCopyField === field.id" class="mini-toast">Copied!</div>
+                            <div
+                                v-if="activeCopyField === field.id"
+                                class="mini-toast"
+                            >
+                                Copied!
+                            </div>
                         </transition>
                         <button
                             class="copy-btn"
-                            @click="copy(field.value, field.id)"
                             :title="'Copy ' + field.label.toLowerCase()"
+                            @click="copy(field.value, field.id)"
                         >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <rect
+                                    x="9"
+                                    y="9"
+                                    width="13"
+                                    height="13"
+                                    rx="2"
+                                    ry="2"
+                                />
+                                <path
+                                    d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                                />
                             </svg>
                         </button>
                     </div>
@@ -66,8 +133,16 @@ const { activeCopyField, copy: copyToClipboard } = useClipboard();
 
 const standardFields = computed(() => [
     { id: 'Title', label: 'Title', value: getField(props.entry, 'Title') },
-    { id: 'UserName', label: 'Username', value: getField(props.entry, 'UserName') },
-    { id: 'Password', label: 'Password', value: getField(props.entry, 'Password') },
+    {
+        id: 'UserName',
+        label: 'Username',
+        value: getField(props.entry, 'UserName'),
+    },
+    {
+        id: 'Password',
+        label: 'Password',
+        value: getField(props.entry, 'Password'),
+    },
     { id: 'URL', label: 'URL', value: getField(props.entry, 'URL') },
     { id: 'Notes', label: 'Notes', value: getField(props.entry, 'Notes') },
 ]);

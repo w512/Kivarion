@@ -17,7 +17,13 @@ export function formatSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-export const STANDARD_FIELDS = ['Title', 'UserName', 'Password', 'URL', 'Notes'];
+export const STANDARD_FIELDS = [
+    'Title',
+    'UserName',
+    'Password',
+    'URL',
+    'Notes',
+];
 
 export function normalizeFieldName(name) {
     return (name || '').trim().toLocaleLowerCase();
@@ -25,11 +31,15 @@ export function normalizeFieldName(name) {
 
 export function isStandardFieldName(name) {
     const normalized = normalizeFieldName(name);
-    return STANDARD_FIELDS.some(field => normalizeFieldName(field) === normalized);
+    return STANDARD_FIELDS.some(
+        (field) => normalizeFieldName(field) === normalized,
+    );
 }
 
 export function isProtectedValue(val) {
-    return !!val && typeof val !== 'string' && typeof val.getText === 'function';
+    return (
+        !!val && typeof val !== 'string' && typeof val.getText === 'function'
+    );
 }
 
 export function getField(entry, name) {
@@ -46,7 +56,10 @@ export function toExactArrayBuffer(bytes) {
     if (!ArrayBuffer.isView(bytes)) {
         throw new TypeError('Expected an ArrayBuffer or a typed array');
     }
-    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    return bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+    );
 }
 
 export function normalizeHttpUrl(value) {
@@ -123,12 +136,22 @@ function passwordCharClasses(options = {}) {
         lower = true,
         numbers = true,
         symbols = true,
-        excludeSimilar = true
+        excludeSimilar = true,
     } = options;
 
     const classes = [];
-    if (upper) classes.push(excludeSimilar ? 'ABCDEFGHJKLMNPQRSTUVWXYZ' : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ');
-    if (lower) classes.push(excludeSimilar ? 'abcdefghijkmnopqrstuvwxyz' : 'abcdefghijklmnopqrstuvwxyz');
+    if (upper)
+        classes.push(
+            excludeSimilar
+                ? 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+                : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+        );
+    if (lower)
+        classes.push(
+            excludeSimilar
+                ? 'abcdefghijkmnopqrstuvwxyz'
+                : 'abcdefghijklmnopqrstuvwxyz',
+        );
     if (numbers) classes.push(excludeSimilar ? '23456789' : '0123456789');
     if (symbols) classes.push(PASSWORD_SYMBOLS);
     return classes;

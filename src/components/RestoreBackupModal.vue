@@ -1,43 +1,59 @@
 <template>
-    <Teleport to="body">
-        <div v-if="show" class="modal-overlay" @click="$emit('close')">
-            <div class="modal-card" @click.stop>
-                <h3>Restore from backup</h3>
-                <p class="hint">
-                    Restoring replaces the current database with an earlier copy.
-                    Any unsaved changes will be lost.
-                </p>
+    <BaseModal
+        :show="show"
+        width="420px"
+        labelledby="restore-backup-title"
+        :close-on-backdrop="!busy"
+        :close-on-esc="!busy"
+        @close="$emit('close')"
+    >
+        <div class="restore-backup">
+            <h3 id="restore-backup-title">Restore from backup</h3>
+            <p class="hint">
+                Restoring replaces the current database with an earlier copy.
+                Any unsaved changes will be lost.
+            </p>
 
-                <p v-if="error" class="restore-error">{{ error }}</p>
+            <p v-if="error" class="restore-error">{{ error }}</p>
 
-                <div v-if="backups.length === 0" class="empty">
-                    No backups found for this database yet.
-                </div>
-                <ul v-else class="backup-list">
-                    <li v-for="b in backups" :key="b.path" class="backup-row">
-                        <div class="backup-info">
-                            <span class="backup-name">{{ fileName(b.path) }}</span>
-                            <span class="backup-meta">{{ formatDate(b.mtime) }} · {{ formatSize(b.size) }}</span>
-                        </div>
-                        <button
-                            class="restore-btn"
-                            :disabled="busy"
-                            @click="$emit('restore', b)"
+            <div v-if="backups.length === 0" class="empty">
+                No backups found for this database yet.
+            </div>
+            <ul v-else class="backup-list">
+                <li v-for="b in backups" :key="b.path" class="backup-row">
+                    <div class="backup-info">
+                        <span class="backup-name">{{ fileName(b.path) }}</span>
+                        <span class="backup-meta"
+                            >{{ formatDate(b.mtime) }} ·
+                            {{ formatSize(b.size) }}</span
                         >
-                            Restore
-                        </button>
-                    </li>
-                </ul>
+                    </div>
+                    <button
+                        class="restore-btn"
+                        :disabled="busy"
+                        @click="$emit('restore', b)"
+                    >
+                        Restore
+                    </button>
+                </li>
+            </ul>
 
-                <div class="modal-actions">
-                    <button class="cancel-btn" :disabled="busy" @click="$emit('close')">Close</button>
-                </div>
+            <div class="modal-actions">
+                <button
+                    class="cancel-btn"
+                    :disabled="busy"
+                    @click="$emit('close')"
+                >
+                    Close
+                </button>
             </div>
         </div>
-    </Teleport>
+    </BaseModal>
 </template>
 
 <script setup>
+import BaseModal from './BaseModal.vue';
+
 defineProps({
     show: { type: Boolean, default: false },
     backups: { type: Array, default: () => [] },
@@ -64,39 +80,7 @@ function formatSize(bytes) {
 </script>
 
 <style scoped>
-.modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    animation: fadeIn 0.15s ease;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-}
-
-.modal-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 1.5rem;
-    width: 420px;
-    max-width: calc(100vw - 2rem);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
-    animation: modalPop 0.2s ease;
-}
-
-@keyframes modalPop {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
-}
-
-.modal-card h3 {
+.restore-backup h3 {
     font-size: 1.1rem;
     font-weight: 700;
     color: var(--text-primary);

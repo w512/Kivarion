@@ -44,7 +44,9 @@ describe('useEntryForm custom fields', () => {
             EmptyCustom: '',
         });
         const emit = mock(() => {});
-        const customFields = ref([{ key: 'EmptyCustom', value: '', protected: false }]);
+        const customFields = ref([
+            { key: 'EmptyCustom', value: '', protected: false },
+        ]);
         const form = useEntryForm({ entry }, emit, customFields);
 
         form.startEdit();
@@ -62,7 +64,9 @@ describe('useEntryForm custom fields', () => {
             SecretCustom: protectedValue('hidden'),
         });
         const emit = mock(() => {});
-        const customFields = ref([{ key: 'SecretCustom', value: 'hidden', protected: true }]);
+        const customFields = ref([
+            { key: 'SecretCustom', value: 'hidden', protected: true },
+        ]);
         const form = useEntryForm({ entry }, emit, customFields);
 
         form.startEdit();
@@ -76,9 +80,14 @@ describe('useEntryForm custom fields', () => {
     });
 
     test('rejects custom fields that collide with standard field names', () => {
-        const entry = makeEntry({ Title: 'Entry', Password: protectedValue('secret') });
+        const entry = makeEntry({
+            Title: 'Entry',
+            Password: protectedValue('secret'),
+        });
         const emit = mock(() => {});
-        const customFields = ref([{ key: ' password ', value: 'plain leak', protected: false }]);
+        const customFields = ref([
+            { key: ' password ', value: 'plain leak', protected: false },
+        ]);
         const form = useEntryForm({ entry }, emit, customFields);
 
         form.startEdit();

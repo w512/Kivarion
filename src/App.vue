@@ -54,6 +54,16 @@ body {
     background: rgba(99, 102, 241, 0.3);
 }
 
+/* Visible keyboard focus ring across the app (keyboard only, not mouse). */
+:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+    outline: none;
+}
+
 ::-webkit-scrollbar {
     width: 6px;
 }

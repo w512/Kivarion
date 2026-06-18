@@ -1,9 +1,9 @@
 <template>
-    <div class="database-page" v-if="store.db">
+    <div v-if="store.db" class="database-page">
         <DatabaseHeader
+            v-model:search="searchQuery"
             :db-name="dbName"
             :file-path="displayPath"
-            v-model:search="searchQuery"
             @lock="closeDatabase"
             @close="closeDatabase"
             @edit-db="showSettingsModal = true"
@@ -11,25 +11,64 @@
 
         <!-- Save failure banner — never let a failed save go unnoticed -->
         <div v-if="saveError" class="save-error-banner" role="alert">
-            <svg class="save-error-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+            <svg
+                class="save-error-icon"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path
+                    d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
             </svg>
             <span class="save-error-text">
                 Changes could not be saved: {{ saveError }}
             </span>
-            <button class="save-error-retry" @click="saveDatabaseChanges" :disabled="isSaving">
+            <button
+                class="save-error-retry"
+                :disabled="isSaving"
+                @click="saveDatabaseChanges"
+            >
                 {{ isSaving ? 'Saving…' : 'Retry' }}
             </button>
-            <button class="save-error-dismiss" @click="saveError = null" title="Dismiss" aria-label="Dismiss">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            <button
+                class="save-error-dismiss"
+                title="Dismiss"
+                aria-label="Dismiss"
+                @click="saveError = null"
+            >
+                <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
             </button>
         </div>
 
         <!-- Main Layout — three columns -->
-        <div class="main-layout" :style="{'--sidebar-width': sidebarWidth + 'px', '--entries-width': entriesWidth + 'px'}" :class="{ 'is-resizing': isResizingSidebar || isResizingEntries }">
+        <div
+            class="main-layout"
+            :style="{
+                '--sidebar-width': sidebarWidth + 'px',
+                '--entries-width': entriesWidth + 'px',
+            }"
+            :class="{ 'is-resizing': isResizingSidebar || isResizingEntries }"
+        >
             <!-- Column 1: Sidebar -->
             <aside class="sidebar">
                 <div class="sidebar-title">Groups</div>
@@ -62,10 +101,14 @@
             </main>
 
             <!-- Resizer for Entries -->
-            <div class="resizer" v-if="selectedEntry" @mousedown.prevent="startResizeEntries"></div>
+            <div
+                v-if="selectedEntry"
+                class="resizer"
+                @mousedown.prevent="startResizeEntries"
+            ></div>
 
             <!-- Column 3: Entry detail -->
-            <aside class="detail-column" v-if="selectedEntry">
+            <aside v-if="selectedEntry" class="detail-column">
                 <EntryDetail
                     ref="entryDetailRef"
                     :entry="selectedEntry"
@@ -77,14 +120,33 @@
         </div>
 
         <!-- Unsaved Edit Confirmation -->
-        <div v-if="showUnsavedEditConfirm" class="modal-overlay" @click="continueEditing">
+        <div
+            v-if="showUnsavedEditConfirm"
+            class="modal-overlay"
+            @click="continueEditing"
+        >
             <div class="modal-card unsaved-modal" @click.stop>
                 <h3>Unsaved changes</h3>
-                <p>You have unsaved changes in the current entry. What would you like to do?</p>
+                <p>
+                    You have unsaved changes in the current entry. What would
+                    you like to do?
+                </p>
                 <div class="modal-actions modal-actions--stacked">
-                    <button class="confirm-btn" @click="saveUnsavedEditAndContinue">Save and continue</button>
-                    <button class="danger-btn" @click="discardUnsavedEditAndContinue">Discard changes</button>
-                    <button class="cancel-btn" @click="continueEditing">Continue editing</button>
+                    <button
+                        class="confirm-btn"
+                        @click="saveUnsavedEditAndContinue"
+                    >
+                        Save and continue
+                    </button>
+                    <button
+                        class="danger-btn"
+                        @click="discardUnsavedEditAndContinue"
+                    >
+                        Discard changes
+                    </button>
+                    <button class="cancel-btn" @click="continueEditing">
+                        Continue editing
+                    </button>
                 </div>
             </div>
         </div>
@@ -113,9 +175,9 @@
 
         <!-- Rename Group Modal -->
         <InputModal
+            v-model="newGroupName"
             :show="showRenameModal"
             title="Rename Group"
-            v-model="newGroupName"
             placeholder="Group name"
             confirm-text="Save"
             :error="groupNameError"
@@ -221,7 +283,7 @@ onMounted(() => {
     }
 
     // Get home directory for path display
-    homeDir().then(dir => {
+    homeDir().then((dir) => {
         homeDirPath.value = dir;
     });
 
@@ -266,9 +328,12 @@ let lockTimer = null;
 function resetLockTimer() {
     if (lockTimer) clearTimeout(lockTimer);
     if (store.autoLockTimeout > 0) {
-        lockTimer = setTimeout(() => {
-            closeDatabase();
-        }, store.autoLockTimeout * 60 * 1000);
+        lockTimer = setTimeout(
+            () => {
+                closeDatabase();
+            },
+            store.autoLockTimeout * 60 * 1000,
+        );
     }
 }
 
@@ -290,15 +355,28 @@ watch(newGroupName, () => {
 });
 
 // Column widths logic
-const { width: sidebarWidth, isResizing: isResizingSidebar, startResize: startResizeSidebar } = 
-    useResizable('kivarion_sidebarWidth', 220, 150, 600);
+const {
+    width: sidebarWidth,
+    isResizing: isResizingSidebar,
+    startResize: startResizeSidebar,
+} = useResizable('kivarion_sidebarWidth', 220, 150, 600);
 
-const { width: entriesWidth, isResizing: isResizingEntries, startResize: startResizeEntries } = 
-    useResizable('kivarion_entriesWidth', 300, 200, 800, sidebarWidth);
+const {
+    width: entriesWidth,
+    isResizing: isResizingEntries,
+    startResize: startResizeEntries,
+} = useResizable('kivarion_entriesWidth', 300, 200, 800, sidebarWidth);
 
 // Database Actions logic
-const { saveDatabaseChanges, addEntry: performAddEntry, addGroup: performAddGroup, isSaving, saveError, saveConflict, hasUnsavedChanges } =
-    useDatabaseActions(store);
+const {
+    saveDatabaseChanges,
+    addEntry: performAddEntry,
+    addGroup: performAddGroup,
+    isSaving,
+    saveError,
+    saveConflict,
+    hasUnsavedChanges,
+} = useDatabaseActions(store);
 
 function overwriteOnConflict() {
     saveConflict.value = false;
@@ -340,7 +418,8 @@ const groupTree = computed(() => {
 const selectedGroup = computed(() => {
     store.dbVersion;
     if (!store.db || !store.selectedGroupUuid) return null;
-    if (store.selectedGroupUuid === ALL_ENTRIES_UUID) return { uuid: ALL_ENTRIES_UUID };
+    if (store.selectedGroupUuid === ALL_ENTRIES_UUID)
+        return { uuid: ALL_ENTRIES_UUID };
     return findGroupByUuid(store.db, store.selectedGroupUuid);
 });
 
@@ -378,7 +457,8 @@ function entryMatches(entry, q) {
         if (isProtectedValue(val)) continue;
         if (typeof val !== 'string') continue;
         // For custom fields the field name itself is user content — match it too.
-        if (!STANDARD_FIELDS.includes(key) && key.toLowerCase().includes(q)) return true;
+        if (!STANDARD_FIELDS.includes(key) && key.toLowerCase().includes(q))
+            return true;
         if (val.toLowerCase().includes(q)) return true;
     }
     return false;
@@ -391,7 +471,7 @@ const filteredEntries = computed(() => {
         ? getAllEntries(store.db).filter((entry) => entryMatches(entry, q))
         : currentRawEntries.value;
 
-    return rawEntries.map(entry => toEntryListItem(entry, store.db));
+    return rawEntries.map((entry) => toEntryListItem(entry, store.db));
 });
 
 function selectGroup(groupUuid) {
@@ -431,7 +511,10 @@ function addGroup(parentGroupUuid) {
 }
 
 function requestDelete(entryOrUuid) {
-    const uuid = typeof entryOrUuid === 'string' ? entryOrUuid : getObjectUuid(entryOrUuid);
+    const uuid =
+        typeof entryOrUuid === 'string'
+            ? entryOrUuid
+            : getObjectUuid(entryOrUuid);
     if (!uuid) return;
     entryToDeleteUuid.value = uuid;
     showDeleteConfirm.value = true;
@@ -463,7 +546,7 @@ function onEntryUpdated() {
 
 async function closeDatabase() {
     requestNavigation(async () => {
-        if (!await ensureSavedBeforeClose()) {
+        if (!(await ensureSavedBeforeClose())) {
             showCloseAfterSaveErrorConfirm.value = true;
             return;
         }
@@ -661,7 +744,9 @@ async function confirmDatabaseSettings({ name, password }) {
 
     if (name !== undefined) store.db.meta.name = name;
     if (password) {
-        store.db.credentials.setPassword(kdbxweb.ProtectedValue.fromString(password));
+        store.db.credentials.setPassword(
+            kdbxweb.ProtectedValue.fromString(password),
+        );
     }
 
     store.touchDb();
@@ -670,19 +755,32 @@ async function confirmDatabaseSettings({ name, password }) {
 
     // If the master password changed, the stored biometric secret is now stale.
     // Update it (or drop it) so Touch ID doesn't keep unlocking with the old password.
-    if (saved && password && store.filePath &&
-        localStorage.getItem(`kivarion-biometrics-${store.filePath}`) === 'true') {
+    if (
+        saved &&
+        password &&
+        store.filePath &&
+        localStorage.getItem(`kivarion-biometrics-${store.filePath}`) === 'true'
+    ) {
         try {
-            await invoke('save_biometric_password', { id: store.filePath, pass: password });
+            await invoke('save_biometric_password', {
+                id: store.filePath,
+                pass: password,
+            });
         } catch (e) {
-            console.error('Failed to update biometric password, removing it:', e);
-            try { await invoke('delete_biometric_password', { id: store.filePath }); } catch {}
+            console.error(
+                'Failed to update biometric password, removing it:',
+                e,
+            );
+            try {
+                await invoke('delete_biometric_password', {
+                    id: store.filePath,
+                });
+            } catch {}
             localStorage.removeItem(`kivarion-biometrics-${store.filePath}`);
         }
     }
 }
 </script>
-
 
 <style scoped>
 .database-page {
@@ -853,7 +951,8 @@ async function confirmDatabaseSettings({ name, password }) {
     position: relative;
 }
 
-.resizer:hover, .resizer:active {
+.resizer:hover,
+.resizer:active {
     background: var(--accent-color);
 }
 

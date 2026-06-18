@@ -41,7 +41,7 @@ export function useEntryIcons(emit) {
     }
 
     return {
-        downloadIcon
+        downloadIcon,
     };
 }
 
@@ -80,7 +80,8 @@ async function applyIcon(entry, store, emit) {
 
 async function fetchIconForDomain(domain) {
     if (iconCache.has(domain)) return iconCache.get(domain).slice(0);
-    if (inFlightFetches.has(domain)) return (await inFlightFetches.get(domain)).slice(0);
+    if (inFlightFetches.has(domain))
+        return (await inFlightFetches.get(domain)).slice(0);
 
     const promise = fetchIcon(domain)
         .then((buffer) => {
@@ -100,16 +101,25 @@ async function fetchIcon(domain) {
     const timeout = setTimeout(() => controller.abort(), ICON_FETCH_TIMEOUT_MS);
 
     try {
-        const res = await tauriFetch(`${ICON_ENDPOINT}${encodeURIComponent(domain)}`, {
-            signal: controller.signal,
-            connectTimeout: ICON_FETCH_TIMEOUT_MS,
-        });
+        const res = await tauriFetch(
+            `${ICON_ENDPOINT}${encodeURIComponent(domain)}`,
+            {
+                signal: controller.signal,
+                connectTimeout: ICON_FETCH_TIMEOUT_MS,
+            },
+        );
 
-        if (!res.ok) throw new Error(`Icon fetch failed with status ${res.status}`);
+        if (!res.ok)
+            throw new Error(`Icon fetch failed with status ${res.status}`);
 
-        const contentType = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+        const contentType = (res.headers.get('content-type') || '')
+            .split(';')[0]
+            .trim()
+            .toLowerCase();
         if (!ALLOWED_ICON_MIME.has(contentType)) {
-            throw new Error(`Unexpected icon content-type: ${contentType || 'unknown'}`);
+            throw new Error(
+                `Unexpected icon content-type: ${contentType || 'unknown'}`,
+            );
         }
 
         const contentLength = Number(res.headers.get('content-length') || 0);
@@ -141,7 +151,8 @@ async function readLimitedBody(res, controller) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+            const chunk =
+                value instanceof Uint8Array ? value : new Uint8Array(value);
             total += chunk.byteLength;
             if (total > MAX_ICON_BYTES) {
                 controller.abort();
@@ -172,7 +183,9 @@ function findCustomIconByData(db, data) {
 function removeUnusedCustomIcon(db, iconId) {
     if (!iconId || !db?.meta?.customIcons?.has(iconId)) return;
 
-    const isUsed = collectAllEntries(db).some(entry => getIconId(entry.customIcon) === iconId);
+    const isUsed = collectAllEntries(db).some(
+        (entry) => getIconId(entry.customIcon) === iconId,
+    );
     if (!isUsed) db.meta.customIcons.delete(iconId);
 }
 

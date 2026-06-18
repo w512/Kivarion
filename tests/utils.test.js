@@ -56,7 +56,13 @@ describe('formatDate', () => {
 
 describe('field helpers', () => {
     test('exports the standard KeePass fields', () => {
-        expect(STANDARD_FIELDS).toEqual(['Title', 'UserName', 'Password', 'URL', 'Notes']);
+        expect(STANDARD_FIELDS).toEqual([
+            'Title',
+            'UserName',
+            'Password',
+            'URL',
+            'Notes',
+        ]);
     });
 
     test('detects protected values', () => {
@@ -74,12 +80,18 @@ describe('field helpers', () => {
 
 describe('normalizeHttpUrl', () => {
     test('adds https to hostnames without a protocol', () => {
-        expect(normalizeHttpUrl('example.com/path')).toBe('https://example.com/path');
+        expect(normalizeHttpUrl('example.com/path')).toBe(
+            'https://example.com/path',
+        );
     });
 
     test('keeps http and https URLs', () => {
-        expect(normalizeHttpUrl('http://example.com')).toBe('http://example.com/');
-        expect(normalizeHttpUrl('https://example.com')).toBe('https://example.com/');
+        expect(normalizeHttpUrl('http://example.com')).toBe(
+            'http://example.com/',
+        );
+        expect(normalizeHttpUrl('https://example.com')).toBe(
+            'https://example.com/',
+        );
     });
 
     test('rejects unsupported or malformed URLs', () => {
@@ -200,45 +212,98 @@ describe('generatePassword', () => {
         expect(generatePassword({ length: 8 }).length).toBe(8);
     });
     test('returns empty string when no character set is selected', () => {
-        const pw = generatePassword({ upper: false, lower: false, numbers: false, symbols: false });
+        const pw = generatePassword({
+            upper: false,
+            lower: false,
+            numbers: false,
+            symbols: false,
+        });
         expect(pw).toBe('');
     });
     test('returns empty string when length cannot cover all selected classes', () => {
-        const pw = generatePassword({ length: 3, upper: true, lower: true, numbers: true, symbols: true });
+        const pw = generatePassword({
+            length: 3,
+            upper: true,
+            lower: true,
+            numbers: true,
+            symbols: true,
+        });
         expect(pw).toBe('');
     });
     test('covers every selected character class', () => {
         for (let i = 0; i < 50; i++) {
-            const pw = generatePassword({ length: 12, upper: true, lower: true, numbers: true, symbols: true, excludeSimilar: true });
+            const pw = generatePassword({
+                length: 12,
+                upper: true,
+                lower: true,
+                numbers: true,
+                symbols: true,
+                excludeSimilar: true,
+            });
             expect(pw).toMatch(/[A-HJ-NP-Z]/);
             expect(pw).toMatch(/[a-km-z]/);
             expect(pw).toMatch(/[2-9]/);
-            expect(pw).toMatch(/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/);
+            expect(pw).toMatch(/[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/);
         }
     });
     test('covers every selected character class when similar characters are allowed', () => {
-        const pw = generatePassword({ length: 4, upper: true, lower: true, numbers: true, symbols: true, excludeSimilar: false });
+        const pw = generatePassword({
+            length: 4,
+            upper: true,
+            lower: true,
+            numbers: true,
+            symbols: true,
+            excludeSimilar: false,
+        });
         expect(pw).toMatch(/[A-Z]/);
         expect(pw).toMatch(/[a-z]/);
         expect(pw).toMatch(/[0-9]/);
-        expect(pw).toMatch(/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/);
+        expect(pw).toMatch(/[!@#$%^&*()_+\-=[\]{}|;:,.<>?]/);
     });
     test('lowercase-only with excludeSimilar omits the ambiguous "l"', () => {
-        const pw = generatePassword({ length: 300, upper: false, lower: true, numbers: false, symbols: false, excludeSimilar: true });
+        const pw = generatePassword({
+            length: 300,
+            upper: false,
+            lower: true,
+            numbers: false,
+            symbols: false,
+            excludeSimilar: true,
+        });
         expect(pw).toMatch(/^[a-z]+$/);
         expect(pw).not.toContain('l');
     });
     test('uppercase-only with excludeSimilar omits I and O', () => {
-        const pw = generatePassword({ length: 300, upper: true, lower: false, numbers: false, symbols: false, excludeSimilar: true });
+        const pw = generatePassword({
+            length: 300,
+            upper: true,
+            lower: false,
+            numbers: false,
+            symbols: false,
+            excludeSimilar: true,
+        });
         expect(pw).toMatch(/^[A-Z]+$/);
         expect(pw).not.toMatch(/[IO]/);
     });
     test('numbers-only with excludeSimilar omits 0 and 1', () => {
-        const pw = generatePassword({ length: 300, upper: false, lower: false, numbers: true, symbols: false, excludeSimilar: true });
+        const pw = generatePassword({
+            length: 300,
+            upper: false,
+            lower: false,
+            numbers: true,
+            symbols: false,
+            excludeSimilar: true,
+        });
         expect(pw).toMatch(/^[2-9]+$/);
     });
     test('estimates entropy from length and selected charset size', () => {
-        const entropy = estimatePasswordEntropy({ length: 8, upper: false, lower: false, numbers: true, symbols: false, excludeSimilar: true });
+        const entropy = estimatePasswordEntropy({
+            length: 8,
+            upper: false,
+            lower: false,
+            numbers: true,
+            symbols: false,
+            excludeSimilar: true,
+        });
         expect(entropy).toBeCloseTo(8 * Math.log2(8));
     });
     test('maps entropy to strength labels', () => {

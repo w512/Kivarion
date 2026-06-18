@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/logo_transparent.png" alt="Kivarion logo" width="128" />
+</p>
+
 # Kivarion
 
 Kivarion is a modern, fast, and secure desktop password manager that works with the KeePass format (`.kdbx` files). Built with **Tauri 2** and **Vue 3**, it provides a native user experience with a strong focus on security.
@@ -16,17 +20,33 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 - **Personalization** — supports light, dark, and system themes.
 - **Native experience** — integrates with the operating system through Tauri, including dialogs, filesystem access, and system paths.
 
+## Platform support
+
+Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. Some features are platform-specific:
+
+- **Touch ID unlock** — **macOS only**. On other platforms the biometric commands report "not supported" and the option is unavailable; unlock there is password-only.
+- **Quick Look attachment preview** — **macOS only** (uses `qlmanage`). In-app image/PDF preview and export work on all platforms.
+
+## Current limitations
+
+These are known gaps (tracked in `docs/ToDo.md`), called out here so expectations are honest:
+
+- **Unlock credentials** — password-only. **Key files** (and key file + password) are **not yet supported**.
+- **Creating a new database** from within the app is not yet supported — open an existing `.kdbx`.
+- **Attachments** are **view / preview / export only**; adding, renaming, or deleting attachments inside Kivarion is not yet implemented.
+- **Recycle Bin** — deleting an entry moves it to the KeePass Recycle Bin (when the database has one enabled), but **restoring** items from the bin inside the app is not yet implemented (you can empty it).
+
 ## Technology Stack
 
-| Component | Technology |
-|-----------|-----------|
-| **Core** | [Tauri 2](https://v2.tauri.app/) (Rust) |
-| **Frontend** | [Vue 3](https://vuejs.org/) (Composition API) |
-| **State** | [Pinia](https://pinia.vuejs.org/) |
-| **Routing** | [Vue Router](https://router.vuejs.org/) |
-| **KDBX** | [kdbxweb](https://github.com/keeweb/kdbxweb) |
-| **Crypto** | [argon2-browser](https://github.com/antelle/argon2-browser) (Bundled WASM) |
-| **Styling** | Vanilla CSS (Variables & Glassmorphism) |
+| Component    | Technology                                                                 |
+| ------------ | -------------------------------------------------------------------------- |
+| **Core**     | [Tauri 2](https://v2.tauri.app/) (Rust)                                    |
+| **Frontend** | [Vue 3](https://vuejs.org/) (Composition API)                              |
+| **State**    | [Pinia](https://pinia.vuejs.org/)                                          |
+| **Routing**  | [Vue Router](https://router.vuejs.org/)                                    |
+| **KDBX**     | [kdbxweb](https://github.com/keeweb/kdbxweb)                               |
+| **Crypto**   | [argon2-browser](https://github.com/antelle/argon2-browser) (Bundled WASM) |
+| **Styling**  | Vanilla CSS (Variables & Glassmorphism)                                    |
 
 ## Development
 
@@ -41,6 +61,14 @@ bun run tauri dev
 
 # Build the production version
 bun run tauri build
+
+# Lint and format
+bun run lint          # ESLint (Vue + JS)
+bun run format        # Prettier (write)
+bun run format:check  # Prettier (verify only)
+
+# Unit tests
+bun test
 ```
 
 ## Test Database

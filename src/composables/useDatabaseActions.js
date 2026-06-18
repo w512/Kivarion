@@ -1,6 +1,12 @@
 import { computed, ref } from 'vue';
 import { saveDatabase } from '../dbHelper.js';
-import { ALL_ENTRIES_UUID, findGroupByUuid, getDefaultGroup, getObjectUuid, getUniqueGroupName } from '../kdbxView.js';
+import {
+    ALL_ENTRIES_UUID,
+    findGroupByUuid,
+    getDefaultGroup,
+    getObjectUuid,
+    getUniqueGroupName,
+} from '../kdbxView.js';
 
 export function useDatabaseActions(store) {
     // Surfaced to the UI so a failed save is never silent.
@@ -11,7 +17,11 @@ export function useDatabaseActions(store) {
     const saveConflict = ref(false);
     const lastSavedDbVersion = ref(store.dbVersion);
     const hasUnsavedChanges = computed(() => {
-        return !!saveError.value || saveConflict.value || store.dbVersion > lastSavedDbVersion.value;
+        return (
+            !!saveError.value ||
+            saveConflict.value ||
+            store.dbVersion > lastSavedDbVersion.value
+        );
     });
 
     let pendingSaveVersion = null;
@@ -39,10 +49,9 @@ export function useDatabaseActions(store) {
         pendingSaveVersion = store.dbVersion;
 
         if (!activeSavePromise) {
-            activeSavePromise = flushSaveQueue()
-                .finally(() => {
-                    activeSavePromise = null;
-                });
+            activeSavePromise = flushSaveQueue().finally(() => {
+                activeSavePromise = null;
+            });
         }
 
         return activeSavePromise;
@@ -59,7 +68,10 @@ export function useDatabaseActions(store) {
 
                 // A duplicate request for a version that has just been saved
                 // does not need another disk write.
-                if (!saveError.value && versionToSave <= lastSavedDbVersion.value) {
+                if (
+                    !saveError.value &&
+                    versionToSave <= lastSavedDbVersion.value
+                ) {
                     continue;
                 }
 
@@ -76,7 +88,8 @@ export function useDatabaseActions(store) {
                         // Let the UI ask the user; don't treat it as a hard error.
                         saveConflict.value = true;
                     } else {
-                        saveError.value = error?.message || String(error) || 'Unknown error';
+                        saveError.value =
+                            error?.message || String(error) || 'Unknown error';
                     }
                     pendingSaveVersion = null;
                     ok = false;
@@ -95,9 +108,10 @@ export function useDatabaseActions(store) {
     function addEntry(targetGroupUuid) {
         if (!store.db) return null;
 
-        const targetGroup = targetGroupUuid === ALL_ENTRIES_UUID
-            ? getDefaultGroup(store.db)
-            : findGroupByUuid(store.db, targetGroupUuid);
+        const targetGroup =
+            targetGroupUuid === ALL_ENTRIES_UUID
+                ? getDefaultGroup(store.db)
+                : findGroupByUuid(store.db, targetGroupUuid);
 
         if (!targetGroup) return null;
 
@@ -112,13 +126,17 @@ export function useDatabaseActions(store) {
     function addGroup(parentGroupUuid) {
         if (!store.db || !parentGroupUuid) return null;
 
-        const parentGroup = parentGroupUuid === ALL_ENTRIES_UUID
-            ? getDefaultGroup(store.db)
-            : findGroupByUuid(store.db, parentGroupUuid);
+        const parentGroup =
+            parentGroupUuid === ALL_ENTRIES_UUID
+                ? getDefaultGroup(store.db)
+                : findGroupByUuid(store.db, parentGroupUuid);
 
         if (!parentGroup) return null;
 
-        const group = store.db.createGroup(parentGroup, getUniqueGroupName(parentGroup));
+        const group = store.db.createGroup(
+            parentGroup,
+            getUniqueGroupName(parentGroup),
+        );
         store.touchDb();
         saveDatabaseChanges();
         return getObjectUuid(group);
@@ -132,6 +150,6 @@ export function useDatabaseActions(store) {
         saveError,
         saveConflict,
         hasUnsavedChanges,
-        lastSavedDbVersion
+        lastSavedDbVersion,
     };
 }

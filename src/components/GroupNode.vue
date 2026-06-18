@@ -11,8 +11,16 @@
         }"
         :style="{ paddingLeft: depth * 16 + 10 + 'px' }"
         :draggable="isDraggable"
+        role="treeitem"
+        tabindex="0"
+        :aria-selected="isSelected"
+        :aria-expanded="hasChildren ? !isCollapsed : undefined"
         @click="$emit('select', group.uuid)"
         @contextmenu.prevent="onRightClick"
+        @keydown.enter.prevent="$emit('select', group.uuid)"
+        @keydown.space.prevent="$emit('select', group.uuid)"
+        @keydown.right.prevent="expand"
+        @keydown.left.prevent="collapse"
         @dragstart="onDragStart"
         @dragover="onDragOver"
         @dragleave="onDragLeave"
@@ -29,12 +37,12 @@
             stroke-linecap="round"
             stroke-linejoin="round"
             class="collapse-toggle"
-            @click.stop="toggleCollapse"
-            @mousedown.stop
             :class="{
                 'has-children': hasChildren,
                 collapsed: isCollapsed,
             }"
+            @click.stop="toggleCollapse"
+            @mousedown.stop
         >
             <!-- All Entries Icon -->
             <template v-if="isAllEntries">
@@ -69,21 +77,52 @@
                 @click.stop
             >
                 <div class="menu-item" @click="handleAction('add')">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <line x1="12" y1="5" x2="12" y2="19"></line>
                         <line x1="5" y1="12" x2="19" y2="12"></line>
                     </svg>
                     Add Subgroup
                 </div>
                 <div class="menu-item" @click="handleAction('rename')">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                        ></path>
+                        <path
+                            d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                        ></path>
                     </svg>
                     Rename
                 </div>
                 <div class="menu-item delete" @click="handleAction('delete')">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6l-1 14H6L5 6"></path>
                         <path d="M10 11v6"></path>
@@ -92,8 +131,21 @@
                     </svg>
                     Delete
                 </div>
-                <div v-if="isRecycleBin" class="menu-item delete" @click="handleAction('empty')">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <div
+                    v-if="isRecycleBin"
+                    class="menu-item delete"
+                    @click="handleAction('empty')"
+                >
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6l-1 14H6L5 6"></path>
                         <path d="M8 6V4h8v2"></path>
@@ -142,7 +194,9 @@ const groupName = computed(() => {
 });
 const entryCount = computed(() => {
     props.refreshKey;
-    return isAllEntries.value ? props.allEntriesCount : (props.group.entryCount || 0);
+    return isAllEntries.value
+        ? props.allEntriesCount
+        : props.group.entryCount || 0;
 });
 
 const contextMenu = ref({
@@ -157,9 +211,21 @@ function toggleCollapse() {
     }
 }
 
+function expand() {
+    if (hasChildren.value && props.isCollapsed) {
+        emit('toggle-collapse', props.group.uuid);
+    }
+}
+
+function collapse() {
+    if (hasChildren.value && !props.isCollapsed) {
+        emit('toggle-collapse', props.group.uuid);
+    }
+}
+
 function onRightClick(event) {
     if (isAllEntries.value) return;
-    
+
     contextMenu.value = {
         visible: true,
         x: event.clientX,
@@ -176,13 +242,22 @@ function handleAction(action) {
 }
 
 // Drag and drop
-const { draggingUuid, dropTarget, startDrag, endDrag, setDropTarget, clearDropTarget, isInvalidTarget } =
-    useGroupDragDrop();
+const {
+    draggingUuid,
+    dropTarget,
+    startDrag,
+    endDrag,
+    setDropTarget,
+    clearDropTarget,
+    isInvalidTarget,
+} = useGroupDragDrop();
 
 const isDraggable = computed(() => !isAllEntries.value && !isRoot.value);
 const isDragging = computed(() => draggingUuid.value === props.group.uuid);
 const dropClass = computed(() =>
-    dropTarget.value?.uuid === props.group.uuid ? dropTarget.value.position : null
+    dropTarget.value?.uuid === props.group.uuid
+        ? dropTarget.value.position
+        : null,
 );
 
 function onDragStart(event) {
@@ -197,7 +272,12 @@ function onDragStart(event) {
 }
 
 function onDragOver(event) {
-    if (isAllEntries.value || !draggingUuid.value || isInvalidTarget(props.group.uuid)) return;
+    if (
+        isAllEntries.value ||
+        !draggingUuid.value ||
+        isInvalidTarget(props.group.uuid)
+    )
+        return;
 
     let position = 'inside';
     if (!isRoot.value) {
@@ -218,7 +298,10 @@ function onDragLeave() {
 
 function onDrop() {
     const draggedUuid = draggingUuid.value;
-    const position = dropTarget.value?.uuid === props.group.uuid ? dropTarget.value.position : null;
+    const position =
+        dropTarget.value?.uuid === props.group.uuid
+            ? dropTarget.value.position
+            : null;
     clearDropTarget();
     if (!draggedUuid || !position) return;
     emit('move-group', { draggedUuid, targetUuid: props.group.uuid, position });
@@ -265,7 +348,7 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
 }
 
 /* Drag and drop */
-.group-node[draggable="true"] {
+.group-node[draggable='true'] {
     cursor: grab;
 }
 
@@ -308,7 +391,9 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
 .group-node svg {
     flex-shrink: 0;
     color: var(--text-secondary);
-    transition: transform 0.2s, fill 0.2s;
+    transition:
+        transform 0.2s,
+        fill 0.2s;
 }
 
 .group-node svg.has-children {
@@ -375,12 +460,20 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
     transition: background 0.15s;
 }
 
-.menu-item svg { color: var(--text-secondary); }
-.menu-item:hover { background: var(--badge-bg); }
-.menu-item:hover svg { color: var(--text-primary); }
+.menu-item svg {
+    color: var(--text-secondary);
+}
+.menu-item:hover {
+    background: var(--badge-bg);
+}
+.menu-item:hover svg {
+    color: var(--text-primary);
+}
 .menu-item.delete:hover {
     color: var(--error-color);
     background: rgba(239, 68, 68, 0.1);
 }
-.menu-item.delete:hover svg { color: var(--error-color); }
+.menu-item.delete:hover svg {
+    color: var(--error-color);
+}
 </style>

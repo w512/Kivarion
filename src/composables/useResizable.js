@@ -1,12 +1,20 @@
 import { ref, watch } from 'vue';
 
-export function useResizable(storageKey, initialWidth, minWidth = 150, maxWidth = 600, offsetSource = null) {
-    const width = ref(parseInt(localStorage.getItem(storageKey)) || initialWidth);
+export function useResizable(
+    storageKey,
+    initialWidth,
+    minWidth = 150,
+    maxWidth = 600,
+    offsetSource = null,
+) {
+    const width = ref(
+        parseInt(localStorage.getItem(storageKey)) || initialWidth,
+    );
     const isResizing = ref(false);
 
     watch(width, (val) => localStorage.setItem(storageKey, val));
 
-    function startResize(e) {
+    function startResize() {
         isResizing.value = true;
         document.addEventListener('mousemove', resize);
         document.addEventListener('mouseup', stopResize);
@@ -14,7 +22,7 @@ export function useResizable(storageKey, initialWidth, minWidth = 150, maxWidth 
 
     function resize(e) {
         if (!isResizing.value) return;
-        
+
         let newWidth;
         if (offsetSource && offsetSource.value !== undefined) {
             newWidth = e.clientX - offsetSource.value;
@@ -36,6 +44,6 @@ export function useResizable(storageKey, initialWidth, minWidth = 150, maxWidth 
     return {
         width,
         isResizing,
-        startResize
+        startResize,
     };
 }

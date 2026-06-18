@@ -4,36 +4,122 @@
             <div class="detail-title-row">
                 <h2>{{ displayTitle }}</h2>
                 <div v-if="!isEditing" class="detail-actions">
-                    <button class="edit-btn" @click="startEdit" title="Edit entry">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    <button
+                        class="edit-btn"
+                        title="Edit entry"
+                        @click="startEdit"
+                    >
+                        <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
+                            />
+                            <path
+                                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
+                            />
                         </svg>
                     </button>
                     <div class="menu-container">
-                        <button class="menu-trigger" @click.stop="showMenu = !showMenu" title="More actions">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" />
+                        <button
+                            class="menu-trigger"
+                            title="More actions"
+                            @click.stop="showMenu = !showMenu"
+                        >
+                            <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <circle cx="12" cy="12" r="1" />
+                                <circle cx="12" cy="5" r="1" />
+                                <circle cx="12" cy="19" r="1" />
                             </svg>
                         </button>
                         <transition name="dropdown">
                             <div v-if="showMenu" class="dropdown-menu">
-                                <button class="menu-item" @click="downloadIcon(entry); showMenu = false">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                                <button
+                                    class="menu-item"
+                                    @click="
+                                        downloadIcon(entry);
+                                        showMenu = false;
+                                    "
+                                >
+                                    <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <path
+                                            d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+                                        />
+                                        <polyline points="7 10 12 15 17 10" />
+                                        <line x1="12" y1="15" x2="12" y2="3" />
                                     </svg>
                                     Update Icon
                                 </button>
-                                <button class="menu-item delete" @click="emit('delete'); showMenu = false">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 6V4h6v2" />
+                                <button
+                                    class="menu-item delete"
+                                    @click="
+                                        emit('delete');
+                                        showMenu = false;
+                                    "
+                                >
+                                    <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <polyline points="3 6 5 6 21 6" />
+                                        <path d="M19 6l-1 14H6L5 6" />
+                                        <path d="M10 11v6" />
+                                        <path d="M14 11v6" />
+                                        <path d="M9 6V4h6v2" />
                                     </svg>
                                     Delete
                                 </button>
                                 <div class="menu-divider"></div>
-                                <button class="menu-item" @click="emit('close'); showMenu = false">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                                <button
+                                    class="menu-item"
+                                    @click="
+                                        emit('close');
+                                        showMenu = false;
+                                    "
+                                >
+                                    <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                        <line x1="6" y1="6" x2="18" y2="18" />
                                     </svg>
                                     Close
                                 </button>
@@ -42,8 +128,20 @@
                     </div>
                 </div>
                 <div v-else class="detail-actions">
-                    <button type="submit" form="entry-edit-form" class="save-btn">Save</button>
-                    <button type="button" class="cancel-btn" @click="cancelEdit">Cancel</button>
+                    <button
+                        type="submit"
+                        form="entry-edit-form"
+                        class="save-btn"
+                    >
+                        Save
+                    </button>
+                    <button
+                        type="button"
+                        class="cancel-btn"
+                        @click="cancelEdit"
+                    >
+                        Cancel
+                    </button>
                 </div>
             </div>
         </div>
@@ -51,8 +149,8 @@
         <div v-if="!isEditing" class="detail-scroll-content">
             <EntryViewFields :entry="entry" />
             <EntryCustomFields :is-editing="false" :fields="customFields" />
-            <EntryAttachments 
-                :attachments="attachments" 
+            <EntryAttachments
+                :attachments="attachments"
                 :thumbnails="attachmentThumbnails"
                 @preview="openPreview"
                 @copy-name="copyAttachmentName"
@@ -61,15 +159,20 @@
             <EntryMetadata :entry="entry" />
         </div>
 
-        <form v-else id="entry-edit-form" class="detail-scroll-content" @submit.prevent="saveEdit">
+        <form
+            v-else
+            id="entry-edit-form"
+            class="detail-scroll-content"
+            @submit.prevent="saveEdit"
+        >
             <EntryEditFields v-model="form" />
-            <EntryCustomFields is-editing v-model="form.CustomFields" />
+            <EntryCustomFields v-model="form.CustomFields" is-editing />
             <p v-if="formError" class="form-error">{{ formError }}</p>
         </form>
 
-        <AttachmentPreviewModal 
-            :show="showPreview" 
-            :url="previewUrl" 
+        <AttachmentPreviewModal
+            :show="showPreview"
+            :url="previewUrl"
             :name="previewName"
             @close="closePreview"
         />
@@ -77,7 +180,7 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, onMounted, onUnmounted, toRef } from 'vue';
+import { ref, computed, onMounted, onUnmounted, toRef } from 'vue';
 import { type } from '@tauri-apps/plugin-os';
 import { useStore } from '../store';
 
@@ -132,15 +235,8 @@ const customFields = computed(() => {
 // Use Composables
 const { downloadIcon } = useEntryIcons(emit);
 
-const {
-    isEditing,
-    isDirty,
-    form,
-    formError,
-    startEdit,
-    cancelEdit,
-    saveEdit
-} = useEntryForm(props, emit, customFields, downloadIcon);
+const { isEditing, isDirty, form, formError, startEdit, cancelEdit, saveEdit } =
+    useEntryForm(props, emit, customFields, downloadIcon);
 
 const {
     attachments,
@@ -151,7 +247,7 @@ const {
     openPreview,
     closePreview,
     exportAttachment,
-    copyAttachmentName
+    copyAttachmentName,
 } = useEntryAttachments(toRef(props, 'entry'), isMac);
 
 function hasUnsavedChanges() {
@@ -172,18 +268,24 @@ defineExpose({
     discardPendingEdit,
 });
 
-const handleClickOutside = () => { if (showMenu.value) showMenu.value = false; };
-const handleKeyDown = (e) => { 
-    if (e.key === 'Escape') { 
-        if (showPreview.value) closePreview(); 
-        else showMenu.value = false; 
-    } 
+const handleClickOutside = () => {
+    if (showMenu.value) showMenu.value = false;
+};
+const handleKeyDown = (e) => {
+    if (e.key === 'Escape') {
+        if (showPreview.value) closePreview();
+        else showMenu.value = false;
+    }
 };
 
 onMounted(async () => {
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('keydown', handleKeyDown);
-    try { isMac.value = (await type()) === 'macos'; } catch (e) { console.error('Failed to detect OS', e); }
+    try {
+        isMac.value = (await type()) === 'macos';
+    } catch (e) {
+        console.error('Failed to detect OS', e);
+    }
 });
 
 onUnmounted(() => {
@@ -191,7 +293,6 @@ onUnmounted(() => {
     document.removeEventListener('keydown', handleKeyDown);
 });
 </script>
-
 
 <style scoped>
 .entry-detail {
@@ -202,7 +303,14 @@ onUnmounted(() => {
     animation: fadeIn 0.2s ease;
 }
 
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
 
 .detail-header {
     padding: 0.75rem 0;
@@ -243,7 +351,9 @@ onUnmounted(() => {
     gap: 1.5rem;
 }
 
-.menu-container { position: relative; }
+.menu-container {
+    position: relative;
+}
 
 .menu-trigger,
 .edit-btn {
@@ -296,10 +406,20 @@ onUnmounted(() => {
     text-align: left;
 }
 
-.menu-item:hover { background: var(--badge-bg); }
-.menu-item.delete { color: var(--error-color); }
-.menu-item.delete:hover { background: rgba(239, 68, 68, 0.1); }
-.menu-divider { height: 1px; background: var(--border-color); margin: 0.4rem 0.25rem; }
+.menu-item:hover {
+    background: var(--badge-bg);
+}
+.menu-item.delete {
+    color: var(--error-color);
+}
+.menu-item.delete:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+.menu-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 0.4rem 0.25rem;
+}
 
 .save-btn {
     padding: 0.35rem 1rem;
@@ -330,7 +450,13 @@ onUnmounted(() => {
     font-size: 0.85rem;
 }
 
-.dropdown-enter-active, .dropdown-leave-active { transition: all 0.2s ease; }
-.dropdown-enter-from, .dropdown-leave-to { opacity: 0; transform: translateY(-8px); }
+.dropdown-enter-active,
+.dropdown-leave-active {
+    transition: all 0.2s ease;
+}
+.dropdown-enter-from,
+.dropdown-leave-to {
+    opacity: 0;
+    transform: translateY(-8px);
+}
 </style>
-

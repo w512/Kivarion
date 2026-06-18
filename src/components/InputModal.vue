@@ -1,40 +1,42 @@
 <template>
-    <Teleport to="body">
-        <div
-            v-if="show"
-            class="modal-overlay"
-            @click="$emit('cancel')"
-        >
-            <div class="modal-card" @click.stop>
-                <h3>{{ title }}</h3>
-                <div class="modal-input-wrapper">
-                    <input
-                        :value="modelValue"
-                        @input="$emit('update:modelValue', $event.target.value)"
-                        :placeholder="placeholder"
-                        ref="inputRef"
-                        @keyup.enter="confirm"
-                        class="modal-input"
-                        :class="{ 'modal-input--error': error }"
-                        autofocus
-                    />
-                    <p v-if="error" class="modal-error">{{ error }}</p>
-                </div>
-                <div class="modal-actions">
-                    <button class="confirm-btn" @click="confirm" :disabled="confirmDisabled">
-                        {{ confirmText }}
-                    </button>
-                    <button class="cancel-btn" @click="$emit('cancel')">
-                        {{ cancelText }}
-                    </button>
-                </div>
+    <BaseModal
+        :show="show"
+        width="340px"
+        labelledby="input-modal-title"
+        @close="$emit('cancel')"
+    >
+        <div class="input-modal">
+            <h3 id="input-modal-title">{{ title }}</h3>
+            <div class="modal-input-wrapper">
+                <input
+                    :value="modelValue"
+                    :placeholder="placeholder"
+                    class="modal-input"
+                    :class="{ 'modal-input--error': error }"
+                    autofocus
+                    @input="$emit('update:modelValue', $event.target.value)"
+                    @keyup.enter="confirm"
+                />
+                <p v-if="error" class="modal-error">{{ error }}</p>
+            </div>
+            <div class="modal-actions">
+                <button
+                    class="confirm-btn"
+                    :disabled="confirmDisabled"
+                    @click="confirm"
+                >
+                    {{ confirmText }}
+                </button>
+                <button class="cancel-btn" @click="$emit('cancel')">
+                    {{ cancelText }}
+                </button>
             </div>
         </div>
-    </Teleport>
+    </BaseModal>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import BaseModal from './BaseModal.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -52,57 +54,14 @@ const emit = defineEmits(['update:modelValue', 'confirm', 'cancel']);
 function confirm() {
     if (!props.confirmDisabled) emit('confirm');
 }
-
-const inputRef = ref(null);
 </script>
 
 <style scoped>
-.modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 100;
-    animation: fadeIn 0.15s ease;
-}
-
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-    }
-    to {
-        opacity: 1;
-    }
-}
-
-.modal-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 1.5rem;
-    width: 340px;
+.input-modal {
     text-align: center;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
-    animation: modalPop 0.2s ease;
 }
 
-@keyframes modalPop {
-    from {
-        opacity: 0;
-        transform: scale(0.95);
-    }
-    to {
-        opacity: 1;
-        transform: scale(1);
-    }
-}
-
-.modal-card h3 {
+.input-modal h3 {
     font-size: 1.1rem;
     font-weight: 700;
     color: var(--text-primary);

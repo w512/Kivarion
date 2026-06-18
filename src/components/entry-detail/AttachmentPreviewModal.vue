@@ -5,19 +5,49 @@
                 <div class="preview-header">
                     <span class="preview-title">{{ name }}</span>
                     <button class="close-preview-btn" @click="$emit('close')">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                        <svg
+                            width="20"
+                            height="20"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
                         </svg>
                     </button>
                 </div>
                 <div class="preview-body">
                     <img v-if="isImage(name)" :src="url" alt="Preview" />
-                    <iframe v-else-if="isViewableInBrowser(name)" :src="url" class="iframe-preview" sandbox></iframe>
+                    <iframe
+                        v-else-if="isViewableInBrowser(name)"
+                        :src="url"
+                        class="iframe-preview"
+                        sandbox
+                    ></iframe>
                     <div v-else class="no-preview">
-                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+                        <svg
+                            width="64"
+                            height="64"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path
+                                d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                            />
+                            <polyline points="14 2 14 8 20 8" />
                         </svg>
-                        <p v-if="isUnsafeAttachmentPreview(name)">Preview disabled for this file type for security reasons.</p>
+                        <p v-if="isUnsafeAttachmentPreview(name)">
+                            Preview disabled for this file type for security
+                            reasons.
+                        </p>
                         <p v-else>No preview available for this file type</p>
                     </div>
                 </div>
@@ -27,7 +57,11 @@
 </template>
 
 <script setup>
-import { isImage, isUnsafeAttachmentPreview, isViewableInBrowser } from '../../utils';
+import {
+    isImage,
+    isUnsafeAttachmentPreview,
+    isViewableInBrowser,
+} from '../../utils';
 
 defineProps({
     show: { type: Boolean, required: true },
@@ -126,10 +160,12 @@ defineEmits(['close']);
     color: var(--text-secondary);
 }
 
-.fade-enter-active, .fade-leave-active {
+.fade-enter-active,
+.fade-leave-active {
     transition: opacity 0.3s ease;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from,
+.fade-leave-to {
     opacity: 0;
 }
 </style>

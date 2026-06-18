@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import {
+    afterEach,
+    beforeEach,
+    describe,
+    expect,
+    mock,
+    spyOn,
+    test,
+} from 'bun:test';
 import { reactive } from 'vue';
 
 let currentStore;
@@ -19,7 +27,8 @@ mock.module('@tauri-apps/api/core', () => ({
     },
 }));
 
-const { useDatabaseActions } = await import('../src/composables/useDatabaseActions.js');
+const { useDatabaseActions } =
+    await import('../src/composables/useDatabaseActions.js');
 
 function makeStore() {
     const dbSaveMock = mock(async () => new Uint8Array([1, 2, 3]).buffer);
@@ -185,7 +194,9 @@ describe('useDatabaseActions save queue', () => {
 
         // The user chooses to overwrite; the forced save succeeds.
         saveInvokeMock = mock(async () => 1234);
-        await expect(actions.saveDatabaseChanges({ force: true })).resolves.toBe(true);
+        await expect(
+            actions.saveDatabaseChanges({ force: true }),
+        ).resolves.toBe(true);
         expect(actions.saveConflict.value).toBe(false);
         expect(actions.hasUnsavedChanges.value).toBe(false);
         expect(actions.lastSavedDbVersion.value).toBe(1);

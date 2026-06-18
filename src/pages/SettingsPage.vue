@@ -59,7 +59,8 @@ async function restoreBackup(backup) {
         showRestore.value = false;
     } catch (e) {
         console.error('Restore failed:', e);
-        restoreError.value = 'Could not restore this backup. It may use a different master password.';
+        restoreError.value =
+            'Could not restore this backup. It may use a different master password.';
     } finally {
         restoreBusy.value = false;
     }
@@ -69,7 +70,7 @@ async function restoreBackup(backup) {
 <template>
     <div class="settings-page">
         <header class="settings-header">
-            <button class="back-btn" @click="goBack" title="Go back">
+            <button class="back-btn" title="Go back" @click="goBack">
                 <svg
                     width="20"
                     height="20"
@@ -104,54 +105,88 @@ async function restoreBackup(backup) {
             <div class="setting-item">
                 <div class="setting-info">
                     <h3>Clipboard Timeout</h3>
-                    <p>Automatically clear clipboard after (seconds, 0 to disable)</p>
+                    <p>
+                        Automatically clear clipboard after (seconds, 0 to
+                        disable)
+                    </p>
                 </div>
                 <div class="setting-action">
-                    <input type="number" v-model.number="store.clipboardTimeout" min="0" max="600" class="number-input">
+                    <input
+                        v-model.number="store.clipboardTimeout"
+                        type="number"
+                        min="0"
+                        max="600"
+                        class="number-input"
+                    />
                 </div>
             </div>
 
             <div class="setting-item">
                 <div class="setting-info">
                     <h3>Auto-Lock Timeout</h3>
-                    <p>Lock database after inactivity (minutes, 0 to disable)</p>
+                    <p>
+                        Lock database after inactivity (minutes, 0 to disable)
+                    </p>
                 </div>
                 <div class="setting-action">
-                    <input type="number" v-model.number="store.autoLockTimeout" min="0" max="1440" class="number-input">
+                    <input
+                        v-model.number="store.autoLockTimeout"
+                        type="number"
+                        min="0"
+                        max="1440"
+                        class="number-input"
+                    />
                 </div>
             </div>
 
             <div class="setting-item">
                 <div class="setting-info">
                     <h3>Backups</h3>
-                    <p>Keep rotating <code>.bak</code> copies of the database on each save</p>
+                    <p>
+                        Keep rotating <code>.bak</code> copies of the database
+                        on each save
+                    </p>
                 </div>
                 <div class="setting-action">
                     <label class="switch">
-                        <input type="checkbox" v-model="store.backupEnabled" />
+                        <input v-model="store.backupEnabled" type="checkbox" />
                         <span class="switch-track"></span>
                     </label>
                 </div>
             </div>
 
-            <div class="setting-item" v-if="store.backupEnabled">
+            <div v-if="store.backupEnabled" class="setting-item">
                 <div class="setting-info">
                     <h3>Backups to keep</h3>
                     <p>Number of rotating backups retained (1–20)</p>
                 </div>
                 <div class="setting-action">
-                    <input type="number" v-model.number="store.backupDepth" min="1" max="20" class="number-input">
+                    <input
+                        v-model.number="store.backupDepth"
+                        type="number"
+                        min="1"
+                        max="20"
+                        class="number-input"
+                    />
                 </div>
             </div>
 
             <div class="setting-item">
                 <div class="setting-info">
                     <h3>Restore from backup</h3>
-                    <p v-if="canRestore">Replace the open database with an earlier backup</p>
-                    <p v-else>Open a database first to restore one of its backups</p>
+                    <p v-if="canRestore">
+                        Replace the open database with an earlier backup
+                    </p>
+                    <p v-else>
+                        Open a database first to restore one of its backups
+                    </p>
                 </div>
                 <div class="setting-action">
-                    <button class="action-button" :disabled="!canRestore" @click="openRestore">
+                    <button
+                        class="action-button"
+                        :disabled="!canRestore"
+                        @click="openRestore"
+                    >
                         Restore…
                     </button>
                 </div>
@@ -282,7 +317,9 @@ async function restoreBackup(backup) {
     border: none;
     border-radius: 6px;
     cursor: pointer;
-    transition: background 0.15s, opacity 0.15s;
+    transition:
+        background 0.15s,
+        opacity 0.15s;
 }
 
 .action-button:hover:not(:disabled) {

@@ -1,0 +1,8 @@
+dist
+node_modules
+src-tauri/target
+src-tauri/gen
+public
+bun.lock
+bun.lockb
+*.kdbx

@@ -3,7 +3,12 @@
         <!-- Virtual "All Entries" group -->
         <GroupNode
             v-if="depth === 0"
-            :group="{ uuid: 'all', name: 'All Entries', entryCount: allEntriesCount, children: [] }"
+            :group="{
+                uuid: 'all',
+                name: 'All Entries',
+                entryCount: allEntriesCount,
+                children: [],
+            }"
             :selected-group-uuid="selectedGroupUuid"
             :all-entries-count="allEntriesCount"
             :refresh-key="refreshKey"
@@ -50,7 +55,7 @@
 import { ref } from 'vue';
 import GroupNode from './GroupNode.vue';
 
-const props = defineProps({
+defineProps({
     groups: { type: Array, default: () => [] },
     selectedGroupUuid: { type: String, default: null },
     depth: { type: Number, default: 0 },

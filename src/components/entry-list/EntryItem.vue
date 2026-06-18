@@ -2,11 +2,31 @@
     <div
         class="entry-row"
         :class="{ active: selected }"
+        role="button"
+        tabindex="0"
+        :aria-pressed="selected"
         @click="$emit('select')"
+        @keydown.enter="$emit('select')"
+        @keydown.space.prevent="$emit('select')"
     >
         <div class="entry-icon">
-            <img v-if="entry.iconSrc" :src="entry.iconSrc" class="custom-icon-img" alt="" />
-            <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <img
+                v-if="entry.iconSrc"
+                :src="entry.iconSrc"
+                class="custom-icon-img"
+                alt=""
+            />
+            <svg
+                v-else
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>

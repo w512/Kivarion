@@ -58,33 +58,48 @@ function findEntryInGroup(group, uuid) {
 export function groupContainsGroupUuid(group, uuid) {
     if (!group || !uuid) return false;
     if (getObjectUuid(group) === uuid) return true;
-    return (group.groups || []).some(child => groupContainsGroupUuid(child, uuid));
+    return (group.groups || []).some((child) =>
+        groupContainsGroupUuid(child, uuid),
+    );
 }
 
 export function groupContainsEntryUuid(group, uuid) {
     if (!group || !uuid) return false;
-    if ((group.entries || []).some(entry => getObjectUuid(entry) === uuid)) return true;
-    return (group.groups || []).some(child => groupContainsEntryUuid(child, uuid));
+    if ((group.entries || []).some((entry) => getObjectUuid(entry) === uuid))
+        return true;
+    return (group.groups || []).some((child) =>
+        groupContainsEntryUuid(child, uuid),
+    );
 }
 
 export function normalizeGroupName(name) {
     return (name || '').trim();
 }
 
-export function groupNameExistsInParent(group, name, excludeUuid = getObjectUuid(group)) {
+export function groupNameExistsInParent(
+    group,
+    name,
+    excludeUuid = getObjectUuid(group),
+) {
     const parent = group?.parentGroup;
     const normalized = normalizeGroupName(name).toLocaleLowerCase();
     if (!parent || !normalized) return false;
 
-    return (parent.groups || []).some(sibling => {
-        return getObjectUuid(sibling) !== excludeUuid &&
-            normalizeGroupName(sibling.name).toLocaleLowerCase() === normalized;
+    return (parent.groups || []).some((sibling) => {
+        return (
+            getObjectUuid(sibling) !== excludeUuid &&
+            normalizeGroupName(sibling.name).toLocaleLowerCase() === normalized
+        );
     });
 }
 
 export function getUniqueGroupName(parentGroup, baseName = 'New group') {
     const base = normalizeGroupName(baseName) || 'New group';
-    const names = new Set((parentGroup?.groups || []).map(group => normalizeGroupName(group.name).toLocaleLowerCase()));
+    const names = new Set(
+        (parentGroup?.groups || []).map((group) =>
+            normalizeGroupName(group.name).toLocaleLowerCase(),
+        ),
+    );
     if (!names.has(base.toLocaleLowerCase())) return base;
 
     let i = 2;
@@ -114,7 +129,8 @@ function collectEntries(db, group, entries) {
 // `position` is 'before' | 'after' | 'inside'. Pure: only reads the tree, never
 // mutates — so the index math stays unit-testable.
 export function resolveGroupMove(db, draggedUuid, targetUuid, position) {
-    if (!db || !draggedUuid || !targetUuid || draggedUuid === targetUuid) return null;
+    if (!db || !draggedUuid || !targetUuid || draggedUuid === targetUuid)
+        return null;
 
     const dragged = findGroupByUuid(db, draggedUuid);
     const target = findGroupByUuid(db, targetUuid);
@@ -150,7 +166,9 @@ export function resolveGroupMove(db, draggedUuid, targetUuid, position) {
 
 export function getRecycleBinGroup(db) {
     if (!db?.meta?.recycleBinUuid) return null;
-    return findGroupInTree(getDefaultGroup(db), db.meta.recycleBinUuid.id) || null;
+    return (
+        findGroupInTree(getDefaultGroup(db), db.meta.recycleBinUuid.id) || null
+    );
 }
 
 export function toGroupTreeNode(group, db) {
@@ -159,7 +177,9 @@ export function toGroupTreeNode(group, db) {
         name: group?.name || '',
         entryCount: group?.entries?.length || 0,
         isRecycleBin: isRecycleBinGroup(db, group),
-        children: (group?.groups || []).map(child => toGroupTreeNode(child, db)),
+        children: (group?.groups || []).map((child) =>
+            toGroupTreeNode(child, db),
+        ),
     };
 }
 
@@ -180,6 +200,8 @@ function getEntryIconSrc(entry, db) {
     const customIcon = db.meta.customIcons.get(iconId);
     if (!customIcon?.data) return null;
 
-    const b64 = kdbxweb.ByteUtils.bytesToBase64(new Uint8Array(customIcon.data));
+    const b64 = kdbxweb.ByteUtils.bytesToBase64(
+        new Uint8Array(customIcon.data),
+    );
     return `data:image/png;base64,${b64}`;
 }

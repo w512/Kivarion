@@ -1,6 +1,11 @@
 import { computed, ref, watch } from 'vue';
 import * as kdbxweb from 'kdbxweb';
-import { getField, isStandardFieldName, normalizeFieldName, STANDARD_FIELDS } from '../utils';
+import {
+    getField,
+    isStandardFieldName,
+    normalizeFieldName,
+    STANDARD_FIELDS,
+} from '../utils';
 
 export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     const isEditing = ref(false);
@@ -14,7 +19,11 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     });
     const formError = ref('');
     const initialFormSnapshot = ref('');
-    const isDirty = computed(() => isEditing.value && snapshotForm(form.value) !== initialFormSnapshot.value);
+    const isDirty = computed(
+        () =>
+            isEditing.value &&
+            snapshotForm(form.value) !== initialFormSnapshot.value,
+    );
 
     function loadForm() {
         formError.value = '';
@@ -24,7 +33,7 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
             Password: getField(props.entry, 'Password'),
             URL: getField(props.entry, 'URL'),
             Notes: getField(props.entry, 'Notes'),
-            CustomFields: customFields.value.map(f => ({
+            CustomFields: customFields.value.map((f) => ({
                 key: f.key,
                 value: f.value ?? '',
                 protected: !!f.protected,
@@ -37,10 +46,14 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         return JSON.stringify(value);
     }
 
-    watch(() => props.entry?.uuid?.id, () => {
-        isEditing.value = false;
-        loadForm();
-    }, { immediate: true });
+    watch(
+        () => props.entry?.uuid?.id,
+        () => {
+            isEditing.value = false;
+            loadForm();
+        },
+        { immediate: true },
+    );
 
     function startEdit() {
         loadForm();
@@ -57,24 +70,29 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         const normalizedCustomFields = validateCustomFields();
         if (!normalizedCustomFields) return false;
 
-        const needsIcon = form.value.URL && (!entry.customIcon || getField(entry, 'URL') !== form.value.URL);
+        const needsIcon =
+            form.value.URL &&
+            (!entry.customIcon || getField(entry, 'URL') !== form.value.URL);
 
         entry.pushHistory();
         entry.fields.set('Title', form.value.Title);
         entry.fields.set('UserName', form.value.UserName);
-        entry.fields.set('Password', kdbxweb.ProtectedValue.fromString(form.value.Password));
+        entry.fields.set(
+            'Password',
+            kdbxweb.ProtectedValue.fromString(form.value.Password),
+        );
         entry.fields.set('URL', form.value.URL);
         entry.fields.set('Notes', form.value.Notes);
 
-        const newKeys = new Set(normalizedCustomFields.map(f => f.key));
-        
+        const newKeys = new Set(normalizedCustomFields.map((f) => f.key));
+
         // Remove old custom fields not present in form
         for (const [key] of entry.fields) {
             if (!STANDARD_FIELDS.includes(key) && !newKeys.has(key)) {
                 entry.fields.delete(key);
             }
         }
-        
+
         // Add/Update fields from form
         for (const field of normalizedCustomFields) {
             entry.fields.set(
@@ -89,7 +107,7 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         initialFormSnapshot.value = snapshotForm(form.value);
         isEditing.value = false;
         emit('updated');
-        
+
         if (needsIcon && downloadIconCallback) {
             downloadIconCallback(entry);
         }
@@ -134,6 +152,6 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         formError,
         startEdit,
         cancelEdit,
-        saveEdit
+        saveEdit,
     };
 }

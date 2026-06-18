@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import {
+    afterEach,
+    beforeEach,
+    describe,
+    expect,
+    mock,
+    spyOn,
+    test,
+} from 'bun:test';
 import { reactive } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 
@@ -18,7 +26,13 @@ mock.module('@tauri-apps/plugin-http', () => ({
 
 const { useEntryIcons } = await import('../src/composables/useEntryIcons.js');
 
-function response({ ok = true, status = 200, type = 'image/png', length, bytes = [1, 2, 3] } = {}) {
+function response({
+    ok = true,
+    status = 200,
+    type = 'image/png',
+    length,
+    bytes = [1, 2, 3],
+} = {}) {
     const data = new Uint8Array(bytes).buffer;
     return {
         ok,
@@ -27,7 +41,8 @@ function response({ ok = true, status = 200, type = 'image/png', length, bytes =
             get(name) {
                 const key = name.toLowerCase();
                 if (key === 'content-type') return type;
-                if (key === 'content-length') return length ?? String(data.byteLength);
+                if (key === 'content-length')
+                    return length ?? String(data.byteLength);
                 return null;
             },
         },
@@ -55,7 +70,7 @@ function makeStore(entries) {
 }
 
 async function tick() {
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await Promise.resolve();
 }
 
@@ -88,7 +103,9 @@ describe('useEntryIcons', () => {
     });
 
     test('rejects non-image/png responses without mutating the entry', async () => {
-        fetchMock = mock(async () => response({ type: 'text/html', bytes: [60, 33] }));
+        fetchMock = mock(async () =>
+            response({ type: 'text/html', bytes: [60, 33] }),
+        );
         const entry = makeEntry('https://bad.example');
         const store = makeStore([entry]);
         const emit = mock(() => {});
@@ -107,7 +124,9 @@ describe('useEntryIcons', () => {
         const entry = makeEntry('https://same.example');
         const store = makeStore([entry]);
         const icon = kdbxweb.KdbxUuid.random();
-        store.db.meta.customIcons.set(icon.id, { data: new Uint8Array([1, 2, 3]).buffer });
+        store.db.meta.customIcons.set(icon.id, {
+            data: new Uint8Array([1, 2, 3]).buffer,
+        });
         entry.customIcon = icon;
         const emit = mock(() => {});
 
@@ -126,7 +145,9 @@ describe('useEntryIcons', () => {
         const entry = makeEntry('https://replace.example');
         const store = makeStore([entry]);
         const oldIcon = kdbxweb.KdbxUuid.random();
-        store.db.meta.customIcons.set(oldIcon.id, { data: new Uint8Array([1, 1, 1]).buffer });
+        store.db.meta.customIcons.set(oldIcon.id, {
+            data: new Uint8Array([1, 1, 1]).buffer,
+        });
         entry.customIcon = oldIcon;
 
         const { downloadIcon } = useEntryIcons(mock(() => {}));
@@ -144,7 +165,9 @@ describe('useEntryIcons', () => {
         const otherEntry = makeEntry('https://other.example');
         const store = makeStore([entry, otherEntry]);
         const oldIcon = kdbxweb.KdbxUuid.random();
-        store.db.meta.customIcons.set(oldIcon.id, { data: new Uint8Array([1, 1, 1]).buffer });
+        store.db.meta.customIcons.set(oldIcon.id, {
+            data: new Uint8Array([1, 1, 1]).buffer,
+        });
         entry.customIcon = oldIcon;
         otherEntry.customIcon = oldIcon;
 
@@ -159,9 +182,13 @@ describe('useEntryIcons', () => {
 
     test('coalesces concurrent fetches for the same domain', async () => {
         let resolveFetch;
-        fetchMock = mock(() => new Promise(resolve => {
-            resolveFetch = () => resolve(response({ bytes: [4, 5, 6] }));
-        }));
+        fetchMock = mock(
+            () =>
+                new Promise((resolve) => {
+                    resolveFetch = () =>
+                        resolve(response({ bytes: [4, 5, 6] }));
+                }),
+        );
         const entryA = makeEntry('https://cache.example/a');
         const entryB = makeEntry('https://cache.example/b');
         makeStore([entryA, entryB]);

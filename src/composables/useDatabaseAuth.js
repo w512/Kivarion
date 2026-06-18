@@ -19,7 +19,9 @@ export function useDatabaseAuth(router, passwordInputRef) {
     // Check if biometrics are supported and available
     async function checkBiometrics() {
         try {
-            isBiometricsSupported.value = await invoke('is_biometric_available');
+            isBiometricsSupported.value = await invoke(
+                'is_biometric_available',
+            );
         } catch (e) {
             console.error('Failed to check biometric availability:', e);
             isBiometricsSupported.value = false;
@@ -50,9 +52,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
         try {
             const selected = await open({
                 multiple: false,
-                filters: [
-                    { name: 'KDBX Database', extensions: ['kdbx'] },
-                ],
+                filters: [{ name: 'KDBX Database', extensions: ['kdbx'] }],
             });
 
             if (selected) {
@@ -156,7 +156,10 @@ export function useDatabaseAuth(router, passwordInputRef) {
             // Skip saving if we just authenticated via biometrics (avoids a redundant prompt).
             if (useBiometrics.value && !isBiometricAuthenticated.value) {
                 try {
-                    await invoke('save_biometric_password', { id: path, pass: password.value });
+                    await invoke('save_biometric_password', {
+                        id: path,
+                        pass: password.value,
+                    });
                     localStorage.setItem(`kivarion-biometrics-${path}`, 'true');
                 } catch (e) {
                     console.error('Failed to save biometric password:', e);
@@ -165,7 +168,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
                 try {
                     await invoke('delete_biometric_password', { id: path });
                     localStorage.removeItem(`kivarion-biometrics-${path}`);
-                } catch (e) {}
+                } catch {}
             }
 
             localStorage.setItem('kivarion-last-db-path', path);
@@ -178,7 +181,8 @@ export function useDatabaseAuth(router, passwordInputRef) {
             if (err.code === 'InvalidKey') {
                 errorMessage.value = 'Incorrect password. Please try again.';
             } else {
-                errorMessage.value = 'Failed to open database. Check the file and password.';
+                errorMessage.value =
+                    'Failed to open database. Check the file and password.';
             }
         } finally {
             isLoading.value = false;
@@ -198,6 +202,6 @@ export function useDatabaseAuth(router, passwordInputRef) {
         resetFile,
         decrypt,
         attemptBiometricUnlock,
-        store
+        store,
     };
 }

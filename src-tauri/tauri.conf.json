@@ -26,9 +26,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": [
-      "icons/App_Icon.icns"
-    ],
+    "icon": ["icons/App_Icon.icns"],
     "macOS": {
       "entitlements": "Entitlements.plist"
     }

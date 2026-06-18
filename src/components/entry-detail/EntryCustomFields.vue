@@ -1,7 +1,10 @@
 <template>
     <div class="custom-fields-wrapper">
         <!-- View Mode -->
-        <div v-if="!isEditing && fields.length > 0" class="custom-fields-section">
+        <div
+            v-if="!isEditing && fields.length > 0"
+            class="custom-fields-section"
+        >
             <div class="section-header">
                 <h3>Custom Fields</h3>
             </div>
@@ -10,32 +13,100 @@
                     <label>{{ field.key }}</label>
                     <div class="field-value-row">
                         <div class="field-value">
-                            {{ field.protected && !isProtectedFieldVisible(field.key) ? maskedValue(field.value) : field.value }}
+                            {{
+                                field.protected &&
+                                !isProtectedFieldVisible(field.key)
+                                    ? maskedValue(field.value)
+                                    : field.value
+                            }}
                         </div>
                         <div class="field-actions">
                             <button
                                 v-if="field.protected"
                                 class="toggle-btn"
+                                :title="
+                                    isProtectedFieldVisible(field.key)
+                                        ? 'Hide'
+                                        : 'Show'
+                                "
                                 @click="toggleProtectedField(field.key)"
-                                :title="isProtectedFieldVisible(field.key) ? 'Hide' : 'Show'"
                             >
-                                <svg v-if="!isProtectedFieldVisible(field.key)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                <svg
+                                    v-if="!isProtectedFieldVisible(field.key)"
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path
+                                        d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+                                    />
                                     <circle cx="12" cy="12" r="3" />
                                 </svg>
-                                <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                                <svg
+                                    v-else
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path
+                                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
+                                    />
+                                    <path
+                                        d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+                                    />
                                     <line x1="1" y1="1" x2="23" y2="23" />
                                 </svg>
                             </button>
                             <transition name="mini-toast">
-                                <div v-if="activeCopyField === field.key" class="mini-toast">Copied!</div>
+                                <div
+                                    v-if="activeCopyField === field.key"
+                                    class="mini-toast"
+                                >
+                                    Copied!
+                                </div>
                             </transition>
-                            <button class="copy-btn" @click="copy(field.value, field.key, field.protected)" title="Copy">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                            <button
+                                class="copy-btn"
+                                title="Copy"
+                                @click="
+                                    copy(
+                                        field.value,
+                                        field.key,
+                                        field.protected,
+                                    )
+                                "
+                            >
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <rect
+                                        x="9"
+                                        y="9"
+                                        width="13"
+                                        height="13"
+                                        rx="2"
+                                        ry="2"
+                                    />
+                                    <path
+                                        d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                                    />
                                 </svg>
                             </button>
                         </div>
@@ -49,7 +120,16 @@
             <div class="section-header">
                 <h3>Custom Fields</h3>
                 <button type="button" class="add-field-btn" @click="addField">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <line x1="12" y1="5" x2="12" y2="19" />
                         <line x1="5" y1="12" x2="19" y2="12" />
                     </svg>
@@ -57,21 +137,48 @@
                 </button>
             </div>
 
-            <div v-if="modelValue.length === 0" class="no-custom-fields">No custom fields</div>
+            <div v-if="modelValue.length === 0" class="no-custom-fields">
+                No custom fields
+            </div>
 
-            <div v-for="(field, index) in modelValue" :key="index" class="custom-field-edit-row">
+            <div
+                v-for="(field, index) in modelValue"
+                :key="index"
+                class="custom-field-edit-row"
+            >
                 <div class="form-group field-key-group">
                     <input v-model="field.key" placeholder="Name" />
                 </div>
                 <div class="form-group field-value-group">
-                    <input :type="field.protected ? 'password' : 'text'" v-model="field.value" placeholder="Value" />
+                    <input
+                        v-model="field.value"
+                        :type="field.protected ? 'password' : 'text'"
+                        placeholder="Value"
+                    />
                 </div>
-                <label class="protected-toggle" title="Store this custom field as a protected KeePass value">
-                    <input type="checkbox" v-model="field.protected" />
+                <label
+                    class="protected-toggle"
+                    title="Store this custom field as a protected KeePass value"
+                >
+                    <input v-model="field.protected" type="checkbox" />
                     <span>Protected</span>
                 </label>
-                <button type="button" class="remove-field-btn" @click="removeField(index)" title="Remove field">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <button
+                    type="button"
+                    class="remove-field-btn"
+                    title="Remove field"
+                    @click="removeField(index)"
+                >
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
                         <line x1="18" y1="6" x2="6" y2="18" />
                         <line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
@@ -96,12 +203,18 @@ const emit = defineEmits(['update:modelValue']);
 const { activeCopyField, copy: copyToClipboard } = useClipboard();
 const visibleProtectedFields = ref({});
 
-watch(() => props.fields.map(field => field.key).join('\0'), () => {
-    visibleProtectedFields.value = {};
-});
+watch(
+    () => props.fields.map((field) => field.key).join('\0'),
+    () => {
+        visibleProtectedFields.value = {};
+    },
+);
 
 function addField() {
-    const newFields = [...props.modelValue, { key: '', value: '', protected: false }];
+    const newFields = [
+        ...props.modelValue,
+        { key: '', value: '', protected: false },
+    ];
     emit('update:modelValue', newFields);
 }
 

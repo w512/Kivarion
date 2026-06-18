@@ -18,7 +18,10 @@ export function useEntryAttachments(entryRef, isMac) {
             for (const [name, binary] of entry.binaries) {
                 let data = null;
                 if (binary?.value) {
-                    data = binary.value instanceof Uint8Array ? binary.value : binary.value.getBinary?.();
+                    data =
+                        binary.value instanceof Uint8Array
+                            ? binary.value
+                            : binary.value.getBinary?.();
                 } else if (binary instanceof Uint8Array) {
                     data = binary;
                 }
@@ -28,20 +31,27 @@ export function useEntryAttachments(entryRef, isMac) {
         return list;
     });
 
-    watch(attachments, (newAttachments) => {
-        // Cleanup old URLs
-        for (const url of attachmentThumbnails.value.values()) {
-            URL.revokeObjectURL(url);
-        }
-        attachmentThumbnails.value.clear();
-
-        // Create new URLs for images
-        for (const att of newAttachments) {
-            if (isImage(att.name)) {
-                attachmentThumbnails.value.set(att.name, URL.createObjectURL(new Blob([att.data])));
+    watch(
+        attachments,
+        (newAttachments) => {
+            // Cleanup old URLs
+            for (const url of attachmentThumbnails.value.values()) {
+                URL.revokeObjectURL(url);
             }
-        }
-    }, { immediate: true });
+            attachmentThumbnails.value.clear();
+
+            // Create new URLs for images
+            for (const att of newAttachments) {
+                if (isImage(att.name)) {
+                    attachmentThumbnails.value.set(
+                        att.name,
+                        URL.createObjectURL(new Blob([att.data])),
+                    );
+                }
+            }
+        },
+        { immediate: true },
+    );
 
     onUnmounted(() => {
         for (const url of attachmentThumbnails.value.values()) {
@@ -71,7 +81,9 @@ export function useEntryAttachments(entryRef, isMac) {
 
     function openPreviewModal(attachment) {
         if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
-        previewUrl.value = URL.createObjectURL(new Blob([attachment.data], { type: getMimeType(attachment.name) }));
+        previewUrl.value = URL.createObjectURL(
+            new Blob([attachment.data], { type: getMimeType(attachment.name) }),
+        );
         previewName.value = attachment.name;
         showPreview.value = true;
     }
@@ -90,7 +102,8 @@ export function useEntryAttachments(entryRef, isMac) {
     async function exportAttachment(att) {
         try {
             const filePath = await save({ defaultPath: att.name });
-            if (filePath) await invoke('export_file', { path: filePath, data: att.data });
+            if (filePath)
+                await invoke('export_file', { path: filePath, data: att.data });
         } catch (err) {
             console.error('Failed to export attachment:', err);
         }
@@ -109,6 +122,6 @@ export function useEntryAttachments(entryRef, isMac) {
         openPreview,
         closePreview,
         exportAttachment,
-        copyAttachmentName
+        copyAttachmentName,
     };
 }

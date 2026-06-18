@@ -1,21 +1,43 @@
 <template>
-    <div class="custom-dropdown" v-click-outside="() => (isSortOpen = false)">
+    <div ref="root" class="custom-dropdown">
         <button
+            ref="triggerRef"
             class="dropdown-trigger"
-            @click="isSortOpen = !isSortOpen"
             :title="'Sort: ' + currentSortLabel"
+            aria-haspopup="true"
+            :aria-expanded="isSortOpen"
+            @click="toggle"
+            @keydown.down.prevent="openAndFocusFirst"
         >
             <span class="trigger-label">{{ currentSortLabel }}</span>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="chevron" :class="{ open: isSortOpen }">
+            <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="chevron"
+                :class="{ open: isSortOpen }"
+            >
                 <path d="m6 9 6 6 6-6" />
             </svg>
         </button>
-        <div v-if="isSortOpen" class="dropdown-menu">
+        <div
+            v-if="isSortOpen"
+            ref="menuRef"
+            class="dropdown-menu"
+            role="menu"
+            @keydown="onMenuKeydown"
+        >
             <button
                 v-for="option in sortOptions"
                 :key="option.value"
                 class="dropdown-item"
                 :class="{ active: modelValue === option.value }"
+                role="menuitem"
                 @click="updateSort(option.value)"
             >
                 {{ option.label }}
@@ -25,7 +47,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { computed, nextTick, ref } from 'vue';
+import { useOutsideClick } from '../../composables/useOutsideClick';
 
 const props = defineProps({
     modelValue: { type: String, required: true },
@@ -34,6 +57,11 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue']);
 
 const isSortOpen = ref(false);
+const root = ref(null);
+const triggerRef = ref(null);
+const menuRef = ref(null);
+
+useOutsideClick(root, () => (isSortOpen.value = false));
 
 const sortOptions = [
     { label: 'Title (A-Z)', value: 'title-asc' },
@@ -45,25 +73,74 @@ const sortOptions = [
 ];
 
 const currentSortLabel = computed(() => {
-    return sortOptions.find((opt) => opt.value === props.modelValue)?.label || 'Sort';
+    return (
+        sortOptions.find((opt) => opt.value === props.modelValue)?.label ||
+        'Sort'
+    );
 });
 
-function updateSort(val) {
-    emit('update:modelValue', val);
+function toggle() {
+    isSortOpen.value = !isSortOpen.value;
+}
+
+function close() {
     isSortOpen.value = false;
 }
 
-const vClickOutside = {
-    mounted(el, binding) {
-        el.clickOutsideEvent = (event) => {
-            if (!(el === event.target || el.contains(event.target))) binding.value();
-        };
-        document.addEventListener('click', el.clickOutsideEvent);
-    },
-    unmounted(el) {
-        document.removeEventListener('click', el.clickOutsideEvent);
-    },
-};
+function updateSort(val) {
+    emit('update:modelValue', val);
+    close();
+    triggerRef.value?.focus();
+}
+
+function menuItems() {
+    return menuRef.value
+        ? Array.from(menuRef.value.querySelectorAll('.dropdown-item'))
+        : [];
+}
+
+function focusItem(index) {
+    const items = menuItems();
+    if (items.length === 0) return;
+    const wrapped = (index + items.length) % items.length;
+    items[wrapped].focus();
+}
+
+function openAndFocusFirst() {
+    isSortOpen.value = true;
+    nextTick(() => focusItem(0));
+}
+
+function onMenuKeydown(e) {
+    const items = menuItems();
+    const current = items.indexOf(document.activeElement);
+    switch (e.key) {
+        case 'ArrowDown':
+            e.preventDefault();
+            focusItem(current + 1);
+            break;
+        case 'ArrowUp':
+            e.preventDefault();
+            focusItem(current - 1);
+            break;
+        case 'Home':
+            e.preventDefault();
+            focusItem(0);
+            break;
+        case 'End':
+            e.preventDefault();
+            focusItem(items.length - 1);
+            break;
+        case 'Escape':
+            e.preventDefault();
+            close();
+            triggerRef.value?.focus();
+            break;
+        case 'Tab':
+            close();
+            break;
+    }
+}
 </script>
 
 <style scoped>
@@ -114,7 +191,9 @@ const vClickOutside = {
     border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 4px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+    box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.3),
+        0 4px 6px -2px rgba(0, 0, 0, 0.15);
 }
 
 .dropdown-item {
