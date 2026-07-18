@@ -71,6 +71,16 @@
                 </div>
             </div>
 
+            <div v-if="hasCredentialChange" class="form-group">
+                <label>Current Password</label>
+                <input
+                    v-model="currentPassword"
+                    :type="showPassword ? 'text' : 'password'"
+                    placeholder="Current password"
+                    class="modal-input"
+                />
+            </div>
+
             <div v-if="hasPasswordChange" class="form-group">
                 <label>Confirm New Password</label>
                 <input
@@ -83,6 +93,23 @@
                     Make sure you remember this password. If it is lost, the
                     database cannot be recovered.
                 </p>
+            </div>
+
+            <div class="form-group">
+                <label>Key File</label>
+                <div class="keyfile-row">
+                    <span>{{ keyFileLabel }}</span>
+                    <button type="button" @click="selectKeyFile">
+                        Choose…
+                    </button>
+                    <button
+                        v-if="localKeyFilePath"
+                        type="button"
+                        @click="localKeyFilePath = null"
+                    >
+                        Remove
+                    </button>
+                </div>
             </div>
 
             <p v-if="settingsError" class="modal-error">
@@ -103,11 +130,13 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
+import { open } from '@tauri-apps/plugin-dialog';
 import BaseModal from './BaseModal.vue';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
     dbName: { type: String, default: '' },
+    keyFilePath: { type: String, default: null },
 });
 
 const emit = defineEmits(['confirm', 'cancel']);
@@ -115,6 +144,8 @@ const emit = defineEmits(['confirm', 'cancel']);
 const localName = ref('');
 const localPassword = ref('');
 const localPasswordConfirm = ref('');
+const currentPassword = ref('');
+const localKeyFilePath = ref(null);
 const settingsError = ref('');
 const showPassword = ref(false);
 
@@ -122,6 +153,16 @@ const hasPasswordChange = computed(
     () =>
         localPassword.value.length > 0 || localPasswordConfirm.value.length > 0,
 );
+const hasKeyFileChange = computed(
+    () => localKeyFilePath.value !== props.keyFilePath,
+);
+const hasCredentialChange = computed(
+    () => hasPasswordChange.value || hasKeyFileChange.value,
+);
+const keyFileLabel = computed(() => {
+    if (!localKeyFilePath.value) return 'No key file';
+    return localKeyFilePath.value.split(/[\\/]/).pop();
+});
 
 watch(
     () => props.show,
@@ -130,18 +171,42 @@ watch(
             localName.value = props.dbName;
             localPassword.value = '';
             localPasswordConfirm.value = '';
+            currentPassword.value = '';
+            localKeyFilePath.value = props.keyFilePath;
             settingsError.value = '';
             showPassword.value = false;
         }
     },
 );
 
-watch([localPassword, localPasswordConfirm], () => {
-    settingsError.value = '';
-});
+watch(
+    [
+        localName,
+        localPassword,
+        localPasswordConfirm,
+        currentPassword,
+        localKeyFilePath,
+    ],
+    () => {
+        settingsError.value = '';
+    },
+);
+
+async function selectKeyFile() {
+    const selected = await open({ multiple: false });
+    if (selected) localKeyFilePath.value = selected;
+}
 
 function handleConfirm() {
+    const name = localName.value.trim();
     const password = localPassword.value;
+    const keyFileChanged = localKeyFilePath.value !== props.keyFilePath;
+
+    if (!name) {
+        settingsError.value = 'Database name cannot be empty.';
+        return;
+    }
+
     if (hasPasswordChange.value) {
         if (!password) {
             settingsError.value = 'Enter the new password first.';
@@ -153,9 +218,18 @@ function handleConfirm() {
         }
     }
 
+    if ((hasPasswordChange.value || keyFileChanged) && !currentPassword.value) {
+        settingsError.value =
+            'Enter the current password to change credentials.';
+        return;
+    }
+
     emit('confirm', {
-        name: localName.value.trim(),
+        name,
         password,
+        currentPassword: currentPassword.value,
+        keyFilePath: localKeyFilePath.value,
+        keyFileChanged,
     });
 }
 </script>
@@ -229,6 +303,37 @@ function handleConfirm() {
 
 .toggle-password:hover {
     opacity: 1;
+}
+
+.keyfile-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.keyfile-row span {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.keyfile-row button {
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.keyfile-row button:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
 }
 
 .password-warning {

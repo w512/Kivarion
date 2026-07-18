@@ -1,3 +1,9 @@
+<script setup>
+import { useAutoLock } from './composables/useAutoLock.js';
+
+useAutoLock();
+</script>
+
 <template>
     <router-view />
 </template>

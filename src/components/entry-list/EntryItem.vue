@@ -5,9 +5,11 @@
         role="button"
         tabindex="0"
         :aria-pressed="selected"
+        draggable="true"
         @click="$emit('select')"
         @keydown.enter="$emit('select')"
         @keydown.space.prevent="$emit('select')"
+        @dragstart="onDragStart"
     >
         <div class="entry-icon">
             <img
@@ -48,7 +50,17 @@ const props = defineProps({
     selected: { type: Boolean, default: false },
 });
 
-defineEmits(['select']);
+const emit = defineEmits(['select', 'drag-start']);
+
+function onDragStart(event) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData(
+        'application/x-kivarion-entry',
+        props.entry.uuid,
+    );
+    event.dataTransfer.setData('text/plain', props.entry.uuid);
+    emit('drag-start', props.entry.uuid);
+}
 
 const formattedDate = computed(() => {
     const date = props.entry.modifiedAt;

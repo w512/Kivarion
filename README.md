@@ -69,6 +69,10 @@ bun run format:check  # Prettier (verify only)
 
 # Unit tests
 bun test
+
+# Optional E2E smoke (requires tauri-driver, a built app, and a platform supported by tauri-driver)
+bun run tauri build --debug
+bun run test:e2e
 ```
 
 ## Test Database
@@ -76,6 +80,10 @@ bun test
 `TestDatabase.kdbx` is a sample database for local testing only. It contains no real secrets.
 
 Password: `123`
+
+## License
+
+Kivarion is licensed under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
 
 ## Project Structure
 

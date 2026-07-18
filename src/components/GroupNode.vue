@@ -178,6 +178,7 @@ const emit = defineEmits([
     'delete-group',
     'empty-recycle-bin',
     'move-group',
+    'move-entry',
 ]);
 
 const isAllEntries = computed(() => props.group.uuid === 'all');
@@ -254,11 +255,17 @@ const {
 
 const isDraggable = computed(() => !isAllEntries.value && !isRoot.value);
 const isDragging = computed(() => draggingUuid.value === props.group.uuid);
-const dropClass = computed(() =>
-    dropTarget.value?.uuid === props.group.uuid
+const entryDropTarget = ref(false);
+const dropClass = computed(() => {
+    if (entryDropTarget.value) return 'inside';
+    return dropTarget.value?.uuid === props.group.uuid
         ? dropTarget.value.position
-        : null,
-);
+        : null;
+});
+
+function draggedEntryUuid(event) {
+    return event.dataTransfer?.getData('application/x-kivarion-entry') || '';
+}
 
 function onDragStart(event) {
     // Don't start a drag from the collapse/expand icon — let its click toggle.
@@ -272,6 +279,14 @@ function onDragStart(event) {
 }
 
 function onDragOver(event) {
+    const entryUuid = draggedEntryUuid(event);
+    if (entryUuid && !isAllEntries.value) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        entryDropTarget.value = true;
+        return;
+    }
+
     if (
         isAllEntries.value ||
         !draggingUuid.value ||
@@ -293,10 +308,18 @@ function onDragOver(event) {
 }
 
 function onDragLeave() {
+    entryDropTarget.value = false;
     if (dropTarget.value?.uuid === props.group.uuid) clearDropTarget();
 }
 
-function onDrop() {
+function onDrop(event) {
+    const entryUuid = draggedEntryUuid(event);
+    if (entryUuid && !isAllEntries.value) {
+        entryDropTarget.value = false;
+        emit('move-entry', { entryUuid, targetGroupUuid: props.group.uuid });
+        return;
+    }
+
     const draggedUuid = draggingUuid.value;
     const position =
         dropTarget.value?.uuid === props.group.uuid
@@ -308,6 +331,7 @@ function onDrop() {
 }
 
 function onDragEnd() {
+    entryDropTarget.value = false;
     endDrag();
 }
 

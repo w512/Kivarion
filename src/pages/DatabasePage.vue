@@ -1,11 +1,12 @@
 <template>
     <div v-if="store.db" class="database-page">
         <DatabaseHeader
+            ref="headerRef"
             v-model:search="searchQuery"
             :db-name="dbName"
             :file-path="displayPath"
-            @lock="closeDatabase"
-            @close="closeDatabase"
+            @lock="lockDatabaseFromHeader"
+            @close="closeAndForgetDatabase"
             @edit-db="showSettingsModal = true"
         />
 
@@ -77,12 +78,14 @@
                     :selected-group-uuid="store.selectedGroupUuid"
                     :all-entries-count="totalEntriesCount"
                     :refresh-key="store.dbVersion"
+                    :collapsed-groups="collapsedGroups"
                     @select="selectGroup"
                     @add-group="addGroup"
                     @rename-group="requestRenameGroup"
                     @delete-group="requestDeleteGroup"
                     @empty-recycle-bin="requestEmptyRecycleBin"
                     @move-group="moveGroup"
+                    @move-entry="moveEntry"
                 />
             </aside>
 
@@ -224,6 +227,7 @@
         <DatabaseSettingsModal
             :show="showSettingsModal"
             :db-name="dbName"
+            :key-file-path="currentKeyFilePath"
             @confirm="confirmDatabaseSettings"
             @cancel="showSettingsModal = false"
         />
@@ -237,7 +241,12 @@ import * as kdbxweb from 'kdbxweb';
 import { useStore } from '../store.js';
 import { homeDir } from '@tauri-apps/api/path';
 import { invoke } from '@tauri-apps/api/core';
-import { getField, isProtectedValue, STANDARD_FIELDS } from '../utils';
+import {
+    getField,
+    isProtectedValue,
+    STANDARD_FIELDS,
+    toExactArrayBuffer,
+} from '../utils';
 import {
     ALL_ENTRIES_UUID,
     findEntryByUuid,
@@ -267,6 +276,9 @@ import DatabaseSettingsModal from '../components/DatabaseSettingsModal.vue';
 // Composables
 import { useResizable } from '../composables/useResizable.js';
 import { useDatabaseActions } from '../composables/useDatabaseActions.js';
+import { lockDatabase } from '../composables/useDatabaseLock.js';
+import { keyFileStorageKey } from '../composables/useDatabaseAuth.js';
+import { useClipboard } from '../composables/useClipboard.js';
 
 const router = useRouter();
 const store = useStore();
@@ -287,22 +299,18 @@ onMounted(() => {
         homeDirPath.value = dir;
     });
 
-    // Auto-lock init
-    resetLockTimer();
-    window.addEventListener('mousemove', onActivity);
-    window.addEventListener('keydown', onActivity);
-    window.addEventListener('mousedown', onActivity);
+    window.addEventListener('kivarion:before-lock', prepareForForcedLock);
+    window.addEventListener('keydown', onGlobalShortcut);
 });
 
 onUnmounted(() => {
-    if (lockTimer) clearTimeout(lockTimer);
-    window.removeEventListener('mousemove', onActivity);
-    window.removeEventListener('keydown', onActivity);
-    window.removeEventListener('mousedown', onActivity);
+    window.removeEventListener('kivarion:before-lock', prepareForForcedLock);
+    window.removeEventListener('keydown', onGlobalShortcut);
 });
 
 const selectedEntryUuid = ref(null);
 const entryDetailRef = ref(null);
+const headerRef = ref(null);
 const searchQuery = ref('');
 const showDeleteConfirm = ref(false);
 const entryToDeleteUuid = ref(null);
@@ -323,49 +331,120 @@ const showSettingsModal = ref(false);
 const showCloseAfterSaveErrorConfirm = ref(false);
 const showUnsavedEditConfirm = ref(false);
 const pendingNavigation = ref(null);
+const pendingForceCloseForgetFile = ref(false);
+const collapsedGroups = ref({});
+const { copy: copyToClipboard } = useClipboard();
 
-let lockTimer = null;
-function resetLockTimer() {
-    if (lockTimer) clearTimeout(lockTimer);
-    if (store.autoLockTimeout > 0) {
-        lockTimer = setTimeout(
-            () => {
-                closeDatabase();
-            },
-            store.autoLockTimeout * 60 * 1000,
+function prepareForForcedLock() {
+    entryDetailRef.value?.discardPendingEdit?.();
+    pendingNavigation.value = null;
+    showUnsavedEditConfirm.value = false;
+    showCloseAfterSaveErrorConfirm.value = false;
+    showDeleteConfirm.value = false;
+    showRenameModal.value = false;
+    showDeleteGroupConfirm.value = false;
+    showEmptyRecycleBinConfirm.value = false;
+    showSettingsModal.value = false;
+    selectedEntryUuid.value = null;
+}
+
+function isEditableTarget(target) {
+    const tag = target?.tagName?.toLowerCase();
+    return tag === 'input' || tag === 'textarea' || target?.isContentEditable;
+}
+
+function onGlobalShortcut(event) {
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod && event.key !== 'Escape') return;
+
+    const key = event.key.toLowerCase();
+    if (mod && key === 'f') {
+        event.preventDefault();
+        headerRef.value?.focusSearch?.();
+    } else if (mod && key === 'n' && !isEditableTarget(event.target)) {
+        event.preventDefault();
+        addEntry();
+    } else if (mod && key === 'l') {
+        event.preventDefault();
+        lockDatabaseFromHeader();
+    } else if (
+        mod &&
+        key === 'b' &&
+        selectedEntry.value &&
+        !isEditableTarget(event.target)
+    ) {
+        event.preventDefault();
+        copyToClipboard(
+            getField(selectedEntry.value, 'UserName'),
+            'shortcut-username',
         );
+    } else if (
+        mod &&
+        key === 'c' &&
+        selectedEntry.value &&
+        !isEditableTarget(event.target)
+    ) {
+        event.preventDefault();
+        copyToClipboard(
+            getField(selectedEntry.value, 'Password'),
+            'shortcut-password',
+            {
+                autoClear: true,
+            },
+        );
+    } else if (event.key === 'Escape') {
+        if (searchQuery.value) searchQuery.value = '';
+        else if (selectedEntryUuid.value) requestCloseEntryDetail();
     }
 }
 
-// Throttle activity so we don't tear down and recreate the timer on every
-// single mousemove. Resetting once every few seconds is plenty for an
-// inactivity timeout measured in minutes.
-const ACTIVITY_THROTTLE_MS = 2000;
-let lastActivity = 0;
-function onActivity() {
-    const now = Date.now();
-    if (now - lastActivity < ACTIVITY_THROTTLE_MS) return;
-    lastActivity = now;
-    resetLockTimer();
-}
-
-watch(() => store.autoLockTimeout, resetLockTimer);
 watch(newGroupName, () => {
     groupNameError.value = '';
 });
+
+function collapsedGroupsStorageKey(path = store.filePath) {
+    return path ? `kivarion-collapsed-groups-${path}` : null;
+}
+
+function loadCollapsedGroups() {
+    const key = collapsedGroupsStorageKey();
+    if (!key) {
+        collapsedGroups.value = {};
+        return;
+    }
+    try {
+        collapsedGroups.value = JSON.parse(localStorage.getItem(key) || '{}');
+    } catch {
+        collapsedGroups.value = {};
+    }
+}
+
+watch(() => store.filePath, loadCollapsedGroups, { immediate: true });
+watch(
+    collapsedGroups,
+    (value) => {
+        const key = collapsedGroupsStorageKey();
+        if (key) localStorage.setItem(key, JSON.stringify(value));
+    },
+    { deep: true },
+);
 
 // Column widths logic
 const {
     width: sidebarWidth,
     isResizing: isResizingSidebar,
     startResize: startResizeSidebar,
-} = useResizable('kivarion_sidebarWidth', 220, 150, 600);
+} = useResizable('kivarion-sidebar-width', 220, 150, 600, null, [
+    'kivarion_sidebarWidth',
+]);
 
 const {
     width: entriesWidth,
     isResizing: isResizingEntries,
     startResize: startResizeEntries,
-} = useResizable('kivarion_entriesWidth', 300, 200, 800, sidebarWidth);
+} = useResizable('kivarion-entries-width', 300, 200, 800, sidebarWidth, [
+    'kivarion_entriesWidth',
+]);
 
 // Database Actions logic
 const {
@@ -400,6 +479,13 @@ const displayPath = computed(() => {
         return '~' + fp.slice(hd.length);
     }
     return fp;
+});
+
+const currentKeyFilePath = computed(() => {
+    store.dbVersion;
+    return store.filePath
+        ? localStorage.getItem(keyFileStorageKey(store.filePath))
+        : null;
 });
 
 const rootGroup = computed(() => {
@@ -544,15 +630,24 @@ function onEntryUpdated() {
     saveDatabaseChanges();
 }
 
-async function closeDatabase() {
+async function closeDatabase({ forgetFile = false } = {}) {
     requestNavigation(async () => {
         if (!(await ensureSavedBeforeClose())) {
+            pendingForceCloseForgetFile.value = forgetFile;
             showCloseAfterSaveErrorConfirm.value = true;
             return;
         }
 
-        forceCloseDatabase();
+        forceCloseDatabase({ forgetFile });
     });
+}
+
+function lockDatabaseFromHeader() {
+    closeDatabase();
+}
+
+function closeAndForgetDatabase() {
+    closeDatabase({ forgetFile: true });
 }
 
 function requestNavigation(action) {
@@ -594,16 +689,15 @@ function continueEditing() {
     showUnsavedEditConfirm.value = false;
 }
 
-function forceCloseDatabase() {
+function forceCloseDatabase(options = null) {
+    const forgetFile = options?.forgetFile ?? pendingForceCloseForgetFile.value;
+    pendingForceCloseForgetFile.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
-    store.db = null;
-    store.fileName = '';
-    store.selectedGroupUuid = null;
-    selectedEntryUuid.value = null;
-    router.push({ name: 'home' });
+    void lockDatabase(router, { forgetFile });
 }
 
 function cancelCloseAfterSaveError() {
+    pendingForceCloseForgetFile.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
 }
 
@@ -693,6 +787,18 @@ function moveGroup({ draggedUuid, targetUuid, position }) {
     saveDatabaseChanges();
 }
 
+function moveEntry({ entryUuid, targetGroupUuid }) {
+    const entry = findEntryByUuid(store.db, entryUuid);
+    const targetGroup = findGroupByUuid(store.db, targetGroupUuid);
+    if (!entry || !targetGroup || entry.parentGroup === targetGroup) return;
+
+    store.db.move(entry, targetGroup);
+    store.selectedGroupUuid = targetGroupUuid;
+    selectedEntryUuid.value = entryUuid;
+    store.touchDb();
+    saveDatabaseChanges();
+}
+
 function requestEmptyRecycleBin() {
     const bin = getRecycleBinGroup(store.db);
     if (!bin || (!bin.entries?.length && !bin.groups?.length)) return;
@@ -739,19 +845,76 @@ function getGroupName(groupUuid) {
     return findGroupByUuid(store.db, groupUuid)?.name || '';
 }
 
-async function confirmDatabaseSettings({ name, password }) {
+async function readKeyFileBuffer(path) {
+    if (!path) return null;
+    const bytes = await invoke('read_database', { path });
+    return toExactArrayBuffer(bytes);
+}
+
+async function verifyCurrentCredentials(currentPassword, keyFilePath) {
+    if (!store.filePath) return true;
+    const passwordValue = currentPassword
+        ? kdbxweb.ProtectedValue.fromString(currentPassword)
+        : null;
+    const keyFileBuffer = await readKeyFileBuffer(keyFilePath);
+    const credentials = new kdbxweb.Credentials(passwordValue, keyFileBuffer);
+    await credentials.ready;
+    const bytes = await invoke('read_database', { path: store.filePath });
+    await kdbxweb.Kdbx.load(toExactArrayBuffer(bytes), credentials);
+    return true;
+}
+
+async function confirmDatabaseSettings({
+    name,
+    password,
+    currentPassword,
+    keyFilePath,
+    keyFileChanged,
+}) {
     if (!store.db) return;
 
-    if (name !== undefined) store.db.meta.name = name;
+    const normalizedName = (name || '').trim();
+    if (!normalizedName) return;
+
+    if (password || keyFileChanged) {
+        try {
+            await verifyCurrentCredentials(
+                currentPassword,
+                currentKeyFilePath.value,
+            );
+        } catch (error) {
+            console.error('Current credentials verification failed:', error);
+            window.alert?.('Current password or key file is incorrect.');
+            return;
+        }
+    }
+
+    store.db.meta.name = normalizedName;
     if (password) {
-        store.db.credentials.setPassword(
+        await store.db.credentials.setPassword(
             kdbxweb.ProtectedValue.fromString(password),
+        );
+    }
+    if (keyFileChanged) {
+        await store.db.credentials.setKeyFile(
+            await readKeyFileBuffer(keyFilePath),
         );
     }
 
     store.touchDb();
     showSettingsModal.value = false;
     const saved = await saveDatabaseChanges();
+
+    if (saved && keyFileChanged && store.filePath) {
+        if (keyFilePath) {
+            localStorage.setItem(
+                keyFileStorageKey(store.filePath),
+                keyFilePath,
+            );
+        } else {
+            localStorage.removeItem(keyFileStorageKey(store.filePath));
+        }
+    }
 
     // If the master password changed, the stored biometric secret is now stale.
     // Update it (or drop it) so Touch ID doesn't keep unlocking with the old password.

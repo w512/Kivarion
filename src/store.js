@@ -1,6 +1,26 @@
 import { defineStore } from 'pinia';
 import { ref, shallowRef, watch } from 'vue';
 
+export const SETTING_LIMITS = {
+    clipboardTimeout: { min: 0, max: 600, defaultValue: 30 },
+    autoLockTimeout: { min: 0, max: 1440, defaultValue: 0 },
+    backupDepth: { min: 1, max: 20, defaultValue: 3 },
+};
+
+export function clampNumberSetting(value, { min, max, defaultValue }) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return defaultValue;
+    return Math.min(max, Math.max(min, Math.trunc(number)));
+}
+
+function readNumberSetting(key, limits) {
+    const stored = localStorage.getItem(key);
+    return clampNumberSetting(
+        stored === null ? limits.defaultValue : stored,
+        limits,
+    );
+}
+
 export const useStore = defineStore('main', () => {
     const db = shallowRef(null);
     const fileName = ref('');
@@ -22,10 +42,19 @@ export const useStore = defineStore('main', () => {
 
     const theme = ref(localStorage.getItem('kivarion-theme') || 'system');
     const clipboardTimeout = ref(
-        parseInt(localStorage.getItem('kivarion-clipboard-timeout')) || 30,
+        readNumberSetting(
+            'kivarion-clipboard-timeout',
+            SETTING_LIMITS.clipboardTimeout,
+        ),
     );
     const autoLockTimeout = ref(
-        parseInt(localStorage.getItem('kivarion-autolock-timeout')) || 0,
+        readNumberSetting(
+            'kivarion-autolock-timeout',
+            SETTING_LIMITS.autoLockTimeout,
+        ),
+    );
+    const lockOnFocusLoss = ref(
+        localStorage.getItem('kivarion-lock-on-focus-loss') === 'true',
     );
 
     // Backup policy: keep rotating `.bak` copies on each save.
@@ -33,7 +62,7 @@ export const useStore = defineStore('main', () => {
         localStorage.getItem('kivarion-backup-enabled') !== 'false',
     );
     const backupDepth = ref(
-        parseInt(localStorage.getItem('kivarion-backup-depth')) || 3,
+        readNumberSetting('kivarion-backup-depth', SETTING_LIMITS.backupDepth),
     );
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
@@ -64,11 +93,34 @@ export const useStore = defineStore('main', () => {
     );
 
     watch(clipboardTimeout, (newVal) => {
-        localStorage.setItem('kivarion-clipboard-timeout', newVal);
+        const clamped = clampNumberSetting(
+            newVal,
+            SETTING_LIMITS.clipboardTimeout,
+        );
+        if (newVal !== clamped) {
+            clipboardTimeout.value = clamped;
+            return;
+        }
+        localStorage.setItem('kivarion-clipboard-timeout', String(clamped));
     });
 
     watch(autoLockTimeout, (newVal) => {
-        localStorage.setItem('kivarion-autolock-timeout', newVal);
+        const clamped = clampNumberSetting(
+            newVal,
+            SETTING_LIMITS.autoLockTimeout,
+        );
+        if (newVal !== clamped) {
+            autoLockTimeout.value = clamped;
+            return;
+        }
+        localStorage.setItem('kivarion-autolock-timeout', String(clamped));
+    });
+
+    watch(lockOnFocusLoss, (newVal) => {
+        localStorage.setItem(
+            'kivarion-lock-on-focus-loss',
+            newVal ? 'true' : 'false',
+        );
     });
 
     watch(backupEnabled, (newVal) => {
@@ -79,7 +131,12 @@ export const useStore = defineStore('main', () => {
     });
 
     watch(backupDepth, (newVal) => {
-        localStorage.setItem('kivarion-backup-depth', newVal);
+        const clamped = clampNumberSetting(newVal, SETTING_LIMITS.backupDepth);
+        if (newVal !== clamped) {
+            backupDepth.value = clamped;
+            return;
+        }
+        localStorage.setItem('kivarion-backup-depth', String(clamped));
     });
 
     return {
@@ -93,6 +150,7 @@ export const useStore = defineStore('main', () => {
         theme,
         clipboardTimeout,
         autoLockTimeout,
+        lockOnFocusLoss,
         backupEnabled,
         backupDepth,
     };

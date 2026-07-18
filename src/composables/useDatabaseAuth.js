@@ -9,7 +9,7 @@ import { toExactArrayBuffer } from '../utils.js';
 // Per-database key-file association. KeePass remembers which key file unlocks a
 // given database; we mirror that by storing the key file's path (not its bytes)
 // keyed by the database path.
-function keyFileStorageKey(dbPath) {
+export function keyFileStorageKey(dbPath) {
     return `kivarion-keyfile-${dbPath}`;
 }
 
@@ -51,6 +51,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
     const newDbName = ref('');
     const newPassword = ref('');
     const newPasswordConfirm = ref('');
+    const newKeyFilePath = ref(null);
 
     // Check if biometrics are supported and available
     async function checkBiometrics() {
@@ -134,8 +135,26 @@ export function useDatabaseAuth(router, passwordInputRef) {
         }
     }
 
+    async function selectNewKeyFile() {
+        try {
+            const selected = await open({ multiple: false });
+            if (selected) {
+                newKeyFilePath.value = selected;
+                errorMessage.value = '';
+            }
+        } catch (err) {
+            console.error('Failed to open key file dialog:', err);
+            errorMessage.value =
+                'Failed to open key file dialog: ' + err.message;
+        }
+    }
+
     function clearKeyFile() {
         keyFilePath.value = null;
+    }
+
+    function clearNewKeyFile() {
+        newKeyFilePath.value = null;
     }
 
     function resetFile() {
@@ -300,6 +319,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
         newDbName.value = '';
         newPassword.value = '';
         newPasswordConfirm.value = '';
+        newKeyFilePath.value = null;
         step.value = 3;
     }
 
@@ -342,7 +362,10 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
         isLoading.value = true;
         try {
-            const credentials = await buildCredentials(newPassword.value, null);
+            const credentials = await buildCredentials(
+                newPassword.value,
+                newKeyFilePath.value,
+            );
             const db = kdbxweb.Kdbx.create(credentials, name);
 
             const newName = targetPath.split(/[\\/]/).pop();
@@ -355,11 +378,19 @@ export function useDatabaseAuth(router, passwordInputRef) {
             store.fileName = newName;
             fileName.value = newName;
             localStorage.setItem('kivarion-last-db-path', targetPath);
-            localStorage.removeItem(keyFileStorageKey(targetPath));
+            if (newKeyFilePath.value) {
+                localStorage.setItem(
+                    keyFileStorageKey(targetPath),
+                    newKeyFilePath.value,
+                );
+            } else {
+                localStorage.removeItem(keyFileStorageKey(targetPath));
+            }
 
             password.value = '';
             newPassword.value = '';
             newPasswordConfirm.value = '';
+            newKeyFilePath.value = null;
             router.push({ name: 'database' });
         } catch (err) {
             console.error('Failed to create database:', err);
@@ -384,10 +415,13 @@ export function useDatabaseAuth(router, passwordInputRef) {
         newDbName,
         newPassword,
         newPasswordConfirm,
+        newKeyFilePath,
         checkLastPath,
         selectFile,
         selectKeyFile,
+        selectNewKeyFile,
         clearKeyFile,
+        clearNewKeyFile,
         resetFile,
         decrypt,
         attemptBiometricUnlock,

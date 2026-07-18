@@ -156,6 +156,11 @@
                 @copy-name="copyAttachmentName"
                 @export="exportAttachment"
             />
+            <EntryHistory
+                :entry="entry"
+                :refresh-key="store.dbVersion"
+                @restore="restoreHistoryVersion"
+            />
             <EntryMetadata :entry="entry" />
         </div>
 
@@ -190,6 +195,7 @@ import EntryEditFields from './entry-detail/EntryEditFields.vue';
 import EntryCustomFields from './entry-detail/EntryCustomFields.vue';
 import EntryAttachments from './entry-detail/EntryAttachments.vue';
 import EntryMetadata from './entry-detail/EntryMetadata.vue';
+import EntryHistory from './entry-detail/EntryHistory.vue';
 import AttachmentPreviewModal from './entry-detail/AttachmentPreviewModal.vue';
 
 // Composables
@@ -260,6 +266,18 @@ function savePendingEdit() {
 
 function discardPendingEdit() {
     cancelEdit();
+}
+
+function restoreHistoryVersion(index) {
+    const historyEntry = props.entry.history?.[index];
+    if (!historyEntry) return;
+
+    props.entry.pushHistory();
+    const history = [...props.entry.history];
+    props.entry.copyFrom(historyEntry);
+    props.entry.history = history;
+    props.entry.times.update();
+    emit('updated');
 }
 
 defineExpose({

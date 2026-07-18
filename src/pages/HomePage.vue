@@ -1,7 +1,8 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDatabaseAuth } from '../composables/useDatabaseAuth.js';
+import { estimatePasswordEntropy, passwordStrengthLabel } from '../utils.js';
 
 const router = useRouter();
 const passwordInput = ref(null);
@@ -18,7 +19,9 @@ const {
     checkLastPath,
     selectFile,
     selectKeyFile,
+    selectNewKeyFile,
     clearKeyFile,
+    clearNewKeyFile,
     resetFile,
     decrypt,
     useBiometrics,
@@ -27,11 +30,22 @@ const {
     newDbName,
     newPassword,
     newPasswordConfirm,
+    newKeyFilePath,
     startCreate,
     cancelCreate,
     createDatabase,
     store,
 } = useDatabaseAuth(router, passwordInput);
+
+const newPasswordEntropy = computed(() =>
+    estimatePasswordEntropy({ length: newPassword.value.length }),
+);
+const newPasswordStrength = computed(() =>
+    passwordStrengthLabel(newPasswordEntropy.value),
+);
+const newKeyFileName = computed(() =>
+    newKeyFilePath.value ? newKeyFilePath.value.split(/[\\/]/).pop() : '',
+);
 
 onMounted(() => {
     checkLastPath();
@@ -328,6 +342,31 @@ onMounted(() => {
                             :disabled="isLoading"
                         />
                     </div>
+                    <div class="password-strength">
+                        <div class="strength-bar">
+                            <div
+                                class="strength-fill"
+                                :class="newPasswordStrength.toLowerCase()"
+                                :style="{
+                                    width:
+                                        Math.min(
+                                            100,
+                                            Math.round(
+                                                (newPasswordEntropy / 120) *
+                                                    100,
+                                            ),
+                                        ) + '%',
+                                }"
+                            ></div>
+                        </div>
+                        <span>{{ newPasswordStrength }}</span>
+                    </div>
+                    <p
+                        v-if="newPassword && newPassword.length < 12"
+                        class="password-hint"
+                    >
+                        12+ characters are recommended for a master password.
+                    </p>
                     <div class="create-field">
                         <label>Confirm password</label>
                         <input
@@ -336,6 +375,26 @@ onMounted(() => {
                             placeholder="Repeat password"
                             :disabled="isLoading"
                         />
+                    </div>
+                    <div class="keyfile-row create-keyfile-row">
+                        <span v-if="newKeyFilePath" class="keyfile-chip">
+                            {{ newKeyFileName }}
+                            <button type="button" @click="clearNewKeyFile">
+                                ✕
+                            </button>
+                        </span>
+                        <button
+                            type="button"
+                            class="keyfile-btn"
+                            :disabled="isLoading"
+                            @click="selectNewKeyFile"
+                        >
+                            {{
+                                newKeyFilePath
+                                    ? 'Change key file'
+                                    : 'Add key file'
+                            }}
+                        </button>
                     </div>
                     <label class="show-password-toggle">
                         <input v-model="showPassword" type="checkbox" />
@@ -783,6 +842,69 @@ h1 {
 .create-field input:focus {
     border-color: var(--accent-color);
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.password-strength {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.strength-bar {
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--border-color);
+    overflow: hidden;
+}
+
+.strength-fill {
+    height: 100%;
+    min-width: 4px;
+    border-radius: inherit;
+    background: var(--error-color);
+    transition: width 0.2s;
+}
+
+.strength-fill.fair,
+.strength-fill.good {
+    background: #f59e0b;
+}
+
+.strength-fill.strong,
+.strength-fill.excellent {
+    background: #22c55e;
+}
+
+.password-hint {
+    margin-top: -0.45rem;
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+
+.create-keyfile-row {
+    margin-top: 0;
+    padding: 0;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.keyfile-btn {
+    padding: 0.45rem 0.7rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.82rem;
+}
+
+.keyfile-btn:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
 }
 
 .show-password-toggle {

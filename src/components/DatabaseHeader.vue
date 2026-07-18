@@ -37,6 +37,7 @@
                     <line x1="21" y1="21" x2="16.65" y2="16.65" />
                 </svg>
                 <input
+                    ref="searchInputRef"
                     v-model="search"
                     type="text"
                     class="search-input"
@@ -153,6 +154,8 @@
 </template>
 
 <script setup>
+import { ref } from 'vue';
+
 defineProps({
     dbName: { type: String, default: 'Unnamed' },
     filePath: { type: String, default: '' },
@@ -161,6 +164,18 @@ defineProps({
 defineEmits(['lock', 'close', 'edit-db']);
 
 const search = defineModel('search', { type: String, default: '' });
+const searchInputRef = ref(null);
+
+function focusSearch() {
+    searchInputRef.value?.focus();
+    searchInputRef.value?.select?.();
+}
+
+function clearSearch() {
+    search.value = '';
+}
+
+defineExpose({ focusSearch, clearSearch });
 </script>
 
 <style scoped>

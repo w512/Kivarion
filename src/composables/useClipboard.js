@@ -1,15 +1,44 @@
 import { ref, onUnmounted } from 'vue';
 import { useStore } from '../store';
 
+let clearTimer = null;
+let managedClipboardText = null;
+
+async function clearClipboardIfStillManaged() {
+    if (managedClipboardText === null) return;
+
+    try {
+        const currentText = await navigator.clipboard.readText();
+        if (currentText === managedClipboardText) {
+            await navigator.clipboard.writeText('');
+        }
+    } catch (err) {
+        console.error('Failed to clear clipboard', err);
+    } finally {
+        managedClipboardText = null;
+    }
+}
+
+function cancelClearTimer() {
+    if (clearTimer) {
+        clearTimeout(clearTimer);
+        clearTimer = null;
+    }
+}
+
+export async function clearManagedClipboard() {
+    cancelClearTimer();
+    await clearClipboardIfStillManaged();
+}
+
 // Shared clipboard helper: copies text, drives the "Copied!" mini-toast, and
 // optionally auto-clears the clipboard after `store.clipboardTimeout` seconds.
-// Each component gets its own instance so the toast state and timers are scoped
-// to that component and cancelled on unmount.
+// The clear timer is module-level so it survives component unmounts (switching
+// entries or locking the database must not leave copied passwords forever).
 export function useClipboard() {
     const store = useStore();
     const activeCopyField = ref(null);
     let toastTimer = null;
-    let clearTimer = null;
 
     // copy(text, fieldId?, { autoClear }) — fieldId drives the toast; pass
     // autoClear: true to wipe the clipboard after the configured timeout
@@ -29,20 +58,15 @@ export function useClipboard() {
             }
 
             const timeout = autoClear ? store.clipboardTimeout : 0;
-            if (timeout > 0) {
-                if (clearTimer) clearTimeout(clearTimer);
-                clearTimer = setTimeout(async () => {
-                    clearTimer = null;
-                    try {
-                        const currentText =
-                            await navigator.clipboard.readText();
-                        if (currentText === text) {
-                            await navigator.clipboard.writeText('');
-                        }
-                    } catch (err) {
-                        console.error('Failed to clear clipboard', err);
-                    }
-                }, timeout * 1000);
+            if (autoClear) {
+                managedClipboardText = text;
+                cancelClearTimer();
+                if (timeout > 0) {
+                    clearTimer = setTimeout(async () => {
+                        clearTimer = null;
+                        await clearClipboardIfStillManaged();
+                    }, timeout * 1000);
+                }
             }
             return true;
         } catch (err) {
@@ -51,18 +75,14 @@ export function useClipboard() {
         }
     }
 
-    function cancelTimers() {
+    function cancelToastTimer() {
         if (toastTimer) {
             clearTimeout(toastTimer);
             toastTimer = null;
         }
-        if (clearTimer) {
-            clearTimeout(clearTimer);
-            clearTimer = null;
-        }
     }
 
-    onUnmounted(cancelTimers);
+    onUnmounted(cancelToastTimer);
 
     return { activeCopyField, copy };
 }

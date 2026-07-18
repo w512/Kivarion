@@ -17,6 +17,14 @@ let saveInvokeMock = mock(async () => {});
 let consoleErrorSpy;
 
 mock.module('../src/store.js', () => ({
+    SETTING_LIMITS: {
+        backupDepth: { min: 1, max: 20, defaultValue: 3 },
+    },
+    clampNumberSetting: (value, { min, max, defaultValue }) => {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return defaultValue;
+        return Math.min(max, Math.max(min, Math.trunc(number)));
+    },
     useStore: () => currentStore,
 }));
 

@@ -29,6 +29,14 @@ let dialogSaveMock;
 let saveSpy;
 
 mock.module('../src/store.js', () => ({
+    SETTING_LIMITS: {
+        backupDepth: { min: 1, max: 20, defaultValue: 3 },
+    },
+    clampNumberSetting: (value, { min, max, defaultValue }) => {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return defaultValue;
+        return Math.min(max, Math.max(min, Math.trunc(number)));
+    },
     useStore: () => currentStore,
 }));
 
@@ -367,6 +375,22 @@ describe('useDatabaseAuth.createDatabase', () => {
         expect(localStorage.getItem('kivarion-last-db-path')).toBe(
             '/Users/me/Vault.kdbx',
         );
+    });
+
+    test('creates a database with a key file and remembers the association', async () => {
+        const { auth } = makeAuth();
+        fillForm(auth);
+        auth.newKeyFilePath.value = '/Users/me/keyfile.key';
+        dialogSaveMock = mock(async () => '/Users/me/Vault.kdbx');
+        const readMock = mock(async () => new Uint8Array([9, 8, 7]));
+        invokeHandlers.read_database = ({ path }) => readMock(path);
+
+        await auth.createDatabase();
+
+        expect(readMock).toHaveBeenCalledWith('/Users/me/keyfile.key');
+        expect(
+            localStorage.getItem('kivarion-keyfile-/Users/me/Vault.kdbx'),
+        ).toBe('/Users/me/keyfile.key');
     });
 
     test('appends .kdbx when the chosen path lacks the extension', async () => {

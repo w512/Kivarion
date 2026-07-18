@@ -53,6 +53,79 @@ fn lock_path(target: &std::path::Path) -> std::path::PathBuf {
     with_suffix(target, ".lock")
 }
 
+const STALE_LOCK_MS: u128 = 2 * 60 * 1000;
+
+fn now_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn parse_lock_value(contents: &str, key: &str) -> Option<u128> {
+    contents.split_whitespace().find_map(|part| {
+        let (part_key, value) = part.split_once('=')?;
+        (part_key == key)
+            .then(|| value.parse::<u128>().ok())
+            .flatten()
+    })
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+
+    std::process::Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+
+    let Ok(output) = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+    else {
+        return true;
+    };
+
+    String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn process_is_running(pid: u32) -> bool {
+    pid == std::process::id()
+}
+
+fn lock_file_is_stale(path: &std::path::Path) -> bool {
+    let contents = std::fs::read_to_string(path).unwrap_or_default();
+    let created_ms = parse_lock_value(&contents, "created_ms").or_else(|| {
+        std::fs::metadata(path)
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis())
+    });
+
+    if let Some(created_ms) = created_ms {
+        if now_ms().saturating_sub(created_ms) > STALE_LOCK_MS {
+            return true;
+        }
+    }
+
+    let pid = parse_lock_value(&contents, "pid").and_then(|pid| u32::try_from(pid).ok());
+    matches!(pid, Some(pid) if !process_is_running(pid))
+}
+
 struct SaveLockGuard {
     path: std::path::PathBuf,
     file: Option<std::fs::File>,
@@ -63,36 +136,41 @@ impl SaveLockGuard {
         use std::io::Write;
 
         let path = lock_path(target);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AlreadyExists {
-                    format!(
+
+        for attempt in 0..2 {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    let _ = writeln!(file, "pid={} created_ms={}", std::process::id(), now_ms());
+                    let _ = file.sync_all();
+
+                    return Ok(Self {
+                        path,
+                        file: Some(file),
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if attempt == 0 && lock_file_is_stale(&path) {
+                        let _ = std::fs::remove_file(&path);
+                        continue;
+                    }
+
+                    return Err(format!(
                         "SAVE_LOCKED: another Kivarion process is already saving this database ({})",
                         path.to_string_lossy()
-                    )
-                } else {
-                    e.to_string()
+                    ));
                 }
-            })?;
+                Err(e) => return Err(e.to_string()),
+            }
+        }
 
-        let _ = writeln!(
-            file,
-            "pid={} created_ms={}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0)
-        );
-        let _ = file.sync_all();
-
-        Ok(Self {
-            path,
-            file: Some(file),
-        })
+        Err(format!(
+            "SAVE_LOCKED: another Kivarion process is already saving this database ({})",
+            path.to_string_lossy()
+        ))
     }
 }
 
@@ -451,6 +529,188 @@ fn delete_biometric_password(id: &str) -> Result<(), String> {
     #[cfg(not(target_os = "macos"))]
     {
         Err("Biometric authentication is not supported on this platform".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("kivarion-lib-test-{}-{id}", std::process::id()));
+            std::fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn read_bytes(path: &std::path::Path) -> Vec<u8> {
+        std::fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn with_suffix_appends_without_replacing_extension() {
+        let path = std::path::Path::new("/tmp/vault.kdbx");
+
+        assert_eq!(
+            with_suffix(path, ".bak"),
+            std::path::PathBuf::from("/tmp/vault.kdbx.bak")
+        );
+        assert_eq!(
+            with_suffix(path, ".tmp"),
+            std::path::PathBuf::from("/tmp/vault.kdbx.tmp")
+        );
+    }
+
+    #[test]
+    fn backup_path_uses_expected_rotation_names() {
+        let target = std::path::Path::new("vault.kdbx");
+
+        assert_eq!(
+            backup_path(target, 0),
+            std::path::PathBuf::from("vault.kdbx.bak")
+        );
+        assert_eq!(
+            backup_path(target, 1),
+            std::path::PathBuf::from("vault.kdbx.bak.1")
+        );
+        assert_eq!(
+            backup_path(target, 7),
+            std::path::PathBuf::from("vault.kdbx.bak.7")
+        );
+    }
+
+    #[test]
+    fn rotate_backups_shifts_existing_backups_and_keeps_depth() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"current").unwrap();
+        std::fs::write(backup_path(&target, 0), b"backup-0").unwrap();
+        std::fs::write(backup_path(&target, 1), b"backup-1").unwrap();
+        std::fs::write(backup_path(&target, 2), b"too-old").unwrap();
+
+        rotate_backups(&target, 3).unwrap();
+
+        assert_eq!(read_bytes(&backup_path(&target, 0)), b"current");
+        assert_eq!(read_bytes(&backup_path(&target, 1)), b"backup-0");
+        assert_eq!(read_bytes(&backup_path(&target, 2)), b"backup-1");
+    }
+
+    #[test]
+    fn save_database_writes_atomically_and_creates_backup() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+
+        let new_mtime = save_database(
+            target.to_string_lossy().into_owned(),
+            b"new".to_vec(),
+            None,
+            Some(true),
+            Some(2),
+        )
+        .unwrap();
+
+        assert!(new_mtime > 0.0);
+        assert_eq!(read_bytes(&target), b"new");
+        assert_eq!(read_bytes(&backup_path(&target, 0)), b"old");
+        assert!(!lock_path(&target).exists());
+        assert!(!with_suffix(&target, ".tmp").exists());
+    }
+
+    #[test]
+    fn save_database_rejects_stale_mtime_without_overwriting() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"current").unwrap();
+        let stale_mtime = modified_ms(&target).unwrap() - 1.0;
+
+        let err = save_database(
+            target.to_string_lossy().into_owned(),
+            b"new".to_vec(),
+            Some(stale_mtime),
+            Some(true),
+            Some(2),
+        )
+        .unwrap_err();
+
+        assert!(err.starts_with(CONFLICT_PREFIX));
+        assert_eq!(read_bytes(&target), b"current");
+        assert!(!backup_path(&target, 0).exists());
+        assert!(!with_suffix(&target, ".tmp").exists());
+        assert!(!lock_path(&target).exists());
+    }
+
+    #[test]
+    fn save_database_takes_over_stale_lock_file() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::write(lock_path(&target), "pid=1 created_ms=0").unwrap();
+
+        save_database(
+            target.to_string_lossy().into_owned(),
+            b"new".to_vec(),
+            None,
+            Some(false),
+            Some(1),
+        )
+        .unwrap();
+
+        assert_eq!(read_bytes(&target), b"new");
+        assert!(!lock_path(&target).exists());
+    }
+
+    #[test]
+    fn save_database_refuses_live_lock_file() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::write(
+            lock_path(&target),
+            format!("pid={} created_ms={}", std::process::id(), now_ms()),
+        )
+        .unwrap();
+
+        let err = save_database(
+            target.to_string_lossy().into_owned(),
+            b"new".to_vec(),
+            None,
+            Some(false),
+            Some(1),
+        )
+        .unwrap_err();
+
+        assert!(err.starts_with("SAVE_LOCKED"));
+        assert_eq!(read_bytes(&target), b"old");
+        let _ = std::fs::remove_file(lock_path(&target));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sanitize_file_name_strips_directories_and_dangerous_characters() {
+        assert_eq!(sanitize_file_name("../secret.txt"), "secret.txt");
+        assert_eq!(sanitize_file_name("dir\\evil\0name.txt"), "direvilname.txt");
+        assert_eq!(sanitize_file_name(""), "attachment");
     }
 }
 

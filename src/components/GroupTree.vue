@@ -1,5 +1,5 @@
 <template>
-    <div class="group-tree">
+    <div class="group-tree" @keydown.capture="onTreeKeydown">
         <!-- Virtual "All Entries" group -->
         <GroupNode
             v-if="depth === 0"
@@ -31,6 +31,7 @@
                 @delete-group="emit('delete-group', $event)"
                 @empty-recycle-bin="emit('empty-recycle-bin', $event)"
                 @move-group="handleMoveGroup"
+                @move-entry="handleMoveEntry"
             />
 
             <GroupTree
@@ -39,6 +40,7 @@
                 :selected-group-uuid="selectedGroupUuid"
                 :all-entries-count="allEntriesCount"
                 :refresh-key="refreshKey"
+                :collapsed-groups="collapsedGroups"
                 :depth="depth + 1"
                 @select="(uuid) => emit('select', uuid)"
                 @add-group="handleAddGroup"
@@ -46,21 +48,22 @@
                 @delete-group="(uuid) => emit('delete-group', uuid)"
                 @empty-recycle-bin="(uuid) => emit('empty-recycle-bin', uuid)"
                 @move-group="handleMoveGroup"
+                @move-entry="handleMoveEntry"
             />
         </div>
     </div>
 </template>
 
 <script setup>
-import { ref } from 'vue';
 import GroupNode from './GroupNode.vue';
 
-defineProps({
+const props = defineProps({
     groups: { type: Array, default: () => [] },
     selectedGroupUuid: { type: String, default: null },
     depth: { type: Number, default: 0 },
     allEntriesCount: { type: Number, default: 0 },
     refreshKey: { type: Number, default: 0 },
+    collapsedGroups: { type: Object, default: () => ({}) },
 });
 
 const emit = defineEmits([
@@ -70,22 +73,21 @@ const emit = defineEmits([
     'delete-group',
     'empty-recycle-bin',
     'move-group',
+    'move-entry',
 ]);
 
-const collapsedGroups = ref({});
-
 function isCollapsed(uuid) {
-    return !!collapsedGroups.value[uuid];
+    return !!props.collapsedGroups[uuid];
 }
 
 function toggleCollapse(uuid) {
-    collapsedGroups.value[uuid] = !collapsedGroups.value[uuid];
+    props.collapsedGroups[uuid] = !props.collapsedGroups[uuid];
 }
 
 function handleAddGroup(uuid) {
     // If a subgroup is added to a collapsed parent, expand it immediately so
     // the newly-created child is visible instead of appearing as if nothing happened.
-    collapsedGroups.value[uuid] = false;
+    props.collapsedGroups[uuid] = false;
     emit('add-group', uuid);
 }
 
@@ -93,9 +95,29 @@ function handleMoveGroup(payload) {
     // When nesting a group into a collapsed target, expand it so the moved group
     // is visible instead of seeming to vanish.
     if (payload?.position === 'inside' && payload.targetUuid) {
-        collapsedGroups.value[payload.targetUuid] = false;
+        props.collapsedGroups[payload.targetUuid] = false;
     }
     emit('move-group', payload);
+}
+
+function handleMoveEntry(payload) {
+    emit('move-entry', payload);
+}
+
+function onTreeKeydown(event) {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    const nodes = Array.from(
+        event.currentTarget.querySelectorAll('.group-node[tabindex="0"]'),
+    );
+    const index = nodes.indexOf(document.activeElement);
+    if (index < 0) return;
+
+    event.preventDefault();
+    const nextIndex =
+        event.key === 'ArrowDown'
+            ? Math.min(index + 1, nodes.length - 1)
+            : Math.max(index - 1, 0);
+    nodes[nextIndex]?.focus();
 }
 </script>
 

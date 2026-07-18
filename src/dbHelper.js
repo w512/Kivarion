@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useStore } from './store.js';
+import { SETTING_LIMITS, clampNumberSetting, useStore } from './store.js';
 
 /**
  * Save the database to disk.
@@ -45,7 +45,10 @@ export async function saveDatabase(db, fileName, { force = false } = {}) {
             data: bytes,
             expectedMtime: force ? null : (store.knownMtime ?? null),
             backup: store.backupEnabled !== false,
-            backupDepth: store.backupDepth || 3,
+            backupDepth: clampNumberSetting(
+                store.backupDepth,
+                SETTING_LIMITS.backupDepth,
+            ),
         });
         store.knownMtime = newMtime;
     } catch (error) {

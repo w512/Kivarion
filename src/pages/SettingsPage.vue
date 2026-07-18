@@ -141,6 +141,25 @@ async function restoreBackup(backup) {
 
             <div class="setting-item">
                 <div class="setting-info">
+                    <h3>Lock on focus loss</h3>
+                    <p>
+                        Lock the open database when Kivarion is hidden or loses
+                        focus
+                    </p>
+                </div>
+                <div class="setting-action">
+                    <label class="switch">
+                        <input
+                            v-model="store.lockOnFocusLoss"
+                            type="checkbox"
+                        />
+                        <span class="switch-track"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div class="setting-info">
                     <h3>Backups</h3>
                     <p>
                         Keep rotating <code>.bak</code> copies of the database

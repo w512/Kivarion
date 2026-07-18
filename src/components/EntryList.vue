@@ -27,13 +27,14 @@
 
         <EntryListEmpty v-if="entries.length === 0" />
 
-        <div v-else class="entries-container">
+        <div v-else class="entries-container" @keydown.capture="onListKeydown">
             <EntryItem
                 v-for="entry in sortedEntries"
                 :key="entry.uuid"
                 :entry="entry"
                 :selected="isSelected(entry)"
                 @select="emit('select', entry.uuid)"
+                @drag-start="emit('entry-drag-start', entry.uuid)"
             />
         </div>
     </div>
@@ -50,7 +51,7 @@ const props = defineProps({
     selectedEntryUuid: { type: String, default: null },
 });
 
-const emit = defineEmits(['select', 'add', 'delete']);
+const emit = defineEmits(['select', 'add', 'delete', 'entry-drag-start']);
 
 // Normalize persisted value (legacy 'date' meant last-modified -> 'created' here).
 function normalizeSortBy(v) {
@@ -97,6 +98,22 @@ const sortedEntries = computed(() => {
 });
 
 const isSelected = (entry) => entry.uuid === props.selectedEntryUuid;
+
+function onListKeydown(event) {
+    if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+    const rows = Array.from(
+        event.currentTarget.querySelectorAll('.entry-row[tabindex="0"]'),
+    );
+    const index = rows.indexOf(document.activeElement);
+    if (index < 0) return;
+
+    event.preventDefault();
+    const nextIndex =
+        event.key === 'ArrowDown'
+            ? Math.min(index + 1, rows.length - 1)
+            : Math.max(index - 1, 0);
+    rows[nextIndex]?.focus();
+}
 </script>
 
 <style scoped>

@@ -88,8 +88,11 @@ export function useDatabaseActions(store) {
                         // Let the UI ask the user; don't treat it as a hard error.
                         saveConflict.value = true;
                     } else {
-                        saveError.value =
+                        const message =
                             error?.message || String(error) || 'Unknown error';
+                        saveError.value = message.includes('SAVE_LOCKED')
+                            ? 'Another Kivarion window is saving this database. Please wait a moment, then retry.'
+                            : message;
                     }
                     pendingSaveVersion = null;
                     ok = false;
