@@ -73,7 +73,17 @@ bun test
 # Optional E2E smoke (requires tauri-driver, a built app, and a platform supported by tauri-driver)
 bun run tauri build --debug
 bun run test:e2e
+
+# Bump the app version everywhere it's duplicated
+# (package.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock)
+bun run bump 0.6.0
 ```
+
+## Releases
+
+Windows and Linux packages are built by the **Release Application** GitHub Actions workflow ([`release.yml`](.github/workflows/release.yml)), triggered manually (`workflow_dispatch`); it tags `v<version>` and publishes a (draft) GitHub release via `tauri-action`. The macOS build is produced locally with a signing/notarization script (`build-mac.sh`, not committed — it contains Apple Developer credentials): `./build-mac.sh [universal|intel|silicon|both]`.
+
+> **Note (Linux/AppImage):** the release pipeline strips the bundled Wayland/DRM client libraries (`libwayland-*`, `libgbm`, `libdrm*`) from the AppImage after packaging so they resolve from the host — otherwise WebKitGTK's EGL init fails on recent Mesa (see the repack step in [`release.yml`](.github/workflows/release.yml)). A locally built AppImage does not get this treatment; if it aborts with `EGL_BAD_PARAMETER`, remove those libraries from the AppImage the same way.
 
 ## Test Database
 

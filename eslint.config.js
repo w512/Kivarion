@@ -33,8 +33,13 @@ export default [
         },
     },
     {
-        // Node-context config files.
-        files: ['vite.config.js', 'eslint.config.js', '*.config.js'],
+        // Node-context config files and maintenance scripts.
+        files: [
+            'vite.config.js',
+            'eslint.config.js',
+            '*.config.js',
+            'scripts/**/*.mjs',
+        ],
         languageOptions: {
             globals: {
                 ...globals.node,

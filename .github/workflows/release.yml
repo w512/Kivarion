@@ -1,0 +1,124 @@
+name: Release Application
+
+on:
+    workflow_dispatch:
+        inputs:
+            release_version:
+                description: ''
+                required: false
+                default: ''
+                type: string
+            draft:
+                description: 'Release as draft'
+                required: true
+                default: true
+                type: boolean
+
+permissions:
+    contents: write
+
+env:
+    FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+    build-and-release:
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - platform: 'ubuntu-22.04'
+                      target: 'x86_64-unknown-linux-gnu'
+                    - platform: 'windows-latest'
+                      target: 'x86_64-pc-windows-msvc'
+
+        runs-on: ${{ matrix.platform }}
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
+            - name: Install system dependencies (Linux only)
+              if: matrix.platform == 'ubuntu-22.04'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+
+            - name: Setup Bun
+              uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: latest
+
+            - name: Install Rust stable
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.target }}
+
+            - name: Rust cache
+              uses: swatinem/rust-cache@v2
+              with:
+                  workspaces: './src-tauri -> target'
+
+            - name: Install dependencies
+              run: bun install --frozen-lockfile
+
+            - name: Build Tauri app and upload assets
+              id: tauri
+              uses: tauri-apps/tauri-action@v0
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  tagName: ${{ github.event.inputs.release_version != '' && format('v{0}', github.event.inputs.release_version) || 'v__VERSION__' }}
+                  releaseName: ${{ github.event.inputs.release_version != '' && format('Kivarion v{0}', github.event.inputs.release_version) || 'Kivarion v__VERSION__' }}
+                  releaseDraft: ${{ github.event.inputs.draft }}
+                  prerelease: false
+
+            # linuxdeploy bundles the build machine's (Ubuntu 22.04) Wayland/DRM
+            # client libraries into the AppImage. They get loaded ahead of the
+            # host's copies and then talk to the *host* Mesa driver — on recent
+            # Mesa WebKitGTK's EGL init dies with "Could not create default EGL
+            # display: EGL_BAD_PARAMETER". These libs must come from the host,
+            # same reasoning as the AppImage excludelist, so strip them and
+            # repack. tauri-action has already uploaded the original AppImage at
+            # this point, hence the asset swap.
+            - name: Repack AppImage without bundled graphics client libs (Linux only)
+              if: matrix.platform == 'ubuntu-22.04'
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  RELEASE_ID: ${{ steps.tauri.outputs.releaseId }}
+              run: |
+                  set -euo pipefail
+                  cd src-tauri/target/release/bundle/appimage
+                  appimage=$(basename ./*.AppImage)
+
+                  # The AppImage runtime extracts without FUSE.
+                  ./"$appimage" --appimage-extract >/dev/null
+
+                  find squashfs-root \( \
+                    -name 'libwayland-*.so*' -o \
+                    -name 'libgbm.so*' -o \
+                    -name 'libdrm*.so*' -o \
+                    -name 'libEGL.so*' -o \
+                    -name 'libGL.so*' -o \
+                    -name 'libGLX*.so*' -o \
+                    -name 'libGLdispatch.so*' \
+                  \) -print -delete
+
+                  # Reference appimagetool, pinned (the old AppImageKit release
+                  # assets are gone — 404 — so this comes from the maintained
+                  # AppImage/appimagetool repo). --appimage-extract-and-run avoids
+                  # needing FUSE on the runner.
+                  curl -fsSL -o appimagetool \
+                    https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+                  chmod +x appimagetool
+                  ARCH=x86_64 ./appimagetool --appimage-extract-and-run squashfs-root "$appimage"
+
+                  # Swap the already-uploaded release asset for the repacked one.
+                  asset_id=$(gh api "/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+                    --jq ".[] | select(.name == \"${appimage}\") | .id")
+                  if [ -n "$asset_id" ]; then
+                    gh api --method DELETE "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+                  fi
+                  gh api --method POST \
+                    -H "Content-Type: application/octet-stream" \
+                    "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets?name=${appimage}" \
+                    --input "$appimage" >/dev/null

@@ -31,3 +31,6 @@ AGENTS.md
 CLAUDE.md
 docs/
 *.kdbx.bak
+
+# Local signed build script (contains Apple credentials)
+build-mac.sh
