@@ -31,9 +31,12 @@ build-linux:
             - src-tauri/target/
     before_script:
         - apt-get update
+        # xdg-utils: the AppImage bundler requires xdg-open (preinstalled on
+        # GitHub runners, absent from the bare ubuntu:22.04 image).
         - apt-get install -y curl wget file unzip xz-utils ca-certificates
           build-essential pkg-config libssl-dev libgtk-3-dev
           libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+          xdg-utils
         - curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
         - . "$CARGO_HOME/env"
         - curl -fsSL https://bun.sh/install | bash

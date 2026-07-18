@@ -528,6 +528,7 @@ fn delete_biometric_password(id: &str) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = id;
         Err("Biometric authentication is not supported on this platform".to_string())
     }
 }
