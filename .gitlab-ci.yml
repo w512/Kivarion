@@ -1,0 +1,111 @@
+# Builds Windows and Linux packages and exposes them as pipeline artifacts.
+# Mirrors .github/workflows/release.yml (which stays the release path on
+# GitHub); here there is no release/tag step — grab the artifacts from the
+# pipeline page.
+#
+# Pipelines run only when started manually (CI/CD → Pipelines → New pipeline)
+# or on version tags (v1.2.3), matching the workflow_dispatch semantics on
+# GitHub. Windows uses GitLab's hosted Windows runners (beta): VM provisioning
+# alone takes ~5 minutes and the first uncached build can exceed the default
+# 1h project timeout, hence the explicit job timeouts.
+
+workflow:
+    rules:
+        - if: $CI_PIPELINE_SOURCE == "web"
+        - if: $CI_COMMIT_TAG =~ /^v\d/
+
+build-linux:
+    image: ubuntu:22.04
+    timeout: 2h
+    variables:
+        DEBIAN_FRONTEND: noninteractive
+        CARGO_HOME: $CI_PROJECT_DIR/.cargo
+        # linuxdeploy/appimagetool are AppImages themselves; there is no FUSE in
+        # the container, so have them self-extract instead.
+        APPIMAGE_EXTRACT_AND_RUN: '1'
+    cache:
+        key: linux-$CI_COMMIT_REF_SLUG
+        paths:
+            - .cargo/registry/
+            - .cargo/git/
+            - src-tauri/target/
+    before_script:
+        - apt-get update
+        - apt-get install -y curl wget file unzip xz-utils ca-certificates
+          build-essential pkg-config libssl-dev libgtk-3-dev
+          libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf rpm
+        - curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+        - . "$CARGO_HOME/env"
+        - curl -fsSL https://bun.sh/install | bash
+        - export PATH="$HOME/.bun/bin:$PATH"
+    script:
+        - bun install --frozen-lockfile
+        - bun run tauri build
+        # linuxdeploy bundles the build machine's (Ubuntu 22.04) Wayland/DRM
+        # client libraries into the AppImage. They get loaded ahead of the host's
+        # copies and then talk to the *host* Mesa driver — on recent Mesa
+        # WebKitGTK's EGL init dies with "Could not create default EGL display:
+        # EGL_BAD_PARAMETER". These libs must come from the host, same reasoning
+        # as the AppImage excludelist, so strip them and repack (same fix as in
+        # release.yml on GitHub).
+        - |
+            set -euo pipefail
+            cd src-tauri/target/release/bundle/appimage
+            appimage=$(basename ./*.AppImage)
+            ./"$appimage" --appimage-extract >/dev/null
+            find squashfs-root \( \
+              -name 'libwayland-*.so*' -o \
+              -name 'libgbm.so*' -o \
+              -name 'libdrm*.so*' -o \
+              -name 'libEGL.so*' -o \
+              -name 'libGL.so*' -o \
+              -name 'libGLX*.so*' -o \
+              -name 'libGLdispatch.so*' \
+            \) -print -delete
+            curl -fsSL -o appimagetool \
+              https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+            chmod +x appimagetool
+            ARCH=x86_64 ./appimagetool squashfs-root "$appimage"
+            cd "$CI_PROJECT_DIR"
+        - mkdir -p dist-bundles
+        - cp src-tauri/target/release/bundle/deb/*.deb dist-bundles/
+        - cp src-tauri/target/release/bundle/rpm/*.rpm dist-bundles/
+        - cp src-tauri/target/release/bundle/appimage/*.AppImage dist-bundles/
+    artifacts:
+        name: kivarion-linux-$CI_COMMIT_REF_SLUG
+        paths:
+            - dist-bundles/
+        expire_in: 2 weeks
+
+build-windows:
+    tags:
+        - saas-windows-medium-amd64
+    timeout: 3h
+    variables:
+        CARGO_HOME: $CI_PROJECT_DIR\.cargo
+    cache:
+        key: windows-$CI_COMMIT_REF_SLUG
+        paths:
+            - .cargo/registry/
+            - .cargo/git/
+            - src-tauri/target/
+    before_script:
+        # The hosted Windows 2022 image ships VS Build Tools (MSVC linker), but
+        # neither Rust nor Bun.
+        - Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+        - .\rustup-init.exe -y --profile minimal --default-toolchain stable-x86_64-pc-windows-msvc
+        - $env:Path = "$env:CARGO_HOME\bin;$env:Path"
+        - powershell -ExecutionPolicy Bypass -Command "irm bun.sh/install.ps1 | iex"
+        - $env:Path = "$env:USERPROFILE\.bun\bin;$env:Path"
+    script:
+        - bun install --frozen-lockfile
+        # Tauri downloads WiX and NSIS itself; targets "all" yields .msi + setup .exe.
+        - bun run tauri build
+        - New-Item -ItemType Directory -Force dist-bundles | Out-Null
+        - Copy-Item src-tauri\target\release\bundle\msi\*.msi dist-bundles\
+        - Copy-Item src-tauri\target\release\bundle\nsis\*.exe dist-bundles\
+    artifacts:
+        name: kivarion-windows-$CI_COMMIT_REF_SLUG
+        paths:
+            - dist-bundles/
+        expire_in: 2 weeks
