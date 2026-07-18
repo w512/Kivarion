@@ -2,9 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- Restricted entitlements: authorized by the Developer ID provisioning
+         profile embedded as Contents/embedded.provisionprofile (see
+         bundle.macOS.files in tauri.conf.json). Without the profile the app
+         is killed at launch ("Launchd job spawn failed", POSIX 163).
+         Required for the Data Protection keychain item with the
+         USER_PRESENCE access control (release-build Touch ID unlock). -->
+    <!-- Capital K matches the App ID as registered on the developer portal
+         (the profile authorizes exactly "846SRM4STF.us.blokhin.Kivarion");
+         the bundle identifier itself stays lowercase. -->
+    <key>com.apple.application-identifier</key>
+    <string>846SRM4STF.us.blokhin.Kivarion</string>
+    <key>com.apple.developer.team-identifier</key>
+    <string>846SRM4STF</string>
     <key>keychain-access-groups</key>
     <array>
-        <string>us.blokhin.kivarion</string>
+        <string>846SRM4STF.us.blokhin.kivarion</string>
     </array>
 </dict>
 </plist>
