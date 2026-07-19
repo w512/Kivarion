@@ -465,31 +465,78 @@ async fn verify_biometric(reason: &str) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+// Query targeting the Data Protection keychain — the only store where the OS
+// enforces a USER_PRESENCE access control on read. The `passwords` helpers
+// never set `kSecUseDataProtectionKeychain`, so without it the item lands in
+// the file-based login keychain, where SecItemUpdate on a pre-existing item
+// silently drops the ACL and reads need no Touch ID at all.
+#[cfg(target_os = "macos")]
+fn data_protection_options(id: &str) -> PasswordOptions {
+    use core_foundation::base::TCFType;
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::string::CFString;
+
+    let mut options = PasswordOptions::new_generic_password("Kivarion", id);
+    #[allow(deprecated)]
+    options.query.push((
+        unsafe {
+            CFString::wrap_under_get_rule(
+                security_framework_sys::item::kSecUseDataProtectionKeychain,
+            )
+        },
+        CFBoolean::true_value().into_CFType(),
+    ));
+    options
+}
+
+// Legacy query: the file-based login keychain, where debug builds store the
+// item (unsigned builds can't use the Data Protection keychain, -34018) and
+// where releases before the Data Protection fix used to put it.
+#[cfg(target_os = "macos")]
+fn legacy_options(id: &str) -> PasswordOptions {
+    PasswordOptions::new_generic_password("Kivarion", id)
+}
+
+#[cfg(all(target_os = "macos", not(debug_assertions)))]
+fn save_protected_password(id: &str, pass: &[u8]) -> Result<(), String> {
+    // Delete-then-add: on a duplicate the crate falls back to SecItemUpdate,
+    // which updates the value but cannot attach the access control — the item
+    // would stay readable without Touch ID. Losing the item if the add below
+    // fails is acceptable: the user typed this password moments ago.
+    let _ = delete_generic_password_options(data_protection_options(id));
+
+    let mut options = data_protection_options(id);
+    options.set_access_control_options(
+        security_framework::passwords::AccessControlOptions::USER_PRESENCE,
+    );
+    set_generic_password_options(pass, options).map_err(|e| e.to_string())?;
+
+    // Remove any legacy ACL-less copy so loads can never fall back to it.
+    let _ = delete_generic_password_options(legacy_options(id));
+    Ok(())
+}
+
 #[tauri::command]
 async fn save_biometric_password(id: String, pass: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        // 1. Confirm the user's identity before storing the secret.
+        // Confirm the user's identity before storing the secret.
         verify_biometric("Authorize Kivarion to save this database password").await?;
 
-        // 2. Save to the keychain. `set_generic_password_options` adds the item
-        //    or updates it in place (SecItemAdd → SecItemUpdate on duplicate),
-        //    so we must NOT delete the existing item first — doing so would
-        //    leave the user with no stored secret if the write below failed.
-        #[allow(unused_mut)]
-        let mut options = PasswordOptions::new_generic_password("Kivarion", &id);
-
-        // In release builds, protect the item with a Secure Enclave access
-        // control so the OS itself requires Touch ID / passcode to read it.
-        // Debug builds are typically unsigned and would fail with
-        // errSecMissingEntitlement (-34018), so they fall back to a keychain
-        // item guarded only by the in-app `verify_biometric` check above.
+        // In release builds the item goes to the Data Protection keychain with
+        // a USER_PRESENCE access control, so the OS itself requires Touch ID /
+        // passcode on every read. Debug builds are typically unsigned and
+        // would fail with errSecMissingEntitlement (-34018), so they store a
+        // plain item guarded only by the in-app `verify_biometric` check.
         #[cfg(not(debug_assertions))]
-        options.set_access_control_options(
-            security_framework::passwords::AccessControlOptions::USER_PRESENCE,
-        );
-
-        set_generic_password_options(pass.as_bytes(), options).map_err(|e| e.to_string())
+        {
+            save_protected_password(&id, pass.as_bytes())
+        }
+        #[cfg(debug_assertions)]
+        {
+            set_generic_password_options(pass.as_bytes(), legacy_options(&id))
+                .map_err(|e| e.to_string())
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -502,15 +549,33 @@ async fn save_biometric_password(id: String, pass: String) -> Result<(), String>
 async fn load_biometric_password(id: String) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        // In debug builds the keychain item has no Secure Enclave ACL, so we
-        // verify the user explicitly here. In release the protected item makes
-        // the OS show the biometric prompt automatically when it is read.
+        #[cfg(not(debug_assertions))]
+        {
+            // Reading the USER_PRESENCE item makes the OS show the Touch ID
+            // prompt itself; no in-app check needed.
+            match generic_password(data_protection_options(&id)) {
+                Ok(pass_bytes) => String::from_utf8(pass_bytes).map_err(|e| e.to_string()),
+                Err(e) if e.code() == security_framework_sys::base::errSecItemNotFound => {
+                    // Legacy item (saved by a debug build or by a release
+                    // before the Data Protection fix): it has no ACL, so gate
+                    // it with an explicit check, then migrate it to the
+                    // protected form so this path never runs again.
+                    verify_biometric("Unlock Kivarion Database").await?;
+                    let pass_bytes =
+                        generic_password(legacy_options(&id)).map_err(|e| e.to_string())?;
+                    let _ = save_protected_password(&id, &pass_bytes);
+                    String::from_utf8(pass_bytes).map_err(|e| e.to_string())
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        }
         #[cfg(debug_assertions)]
-        verify_biometric("Unlock Kivarion Database").await?;
-
-        let options = PasswordOptions::new_generic_password("Kivarion", &id);
-        let pass_bytes = generic_password(options).map_err(|e| e.to_string())?;
-        String::from_utf8(pass_bytes).map_err(|e| e.to_string())
+        {
+            // Debug: the item has no ACL, verify the user explicitly.
+            verify_biometric("Unlock Kivarion Database").await?;
+            let pass_bytes = generic_password(legacy_options(&id)).map_err(|e| e.to_string())?;
+            String::from_utf8(pass_bytes).map_err(|e| e.to_string())
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -523,8 +588,15 @@ async fn load_biometric_password(id: String) -> Result<String, String> {
 fn delete_biometric_password(id: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        delete_generic_password_options(PasswordOptions::new_generic_password("Kivarion", id))
-            .map_err(|e| e.to_string())
+        // The secret may live in either store (see save/load); remove both.
+        // Data Protection errors are ignored: debug builds can't touch that
+        // keychain at all, and "not found" is the common case.
+        let _ = delete_generic_password_options(data_protection_options(id));
+        match delete_generic_password_options(legacy_options(id)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == security_framework_sys::base::errSecItemNotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {

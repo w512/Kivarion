@@ -34,7 +34,8 @@ tauri-plugin-window-state = "2"
 core-foundation = "0.10.1"
 
 security-framework = "3.7.0"
-security-framework-sys = "2.17.0"
+# OSX_10_15 exposes kSecUseDataProtectionKeychain (biometric password storage).
+security-framework-sys = { version = "2.17.0", features = ["OSX_10_15"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
 objc2-local-authentication = "0.3"
