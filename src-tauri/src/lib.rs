@@ -497,23 +497,31 @@ fn legacy_options(id: &str) -> PasswordOptions {
     PasswordOptions::new_generic_password("Kivarion", id)
 }
 
+// Stable marker matched by the frontend: no biometric password is stored for
+// this database, so the user must unlock manually once to (re)save it.
+#[cfg(target_os = "macos")]
+const BIOMETRIC_NOT_ENROLLED: &str = "BIOMETRIC_NOT_ENROLLED";
+
 #[cfg(all(target_os = "macos", not(debug_assertions)))]
 fn save_protected_password(id: &str, pass: &[u8]) -> Result<(), String> {
+    // Clear existing copies from both stores before adding. The order is
+    // load-bearing: a SecItem call without `kSecUseDataProtectionKeychain`
+    // operates on the file keychain AND the Data Protection keychain (macOS
+    // unified SecItem behavior), and the access control permits deletes
+    // without authentication — running this legacy cleanup after the add
+    // would silently destroy the item that was just stored.
+    let _ = delete_generic_password_options(legacy_options(id));
     // Delete-then-add: on a duplicate the crate falls back to SecItemUpdate,
     // which updates the value but cannot attach the access control — the item
     // would stay readable without Touch ID. Losing the item if the add below
-    // fails is acceptable: the user typed this password moments ago.
+    // fails is acceptable: the next manual unlock stores it again.
     let _ = delete_generic_password_options(data_protection_options(id));
 
     let mut options = data_protection_options(id);
     options.set_access_control_options(
         security_framework::passwords::AccessControlOptions::USER_PRESENCE,
     );
-    set_generic_password_options(pass, options).map_err(|e| e.to_string())?;
-
-    // Remove any legacy ACL-less copy so loads can never fall back to it.
-    let _ = delete_generic_password_options(legacy_options(id));
-    Ok(())
+    set_generic_password_options(pass, options).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -559,10 +567,17 @@ async fn load_biometric_password(id: String) -> Result<String, String> {
                     // Legacy item (saved by a debug build or by a release
                     // before the Data Protection fix): it has no ACL, so gate
                     // it with an explicit check, then migrate it to the
-                    // protected form so this path never runs again.
+                    // protected form so this path never runs again. Probe for
+                    // the item first so a missing one fails fast instead of
+                    // prompting for Touch ID and then erroring out.
+                    let pass_bytes = match generic_password(legacy_options(&id)) {
+                        Ok(bytes) => bytes,
+                        Err(e) if e.code() == security_framework_sys::base::errSecItemNotFound => {
+                            return Err(BIOMETRIC_NOT_ENROLLED.to_string());
+                        }
+                        Err(e) => return Err(e.to_string()),
+                    };
                     verify_biometric("Unlock Kivarion Database").await?;
-                    let pass_bytes =
-                        generic_password(legacy_options(&id)).map_err(|e| e.to_string())?;
                     let _ = save_protected_password(&id, &pass_bytes);
                     String::from_utf8(pass_bytes).map_err(|e| e.to_string())
                 }
@@ -572,8 +587,14 @@ async fn load_biometric_password(id: String) -> Result<String, String> {
         #[cfg(debug_assertions)]
         {
             // Debug: the item has no ACL, verify the user explicitly.
+            let pass_bytes = match generic_password(legacy_options(&id)) {
+                Ok(bytes) => bytes,
+                Err(e) if e.code() == security_framework_sys::base::errSecItemNotFound => {
+                    return Err(BIOMETRIC_NOT_ENROLLED.to_string());
+                }
+                Err(e) => return Err(e.to_string()),
+            };
             verify_biometric("Unlock Kivarion Database").await?;
-            let pass_bytes = generic_password(legacy_options(&id)).map_err(|e| e.to_string())?;
             String::from_utf8(pass_bytes).map_err(|e| e.to_string())
         }
     }
@@ -787,9 +808,17 @@ mod tests {
     }
 }
 
+// Lets the frontend finish a guarded quit (Cmd+Q / app menu): the exit was
+// prevented in the `ExitRequested` handler below so pending saves could be
+// flushed first; this command performs the actual exit.
+#[tauri::command]
+fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
@@ -806,8 +835,26 @@ pub fn run() {
             is_biometric_available,
             save_biometric_password,
             load_biometric_password,
-            delete_biometric_password
+            delete_biometric_password,
+            quit_app
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+            // A user quit (Cmd+Q / app menu) arrives with no exit code and
+            // does NOT go through the window close-requested guard, so it
+            // would kill the process while an auto-save is still in flight.
+            // Hold the exit and let the frontend flush its state, mirroring
+            // the close guard; it calls `quit_app` (which sets a code) when
+            // done. An exit because the last window closed (empty window
+            // list) was already guarded at the window level — let it pass.
+            use tauri::{Emitter, Manager};
+            if code.is_none() && !app_handle.webview_windows().is_empty() {
+                api.prevent_exit();
+                let _ = app_handle.emit("kivarion:quit-requested", ());
+            }
+        }
+    });
 }

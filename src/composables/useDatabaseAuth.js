@@ -191,7 +191,17 @@ export function useDatabaseAuth(router, passwordInputRef) {
             }
         } catch (err) {
             console.error('Biometric unlock failed or cancelled:', err);
-            // It's okay, user can fallback to password
+            // Tauri rejects with the plain error string from the Rust command.
+            const message = typeof err === 'string' ? err : err?.message || '';
+            if (message.includes('BIOMETRIC_NOT_ENROLLED')) {
+                errorMessage.value =
+                    'No password is saved for Touch ID on this database. Unlock with your master password once to enable it again.';
+            } else if (!/cancel/i.test(message)) {
+                // An explicit cancel needs no error; everything else must be
+                // visible, or a broken unlock looks like a dead button.
+                errorMessage.value =
+                    'Touch ID unlock failed. Enter your master password.';
+            }
         } finally {
             isLoading.value = false;
         }

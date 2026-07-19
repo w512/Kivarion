@@ -236,6 +236,45 @@ describe('useDatabaseAuth.attemptBiometricUnlock', () => {
         expect(currentStore.db).toBeUndefined();
         expect(auth.isLoading.value).toBe(false);
     });
+
+    test('explains a missing stored password instead of failing silently', async () => {
+        const { auth } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        invokeHandlers.load_biometric_password = async () => {
+            throw 'BIOMETRIC_NOT_ENROLLED';
+        };
+
+        await auth.attemptBiometricUnlock('/a.kdbx');
+
+        expect(auth.errorMessage.value).toContain('master password');
+        expect(auth.isLoading.value).toBe(false);
+    });
+
+    test('stays silent when the user cancels the Touch ID prompt', async () => {
+        const { auth } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        invokeHandlers.load_biometric_password = async () => {
+            throw 'Auth failed: "Canceled by user."';
+        };
+
+        await auth.attemptBiometricUnlock('/a.kdbx');
+
+        expect(auth.errorMessage.value).toBe('');
+    });
+
+    test('surfaces unexpected biometric failures', async () => {
+        const { auth } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        invokeHandlers.load_biometric_password = async () => {
+            throw 'The specified item could not be found in the keychain.';
+        };
+
+        await auth.attemptBiometricUnlock('/a.kdbx');
+
+        expect(auth.errorMessage.value).toBe(
+            'Touch ID unlock failed. Enter your master password.',
+        );
+    });
 });
 
 describe('useDatabaseAuth.decrypt error messages', () => {

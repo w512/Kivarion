@@ -241,6 +241,8 @@ import * as kdbxweb from 'kdbxweb';
 import { useStore } from '../store.js';
 import { homeDir } from '@tauri-apps/api/path';
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 import {
     getField,
     isProtectedValue,
@@ -301,12 +303,66 @@ onMounted(() => {
 
     window.addEventListener('kivarion:before-lock', prepareForForcedLock);
     window.addEventListener('keydown', onGlobalShortcut);
+    void setupTeardownGuards();
 });
 
 onUnmounted(() => {
     window.removeEventListener('kivarion:before-lock', prepareForForcedLock);
     window.removeEventListener('keydown', onGlobalShortcut);
+    unlistenCloseRequested?.();
+    unlistenCloseRequested = null;
+    unlistenQuitRequested?.();
+    unlistenQuitRequested = null;
 });
+
+// Native teardown guards: a window close (red button / Cmd+W) or an app quit
+// (Cmd+Q — surfaced by the backend as `kivarion:quit-requested`, since it
+// bypasses close-requested) would otherwise kill the process while an
+// auto-save is still in flight or an entry edit is pending — the same data
+// the in-app Close button already guards against losing.
+let allowWindowClose = false;
+let pendingTeardownFinish = null;
+let unlistenCloseRequested = null;
+let unlistenQuitRequested = null;
+
+async function setupTeardownGuards() {
+    unlistenCloseRequested = await getCurrentWindow().onCloseRequested(
+        (event) => {
+            if (allowWindowClose) return;
+            if (guardTeardown(closeGuardedWindow)) event.preventDefault();
+        },
+    );
+    unlistenQuitRequested = await listen('kivarion:quit-requested', () => {
+        if (!guardTeardown(quitApp)) quitApp();
+    });
+}
+
+// Flush pending work, then run `finish` (close the window or exit the app).
+// Returns false when nothing needed guarding and `finish` was not called.
+function guardTeardown(finish) {
+    const hasDraft = entryDetailRef.value?.hasUnsavedChanges?.() ?? false;
+    if (!hasDraft && !isSaving.value && !hasUnsavedChanges.value) {
+        return false;
+    }
+    requestNavigation(async () => {
+        if (!(await ensureSavedBeforeClose())) {
+            pendingTeardownFinish = finish;
+            showCloseAfterSaveErrorConfirm.value = true;
+            return;
+        }
+        finish();
+    });
+    return true;
+}
+
+function closeGuardedWindow() {
+    allowWindowClose = true;
+    void getCurrentWindow().close();
+}
+
+function quitApp() {
+    void invoke('quit_app');
+}
 
 const selectedEntryUuid = ref(null);
 const entryDetailRef = ref(null);
@@ -338,6 +394,7 @@ const { copy: copyToClipboard } = useClipboard();
 function prepareForForcedLock() {
     entryDetailRef.value?.discardPendingEdit?.();
     pendingNavigation.value = null;
+    pendingTeardownFinish = null;
     showUnsavedEditConfirm.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
     showDeleteConfirm.value = false;
@@ -691,12 +748,21 @@ function continueEditing() {
 
 function forceCloseDatabase(options = null) {
     const forgetFile = options?.forgetFile ?? pendingForceCloseForgetFile.value;
+    // Set when the confirmation was triggered by a native window close or an
+    // app quit: confirming must finish that teardown, not lock to HomePage.
+    const finishTeardown = pendingTeardownFinish;
+    pendingTeardownFinish = null;
     pendingForceCloseForgetFile.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
+    if (finishTeardown) {
+        finishTeardown();
+        return;
+    }
     void lockDatabase(router, { forgetFile });
 }
 
 function cancelCloseAfterSaveError() {
+    pendingTeardownFinish = null;
     pendingForceCloseForgetFile.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
 }

@@ -1,7 +1,31 @@
 <script setup>
+import { onMounted, onUnmounted } from 'vue';
+import { useRoute } from 'vue-router';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useAutoLock } from './composables/useAutoLock.js';
 
 useAutoLock();
+
+// The backend holds Cmd+Q / menu quits (`ExitRequested` → prevent_exit) so an
+// open database can flush its saves first. DatabasePage owns that flow; on
+// every other route there is nothing to flush, so quit immediately — without
+// this fallback a quit from HomePage or Settings would leave the app running.
+const route = useRoute();
+let unlistenQuitRequested = null;
+
+onMounted(async () => {
+    unlistenQuitRequested = await listen('kivarion:quit-requested', () => {
+        if (route.name !== 'database') {
+            void invoke('quit_app');
+        }
+    });
+});
+
+onUnmounted(() => {
+    unlistenQuitRequested?.();
+    unlistenQuitRequested = null;
+});
 </script>
 
 <template>
