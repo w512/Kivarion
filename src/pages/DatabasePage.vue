@@ -154,6 +154,18 @@
             </div>
         </div>
 
+        <!-- Closing while an auto-save is still writing to disk -->
+        <ConfirmModal
+            :show="showClosingSaveModal"
+            title="Saving changes…"
+            message="The latest changes are still being written to the database file. The window will close automatically once saving finishes."
+            confirm-text="Close anyway"
+            confirm-variant="danger"
+            cancel-text="Keep open"
+            @confirm="confirmCloseWithoutWaiting"
+            @cancel="cancelClosingSave"
+        />
+
         <!-- Save Error Close Confirmation -->
         <ConfirmModal
             :show="showCloseAfterSaveErrorConfirm"
@@ -344,15 +356,46 @@ function guardTeardown(finish) {
     if (!hasDraft && !isSaving.value && !hasUnsavedChanges.value) {
         return false;
     }
-    requestNavigation(async () => {
-        if (!(await ensureSavedBeforeClose())) {
-            pendingTeardownFinish = finish;
-            showCloseAfterSaveErrorConfirm.value = true;
+    requestNavigation(() => finishAfterFlush(finish));
+    return true;
+}
+
+// Wait for the save queue to drain behind a visible "Saving changes…" modal —
+// a silent wait looks like a frozen app (saving a large vault takes seconds).
+// Runs `finish` when the flush succeeds (or immediately if nothing is
+// pending); a failed flush falls through to the save-error confirmation.
+function finishAfterFlush(finish) {
+    if (!isSaving.value && !hasUnsavedChanges.value) {
+        finish();
+        return;
+    }
+    pendingTeardownFinish = finish;
+    showClosingSaveModal.value = true;
+    void saveDatabaseChanges().then((saved) => {
+        // The user may have clicked "Close anyway" / "Keep open" meanwhile.
+        if (pendingTeardownFinish !== finish || !showClosingSaveModal.value) {
             return;
         }
-        finish();
+        showClosingSaveModal.value = false;
+        if (saved) {
+            pendingTeardownFinish = null;
+            finish();
+        } else {
+            showCloseAfterSaveErrorConfirm.value = true;
+        }
     });
-    return true;
+}
+
+function confirmCloseWithoutWaiting() {
+    const finish = pendingTeardownFinish;
+    pendingTeardownFinish = null;
+    showClosingSaveModal.value = false;
+    finish?.();
+}
+
+function cancelClosingSave() {
+    pendingTeardownFinish = null;
+    showClosingSaveModal.value = false;
 }
 
 function closeGuardedWindow() {
@@ -385,6 +428,7 @@ const homeDirPath = ref('');
 
 const showSettingsModal = ref(false);
 const showCloseAfterSaveErrorConfirm = ref(false);
+const showClosingSaveModal = ref(false);
 const showUnsavedEditConfirm = ref(false);
 const pendingNavigation = ref(null);
 const pendingForceCloseForgetFile = ref(false);
@@ -397,6 +441,7 @@ function prepareForForcedLock() {
     pendingTeardownFinish = null;
     showUnsavedEditConfirm.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
+    showClosingSaveModal.value = false;
     showDeleteConfirm.value = false;
     showRenameModal.value = false;
     showDeleteGroupConfirm.value = false;
@@ -687,16 +732,10 @@ function onEntryUpdated() {
     saveDatabaseChanges();
 }
 
-async function closeDatabase({ forgetFile = false } = {}) {
-    requestNavigation(async () => {
-        if (!(await ensureSavedBeforeClose())) {
-            pendingForceCloseForgetFile.value = forgetFile;
-            showCloseAfterSaveErrorConfirm.value = true;
-            return;
-        }
-
-        forceCloseDatabase({ forgetFile });
-    });
+function closeDatabase({ forgetFile = false } = {}) {
+    requestNavigation(() =>
+        finishAfterFlush(() => forceCloseDatabase({ forgetFile })),
+    );
 }
 
 function lockDatabaseFromHeader() {
@@ -765,14 +804,6 @@ function cancelCloseAfterSaveError() {
     pendingTeardownFinish = null;
     pendingForceCloseForgetFile.value = false;
     showCloseAfterSaveErrorConfirm.value = false;
-}
-
-async function ensureSavedBeforeClose() {
-    if (!store.db) return true;
-    if (!isSaving.value && !hasUnsavedChanges.value) return true;
-
-    const saved = await saveDatabaseChanges();
-    return saved && !hasUnsavedChanges.value;
 }
 
 function getEntryTitle(entry) {
