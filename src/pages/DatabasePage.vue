@@ -332,7 +332,11 @@ onUnmounted(() => {
 // bypasses close-requested) would otherwise kill the process while an
 // auto-save is still in flight or an entry edit is pending — the same data
 // the in-app Close button already guards against losing.
-let allowWindowClose = false;
+//
+// While this listener exists, Tauri no longer closes the window itself: the
+// API wrapper finalizes an unprevented close by calling `destroy()`, so the
+// capability must grant `core:window:allow-destroy` or the close button
+// silently stops working.
 let pendingTeardownFinish = null;
 let unlistenCloseRequested = null;
 let unlistenQuitRequested = null;
@@ -340,7 +344,6 @@ let unlistenQuitRequested = null;
 async function setupTeardownGuards() {
     unlistenCloseRequested = await getCurrentWindow().onCloseRequested(
         (event) => {
-            if (allowWindowClose) return;
             if (guardTeardown(closeGuardedWindow)) event.preventDefault();
         },
     );
@@ -399,8 +402,9 @@ function cancelClosingSave() {
 }
 
 function closeGuardedWindow() {
-    allowWindowClose = true;
-    void getCurrentWindow().close();
+    // destroy() rather than close(): the flush already ran, and close() would
+    // re-enter the close-requested guard above.
+    void getCurrentWindow().destroy();
 }
 
 function quitApp() {
