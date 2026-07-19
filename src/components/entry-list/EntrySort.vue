@@ -68,8 +68,8 @@ const sortOptions = [
     { label: 'Title (Z-A)', value: 'title-desc' },
     { label: 'Newest', value: 'created-desc' },
     { label: 'Oldest', value: 'created-asc' },
-    { label: 'Recently edited', value: 'modified-desc' },
-    { label: 'Least recently edited', value: 'modified-asc' },
+    { label: 'Edited (newest)', value: 'modified-desc' },
+    { label: 'Edited (oldest)', value: 'modified-asc' },
 ];
 
 const currentSortLabel = computed(() => {
