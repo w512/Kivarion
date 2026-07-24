@@ -1,5 +1,9 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+mod access;
+
+use access::{Access, PathAccess};
+
 // --- Filesystem commands -------------------------------------------------
 //
 // All database/attachment file I/O lives in the backend so the webview never
@@ -7,6 +11,12 @@
 // operations on a path the user picked through a native dialog (or the saved
 // last-database path). This keeps an XSS-compromised frontend from reading or
 // writing arbitrary files under the user's home directory.
+//
+// The absence of an `fs` capability is not what enforces that: `invoke` reaches
+// these commands regardless, so each one that takes a path runs it past the
+// allowlist in `access.rs` first. A path enters the allowlist only by being
+// picked in a (backend-owned) native dialog or by being the remembered database
+// or its key file.
 
 // --- Threading -----------------------------------------------------------
 //
@@ -20,7 +30,7 @@
 // on an unresponsive network or removable volume it can hang just as long.
 
 /// Run blocking filesystem work on the async runtime's blocking pool.
-async fn run_blocking<T, F>(work: F) -> Result<T, String>
+pub(crate) async fn run_blocking<T, F>(work: F) -> Result<T, String>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
@@ -30,24 +40,22 @@ where
         .map_err(|e| format!("Background filesystem task failed: {e}"))
 }
 
-/// Read a file's raw bytes (used to load the selected `.kdbx`).
+/// Read a file's raw bytes (used to load the selected `.kdbx`, a rotated backup
+/// of it, or a key file).
 ///
 /// Returned as a raw IPC `Response` so the bytes reach the webview as an
 /// `ArrayBuffer` instead of an inflated JSON number array.
 #[tauri::command]
-async fn read_database(path: String) -> Result<tauri::ipc::Response, String> {
+async fn read_database(
+    path: String,
+    access: tauri::State<'_, PathAccess>,
+) -> Result<tauri::ipc::Response, String> {
+    let path = access.check(&path, Access::Read)?;
+
     let bytes = run_blocking(move || std::fs::read(&path))
         .await?
         .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(bytes))
-}
-
-/// Check whether a path exists (used to validate the remembered last DB path).
-#[tauri::command]
-async fn file_exists(path: String) -> bool {
-    run_blocking(move || std::path::Path::new(&path).exists())
-        .await
-        .unwrap_or(false)
 }
 
 // --- Raw-byte IPC --------------------------------------------------------
@@ -104,7 +112,7 @@ const CONFLICT_PREFIX: &str = "EXTERNAL_CONFLICT";
 /// Append a literal suffix to a path's filename (e.g. `vault.kdbx` + `.bak` →
 /// `vault.kdbx.bak`). Unlike `Path::with_extension` this never eats an existing
 /// extension, so it is correct regardless of how the file is named.
-fn with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+pub(crate) fn with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     std::path::PathBuf::from(name)
@@ -267,14 +275,22 @@ fn modified_ms(path: &std::path::Path) -> Option<f64> {
     Some(dur.as_millis() as f64)
 }
 
-/// Modification time (ms since epoch) of a file, or `None` if it doesn't exist.
-/// Used by the frontend to track external changes for conflict detection.
+/// Modification time (ms since epoch) of a file, or `None` if it doesn't exist
+/// (or is not a path the user granted). Used by the frontend to track external
+/// changes for conflict detection; callers already treat `None` as "unknown".
 #[tauri::command]
-async fn file_mtime(path: String) -> Option<f64> {
-    run_blocking(move || modified_ms(std::path::Path::new(&path)))
+async fn file_mtime(
+    path: String,
+    access: tauri::State<'_, PathAccess>,
+) -> Result<Option<f64>, String> {
+    let Ok(path) = access.check(&path, Access::Read) else {
+        return Ok(None);
+    };
+
+    Ok(run_blocking(move || modified_ms(&path))
         .await
         .ok()
-        .flatten()
+        .flatten())
 }
 
 /// Rotate `<path>.bak` → `<path>.bak.1` → … keeping at most `depth` backups,
@@ -321,8 +337,12 @@ fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
 /// The database bytes arrive as the raw IPC body; everything else comes in
 /// headers (see *Raw-byte IPC* above).
 #[tauri::command]
-async fn save_database(request: tauri::ipc::Request<'_>) -> Result<f64, String> {
+async fn save_database(
+    request: tauri::ipc::Request<'_>,
+    access: tauri::State<'_, PathAccess>,
+) -> Result<f64, String> {
     let path = arg(&request, "path").ok_or("Missing target path")?;
+    let path = access.check(&path, Access::Write)?;
     // An absent mtime means "don't check" — either nothing is known about the
     // file yet or the user chose to overwrite an external change.
     let expected_mtime = arg(&request, "expected-mtime").and_then(|v| v.parse::<f64>().ok());
@@ -337,13 +357,12 @@ async fn save_database(request: tauri::ipc::Request<'_>) -> Result<f64, String> 
 }
 
 fn save_database_bytes(
-    path: &str,
+    target: &std::path::Path,
     data: &[u8],
     expected_mtime: Option<f64>,
     backup: Option<bool>,
     backup_depth: Option<u32>,
 ) -> Result<f64, String> {
-    let target = std::path::Path::new(path);
     let _lock = SaveLockGuard::acquire(target)?;
     let tmp = with_suffix(target, ".tmp");
 
@@ -405,14 +424,18 @@ struct BackupInfo {
 /// List the rotated backups (`<path>.bak`, `<path>.bak.N`) for a database,
 /// most-recent first, so the UI can offer a restore.
 #[tauri::command]
-async fn list_backups(path: String) -> Vec<BackupInfo> {
-    run_blocking(move || collect_backups(&path))
+async fn list_backups(
+    path: String,
+    access: tauri::State<'_, PathAccess>,
+) -> Result<Vec<BackupInfo>, String> {
+    let path = access.check(&path, Access::Read)?;
+
+    Ok(run_blocking(move || collect_backups(&path))
         .await
-        .unwrap_or_default()
+        .unwrap_or_default())
 }
 
-fn collect_backups(path: &str) -> Vec<BackupInfo> {
-    let target = std::path::Path::new(path);
+fn collect_backups(target: &std::path::Path) -> Vec<BackupInfo> {
     let mut out = Vec::new();
     // Scan every slot instead of stopping at the first gap. Numbering is not
     // guaranteed contiguous — a backup deleted externally, or slots left by a
@@ -440,8 +463,12 @@ fn collect_backups(path: &str) -> Vec<BackupInfo> {
 /// Write bytes to a user-chosen path (used to export a decrypted attachment).
 /// The bytes are the raw IPC body; the target path comes in a header.
 #[tauri::command]
-async fn export_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+async fn export_file(
+    request: tauri::ipc::Request<'_>,
+    access: tauri::State<'_, PathAccess>,
+) -> Result<(), String> {
     let path = arg(&request, "path").ok_or("Missing target path")?;
+    let path = access.check(&path, Access::Write)?;
     let data = raw_body(&request)?.to_vec();
 
     run_blocking(move || std::fs::write(&path, &data).map_err(|e| e.to_string())).await?
@@ -880,7 +907,7 @@ mod tests {
         std::fs::write(backup_path(&target, 0), b"newest").unwrap();
         std::fs::write(backup_path(&target, 2), b"older").unwrap();
 
-        let backups = collect_backups(&target.to_string_lossy());
+        let backups = collect_backups(&target);
 
         let paths: Vec<String> = backups.into_iter().map(|b| b.path).collect();
         assert!(
@@ -896,9 +923,7 @@ mod tests {
         let target = dir.path().join("vault.kdbx");
         std::fs::write(&target, b"old").unwrap();
 
-        let new_mtime =
-            save_database_bytes(&target.to_string_lossy(), b"new", None, Some(true), Some(2))
-                .unwrap();
+        let new_mtime = save_database_bytes(&target, b"new", None, Some(true), Some(2)).unwrap();
 
         assert!(new_mtime > 0.0);
         assert_eq!(read_bytes(&target), b"new");
@@ -914,14 +939,8 @@ mod tests {
         std::fs::write(&target, b"current").unwrap();
         let stale_mtime = modified_ms(&target).unwrap() - 1.0;
 
-        let err = save_database_bytes(
-            &target.to_string_lossy(),
-            b"new",
-            Some(stale_mtime),
-            Some(true),
-            Some(2),
-        )
-        .unwrap_err();
+        let err = save_database_bytes(&target, b"new", Some(stale_mtime), Some(true), Some(2))
+            .unwrap_err();
 
         assert!(err.starts_with(CONFLICT_PREFIX));
         assert_eq!(read_bytes(&target), b"current");
@@ -937,14 +956,7 @@ mod tests {
         std::fs::write(&target, b"old").unwrap();
         std::fs::write(lock_path(&target), "pid=1 created_ms=0").unwrap();
 
-        save_database_bytes(
-            &target.to_string_lossy(),
-            b"new",
-            None,
-            Some(false),
-            Some(1),
-        )
-        .unwrap();
+        save_database_bytes(&target, b"new", None, Some(false), Some(1)).unwrap();
 
         assert_eq!(read_bytes(&target), b"new");
         assert!(!lock_path(&target).exists());
@@ -961,14 +973,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = save_database_bytes(
-            &target.to_string_lossy(),
-            b"new",
-            None,
-            Some(false),
-            Some(1),
-        )
-        .unwrap_err();
+        let err = save_database_bytes(&target, b"new", None, Some(false), Some(1)).unwrap_err();
 
         assert!(err.starts_with("SAVE_LOCKED"));
         assert_eq!(read_bytes(&target), b"old");
@@ -992,11 +997,23 @@ mod tests {
     // side of that contract wrong breaks every save at runtime while the rest
     // of the suite stays green.
 
-    fn mock_webview() -> tauri::WebviewWindow<tauri::test::MockRuntime> {
+    /// A mock app with the given paths already granted, as if the user had
+    /// picked them in a native dialog.
+    fn mock_webview(
+        granted: &[&std::path::Path],
+    ) -> tauri::WebviewWindow<tauri::test::MockRuntime> {
+        use tauri::Manager;
+
+        let access = PathAccess::new(None);
+        for path in granted {
+            access.grant_database(path);
+        }
+
         let app = tauri::test::mock_builder()
             .invoke_handler(tauri::generate_handler![save_database, export_file])
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .expect("failed to build mock app");
+        app.manage(access);
 
         tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
@@ -1063,7 +1080,7 @@ mod tests {
         // A non-ASCII path is the case percent-encoded headers exist for.
         let target = dir.path().join("Хранилище.kdbx");
         std::fs::write(&target, b"old").unwrap();
-        let webview = mock_webview();
+        let webview = mock_webview(&[&target]);
 
         raw_invoke(
             &webview,
@@ -1087,7 +1104,7 @@ mod tests {
         let target = dir.path().join("vault.kdbx");
         std::fs::write(&target, b"current").unwrap();
         let stale = modified_ms(&target).unwrap() - 1.0;
-        let webview = mock_webview();
+        let webview = mock_webview(&[&target]);
 
         let err = raw_invoke(
             &webview,
@@ -1109,7 +1126,7 @@ mod tests {
     fn export_file_command_writes_the_raw_body() {
         let dir = TempDir::new();
         let target = dir.path().join("attachment.bin");
-        let webview = mock_webview();
+        let webview = mock_webview(&[&target]);
 
         // Byte values that JSON-number-array encoding would have inflated.
         let payload: Vec<u8> = (0..=255u8).collect();
@@ -1129,7 +1146,7 @@ mod tests {
         let dir = TempDir::new();
         let target = dir.path().join("vault.kdbx");
         std::fs::write(&target, b"untouched").unwrap();
-        let webview = mock_webview();
+        let webview = mock_webview(&[&target]);
 
         let mut headers = tauri::http::HeaderMap::new();
         headers.insert(
@@ -1155,6 +1172,31 @@ mod tests {
         assert!(err.contains("raw byte payload"), "unexpected error: {err}");
         assert_eq!(read_bytes(&target), b"untouched");
     }
+
+    #[test]
+    fn bulk_commands_refuse_a_path_the_user_never_picked() {
+        let dir = TempDir::new();
+        let granted = dir.path().join("vault.kdbx");
+        let other = dir.path().join("id_ed25519");
+        std::fs::write(&other, b"private key").unwrap();
+        let webview = mock_webview(&[&granted]);
+
+        for cmd in ["save_database", "export_file"] {
+            let err = raw_invoke(
+                &webview,
+                cmd,
+                b"pwned",
+                &[("path", &other.to_string_lossy())],
+            )
+            .unwrap_err();
+
+            assert!(
+                err.contains(access::ACCESS_DENIED),
+                "{cmd} accepted an ungranted path: {err}"
+            );
+        }
+        assert_eq!(read_bytes(&other), b"private key");
+    }
 }
 
 // Lets the frontend finish a guarded quit (Cmd+Q / app menu): the exit was
@@ -1173,14 +1215,44 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            use tauri::Manager;
+
+            // Where the remembered database / key files live. Deliberately not
+            // in the webview's localStorage: a grant is derived from it.
+            let store = app
+                .path()
+                .app_config_dir()
+                .ok()
+                .map(|dir| dir.join("remembered-paths.json"));
+            let access = PathAccess::new(store);
+
+            // Debug builds only: let the E2E smoke test hand the app a
+            // database, since WebDriver cannot answer a native file dialog.
+            #[cfg(debug_assertions)]
+            if let Some(path) = std::env::var_os("KIVARION_E2E_DATABASE") {
+                access.preset_database(std::path::Path::new(&path));
+            }
+
+            app.manage(access);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             read_database,
-            file_exists,
             file_mtime,
             save_database,
             list_backups,
             export_file,
             quick_look_attachment,
+            access::pick_database_file,
+            access::pick_new_database_path,
+            access::pick_key_file,
+            access::pick_export_path,
+            access::remembered_database,
+            access::remember_database,
+            access::forget_database,
+            access::remembered_key_file,
+            access::remember_key_file,
             is_biometric_available,
             save_biometric_password,
             load_biometric_password,

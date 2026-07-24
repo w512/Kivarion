@@ -1,6 +1,5 @@
 import { ref, nextTick } from 'vue';
 import * as kdbxweb from 'kdbxweb';
-import { open, save } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
 import { saveDatabase } from '../dbHelper.js';
@@ -9,9 +8,35 @@ import { withSystemInteraction } from './useSystemInteraction.js';
 
 // Per-database key-file association. KeePass remembers which key file unlocks a
 // given database; we mirror that by storing the key file's path (not its bytes)
-// keyed by the database path.
-export function keyFileStorageKey(dbPath) {
-    return `kivarion-keyfile-${dbPath}`;
+// keyed by the database path. Both the association and the remembered database
+// live in the backend, not in localStorage: the backend grants filesystem
+// access to exactly those paths, so a webview that could edit the record could
+// grant itself a read of any file (see `src-tauri/src/access.rs`).
+export async function readKeyFilePreference(dbPath) {
+    try {
+        return (await invoke('remembered_key_file', { dbPath })) || null;
+    } catch (err) {
+        console.error('Failed to read the key file association:', err);
+        return null;
+    }
+}
+
+export async function writeKeyFilePreference(dbPath, keyPath) {
+    try {
+        await invoke('remember_key_file', { dbPath, keyPath: keyPath || null });
+    } catch (err) {
+        console.error('Failed to store the key file association:', err);
+    }
+}
+
+// Offer this database on the next launch. The backend only accepts a path it
+// has already granted, so this cannot widen access on its own.
+async function rememberDatabase(path) {
+    try {
+        await invoke('remember_database', { path });
+    } catch (err) {
+        console.error('Failed to remember the database path:', err);
+    }
 }
 
 // Map a kdbxweb load error to a message a user can act on. Codes are the stable
@@ -71,36 +96,36 @@ export function useDatabaseAuth(router, passwordInputRef) {
         return keyFilePath.value ? keyFilePath.value.split(/[\\/]/).pop() : '';
     }
 
-    function restoreKeyFilePreference(path) {
-        keyFilePath.value = localStorage.getItem(keyFileStorageKey(path));
+    async function restoreKeyFilePreference(path) {
+        keyFilePath.value = await readKeyFilePreference(path);
     }
 
     async function checkLastPath() {
-        const lastPath = localStorage.getItem('kivarion-last-db-path');
-        if (lastPath) {
-            try {
-                if (await invoke('file_exists', { path: lastPath })) {
-                    store.filePath = lastPath;
-                    fileName.value = lastPath.split(/[\\/]/).pop();
-                    step.value = 2;
-                    checkBiometricsPreference(lastPath);
-                    restoreKeyFilePreference(lastPath);
-                    nextTick(() => {
-                        passwordInputRef.value?.focus();
-                    });
-                }
-            } catch (err) {
-                console.error('Failed to check if last file exists:', err);
-            }
+        try {
+            // The backend hands back the database it remembered — and grants
+            // access to it in the same call, so it can be opened without
+            // sending the user through the file dialog again.
+            const lastPath = await invoke('remembered_database');
+            if (!lastPath) return;
+
+            store.filePath = lastPath;
+            fileName.value = lastPath.split(/[\\/]/).pop();
+            step.value = 2;
+            checkBiometricsPreference(lastPath);
+            await restoreKeyFilePreference(lastPath);
+            nextTick(() => {
+                passwordInputRef.value?.focus();
+            });
+        } catch (err) {
+            console.error('Failed to restore the last database:', err);
         }
     }
 
     async function selectFile() {
         try {
-            const selected = await open({
-                multiple: false,
-                filters: [{ name: 'KDBX Database', extensions: ['kdbx'] }],
-            });
+            // The dialog itself lives in the backend: picking a file is what
+            // grants access to it (`src-tauri/src/access.rs`).
+            const selected = await invoke('pick_database_file');
 
             if (selected) {
                 store.filePath = selected;
@@ -108,7 +133,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
                 errorMessage.value = '';
                 step.value = 2;
                 checkBiometricsPreference(selected);
-                restoreKeyFilePreference(selected);
+                await restoreKeyFilePreference(selected);
                 nextTick(() => {
                     passwordInputRef.value?.focus();
                 });
@@ -121,7 +146,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
     async function selectKeyFile() {
         try {
-            const selected = await open({ multiple: false });
+            const selected = await invoke('pick_key_file');
             if (selected) {
                 keyFilePath.value = selected;
                 errorMessage.value = '';
@@ -138,7 +163,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
     async function selectNewKeyFile() {
         try {
-            const selected = await open({ multiple: false });
+            const selected = await invoke('pick_key_file');
             if (selected) {
                 newKeyFilePath.value = selected;
                 errorMessage.value = '';
@@ -282,11 +307,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
             }
 
             // Remember (or forget) the key file association for this database.
-            if (keyPath) {
-                localStorage.setItem(keyFileStorageKey(path), keyPath);
-            } else {
-                localStorage.removeItem(keyFileStorageKey(path));
-            }
+            await writeKeyFilePreference(path, keyPath);
 
             // Save or delete biometric password based on user preference.
             // Skip saving if we just authenticated via biometrics (avoids a redundant prompt).
@@ -312,7 +333,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
                 } catch {}
             }
 
-            localStorage.setItem('kivarion-last-db-path', path);
+            await rememberDatabase(path);
             password.value = '';
             isBiometricAuthenticated.value = false;
             router.push({ name: 'database' });
@@ -362,9 +383,10 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
         let targetPath;
         try {
-            targetPath = await save({
-                defaultPath: `${name}.kdbx`,
-                filters: [{ name: 'KDBX Database', extensions: ['kdbx'] }],
+            // The backend runs the dialog, appends `.kdbx` if the user left it
+            // off and grants the resulting path — the exact path saved to.
+            targetPath = await invoke('pick_new_database_path', {
+                defaultName: `${name}.kdbx`,
             });
         } catch (err) {
             console.error('Failed to open save dialog:', err);
@@ -372,9 +394,6 @@ export function useDatabaseAuth(router, passwordInputRef) {
             return;
         }
         if (!targetPath) return; // user cancelled
-        if (!targetPath.toLowerCase().endsWith('.kdbx')) {
-            targetPath += '.kdbx';
-        }
 
         isLoading.value = true;
         try {
@@ -393,15 +412,8 @@ export function useDatabaseAuth(router, passwordInputRef) {
             store.db = db;
             store.fileName = newName;
             fileName.value = newName;
-            localStorage.setItem('kivarion-last-db-path', targetPath);
-            if (newKeyFilePath.value) {
-                localStorage.setItem(
-                    keyFileStorageKey(targetPath),
-                    newKeyFilePath.value,
-                );
-            } else {
-                localStorage.removeItem(keyFileStorageKey(targetPath));
-            }
+            await rememberDatabase(targetPath);
+            await writeKeyFilePreference(targetPath, newKeyFilePath.value);
 
             password.value = '';
             newPassword.value = '';

@@ -1,5 +1,5 @@
 import { ref, computed, watch, onUnmounted } from 'vue';
-import { save } from '@tauri-apps/plugin-dialog';
+import { invoke } from '@tauri-apps/api/core';
 import { invokeWithBytes } from '../ipc.js';
 import { isImage, getMimeType } from '../utils';
 import { useClipboard } from './useClipboard';
@@ -108,7 +108,11 @@ export function useEntryAttachments(entryRef, isMac) {
             // The native save dialog holds focus; locking the database while it
             // is open would abandon the export half-done.
             await withSystemInteraction(async () => {
-                const filePath = await save({ defaultPath: att.name });
+                // The dialog runs in the backend, which grants write access to
+                // the chosen path — `export_file` refuses anything else.
+                const filePath = await invoke('pick_export_path', {
+                    defaultName: att.name,
+                });
                 if (filePath) {
                     await invokeWithBytes('export_file', att.data, {
                         path: filePath,

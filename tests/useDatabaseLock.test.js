@@ -5,7 +5,7 @@ let clearManagedClipboardMock;
 let originalWindowDescriptor;
 let originalCustomEvent;
 let dispatchedEvents;
-let localStorageMemory;
+let invokeCalls;
 
 mock.module('../src/store.js', () => ({
     SETTING_LIMITS: {
@@ -23,6 +23,12 @@ mock.module('../src/composables/useClipboard.js', () => ({
     clearManagedClipboard: () => clearManagedClipboardMock(),
 }));
 
+mock.module('@tauri-apps/api/core', () => ({
+    invoke: async (cmd, args) => {
+        invokeCalls.push([cmd, args]);
+    },
+}));
+
 const { lockDatabase } = await import('../src/composables/useDatabaseLock.js');
 
 beforeEach(() => {
@@ -35,12 +41,7 @@ beforeEach(() => {
     };
     clearManagedClipboardMock = mock(async () => {});
     dispatchedEvents = [];
-    localStorageMemory = { 'kivarion-last-db-path': '/Users/test/vault.kdbx' };
-    globalThis.localStorage = {
-        removeItem: mock((key) => {
-            delete localStorageMemory[key];
-        }),
-    };
+    invokeCalls = [];
 
     originalWindowDescriptor = Object.getOwnPropertyDescriptor(
         globalThis,
@@ -84,6 +85,7 @@ describe('lockDatabase', () => {
         expect(currentStore.fileName).toBe('');
         expect(currentStore.selectedGroupUuid).toBeNull();
         expect(currentStore.filePath).toBe('/Users/test/vault.kdbx');
+        expect(invokeCalls).toEqual([]);
         expect(router.replace).toHaveBeenCalledWith({ name: 'home' });
     });
 
@@ -92,6 +94,10 @@ describe('lockDatabase', () => {
 
         expect(currentStore.filePath).toBeNull();
         expect(currentStore.knownMtime).toBeNull();
-        expect(localStorageMemory['kivarion-last-db-path']).toBeUndefined();
+        // The backend forgets the path *and* drops the access it granted for
+        // it, so a compromised webview cannot keep using it after the close.
+        expect(invokeCalls).toEqual([
+            ['forget_database', { path: '/Users/test/vault.kdbx' }],
+        ]);
     });
 });

@@ -326,7 +326,10 @@ import DatabaseSettingsModal from '../components/DatabaseSettingsModal.vue';
 import { useResizable } from '../composables/useResizable.js';
 import { useDatabaseActions } from '../composables/useDatabaseActions.js';
 import { lockDatabase } from '../composables/useDatabaseLock.js';
-import { keyFileStorageKey } from '../composables/useDatabaseAuth.js';
+import {
+    readKeyFilePreference,
+    writeKeyFilePreference,
+} from '../composables/useDatabaseAuth.js';
 import { useClipboard } from '../composables/useClipboard.js';
 import { withSystemInteraction } from '../composables/useSystemInteraction.js';
 
@@ -703,12 +706,20 @@ const displayPath = computed(() => {
     return fp;
 });
 
-const currentKeyFilePath = computed(() => {
-    store.dbVersion;
-    return store.filePath
-        ? localStorage.getItem(keyFileStorageKey(store.filePath))
-        : null;
-});
+// The key file associated with the open database. Lives in the backend (it is
+// tied to a filesystem grant), so it is loaded once per file instead of being
+// read synchronously in a computed.
+const currentKeyFilePath = ref(null);
+
+watch(
+    () => store.filePath,
+    async (path) => {
+        currentKeyFilePath.value = path
+            ? await readKeyFilePreference(path)
+            : null;
+    },
+    { immediate: true },
+);
 
 const rootGroup = computed(() => {
     store.dbVersion;
@@ -1123,14 +1134,8 @@ async function confirmDatabaseSettings({
     const saved = await saveDatabaseChanges();
 
     if (saved && keyFileChanged && store.filePath) {
-        if (keyFilePath) {
-            localStorage.setItem(
-                keyFileStorageKey(store.filePath),
-                keyFilePath,
-            );
-        } else {
-            localStorage.removeItem(keyFileStorageKey(store.filePath));
-        }
+        await writeKeyFilePreference(store.filePath, keyFilePath);
+        currentKeyFilePath.value = keyFilePath || null;
     }
 
     // If the master password changed, the stored biometric secret is now stale.

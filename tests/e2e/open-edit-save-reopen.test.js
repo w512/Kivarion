@@ -68,6 +68,11 @@ async function startTauriDriver() {
     const command = process.env.TAURI_DRIVER || 'tauri-driver';
     driverProcess = spawn(command, ['--port', String(port)], {
         stdio: process.env.TAURI_DRIVER_LOG ? 'inherit' : 'ignore',
+        // The app inherits this from tauri-driver. Filesystem access is granted
+        // by the backend when the user picks a file in a native dialog, which
+        // WebDriver cannot do; a debug build accepts this variable instead and
+        // offers the database on the unlock screen (see `src-tauri/src/access.rs`).
+        env: { ...process.env, KIVARION_E2E_DATABASE: dbPath },
     });
 
     driverProcess.on('exit', (code, signal) => {
@@ -208,19 +213,18 @@ class WebDriverClient {
     }
 }
 
-async function openDatabaseFromLastPath(client, databasePath) {
-    await client.execute(
-        `localStorage.clear();
-         localStorage.setItem('kivarion-last-db-path', arguments[0]);
-         location.reload();
-         return true;`,
-        [databasePath],
-    );
-
-    const passwordInput = await client.waitForElement(
-        'css selector',
-        'input[type="password"]',
-    );
+async function openPresetDatabase(client) {
+    // The app was started with KIVARION_E2E_DATABASE, so it opens straight on
+    // the unlock screen for that file. A missing password field means the
+    // preset did not take — most likely a release build, where the hook is
+    // compiled out.
+    const passwordInput = await client
+        .waitForElement('css selector', 'input[type="password"]')
+        .catch(() => {
+            throw new Error(
+                'No unlock screen: run the E2E test against a debug build (bun run tauri build --debug), which honours KIVARION_E2E_DATABASE.',
+            );
+        });
     await client.sendKeys(passwordInput, '123');
     const openButton = await client.waitForElement(
         'css selector',
@@ -275,7 +279,7 @@ describe('E2E smoke: open, edit, save, reopen', () => {
             driver = await startTauriDriver();
             await driver.createSession(appPath);
 
-            await openDatabaseFromLastPath(driver, dbPath);
+            await openPresetDatabase(driver);
             await selectFirstEntry(driver);
 
             const editButton = await driver.waitForElement(
@@ -311,7 +315,7 @@ describe('E2E smoke: open, edit, save, reopen', () => {
 
             await driver.deleteSession();
             await driver.createSession(appPath);
-            await openDatabaseFromLastPath(driver, dbPath);
+            await openPresetDatabase(driver);
 
             const searchInput = await driver.waitForElement(
                 'css selector',

@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
 import { clearManagedClipboard } from './useClipboard.js';
 
@@ -22,7 +23,14 @@ export async function lockDatabase(router = null, { forgetFile = false } = {}) {
     store.selectedGroupUuid = null;
 
     if (forgetFile) {
-        localStorage.removeItem('kivarion-last-db-path');
+        // Closing sends the user back to the file picker, so the backend drops
+        // both the remembered path and the filesystem access it granted for it.
+        const path = store.filePath;
+        try {
+            await invoke('forget_database', { path });
+        } catch (err) {
+            console.error('Failed to forget the database path:', err);
+        }
         store.filePath = null;
         store.knownMtime = null;
     }

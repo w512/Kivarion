@@ -7,7 +7,6 @@
     "core:default",
     "core:window:allow-destroy",
     "opener:default",
-    "dialog:default",
     {
       "identifier": "http:default",
       "allow": [{ "url": "https://icon.horse/*" }]
