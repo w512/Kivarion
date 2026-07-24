@@ -18,11 +18,19 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[dev-dependencies]
+# `test` provides the mock runtime used to drive real IPC requests (raw body +
+# headers) through the invoke handler in the tests at the bottom of lib.rs.
+tauri = { version = "2", features = ["test"] }
+
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Decodes the scalar arguments that ride along raw-byte IPC calls in headers
+# (header values must be ISO-8859-1, paths routinely are not).
+percent-encoding = "2"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-http = "2"
 tauri-plugin-os = "2"

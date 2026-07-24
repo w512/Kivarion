@@ -1,5 +1,37 @@
 import { invoke } from '@tauri-apps/api/core';
+import * as kdbxweb from 'kdbxweb';
+import { invokeWithBytes } from './ipc.js';
 import { SETTING_LIMITS, clampNumberSetting, useStore } from './store.js';
+import { toExactArrayBuffer } from './utils.js';
+
+/**
+ * Re-read a database from disk with the given credentials.
+ *
+ * Used to resolve an external-modification conflict by taking the version that
+ * is on disk. Every unsaved in-memory change is dropped by design, so callers
+ * must confirm with the user first.
+ *
+ * @param {string} path
+ * @param {kdbxweb.Credentials} credentials - normally `store.db.credentials`
+ * @returns {Promise<kdbxweb.Kdbx>}
+ */
+export async function loadDatabaseFromDisk(path, credentials) {
+    const bytes = await invoke('read_database', { path });
+    return kdbxweb.Kdbx.load(toExactArrayBuffer(bytes), credentials);
+}
+
+/**
+ * Modification time of a file in ms since the epoch, or `null` when it cannot
+ * be read. Never rejects — callers use it for tracking and for display.
+ */
+export async function readFileMtime(path) {
+    try {
+        return await invoke('file_mtime', { path });
+    } catch (error) {
+        console.error('Failed to read the file modification time:', error);
+        return null;
+    }
+}
 
 /**
  * Save the database to disk.
@@ -40,12 +72,14 @@ export async function saveDatabase(db, fileName, { force = false } = {}) {
     }
 
     try {
-        const newMtime = await invoke('save_database', {
+        // The vault bytes go over as the raw IPC body; everything else rides
+        // along in headers (see `invokeWithBytes`). Omitting `expected-mtime`
+        // is what tells the backend to skip the concurrency check.
+        const newMtime = await invokeWithBytes('save_database', bytes, {
             path: store.filePath,
-            data: bytes,
-            expectedMtime: force ? null : (store.knownMtime ?? null),
+            'expected-mtime': force ? null : (store.knownMtime ?? null),
             backup: store.backupEnabled !== false,
-            backupDepth: clampNumberSetting(
+            'backup-depth': clampNumberSetting(
                 store.backupDepth,
                 SETTING_LIMITS.backupDepth,
             ),

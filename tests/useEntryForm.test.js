@@ -50,12 +50,34 @@ describe('useEntryForm custom fields', () => {
         const form = useEntryForm({ entry }, emit, customFields);
 
         form.startEdit();
+        // Touch an unrelated field: a save with nothing changed is a no-op by
+        // design, and this test is about what the write path does.
+        form.form.value.Title = 'Renamed';
         const saved = form.saveEdit();
 
         expect(saved).toBe(true);
         expect(entry.fields.has('EmptyCustom')).toBe(true);
         expect(entry.fields.get('EmptyCustom')).toBe('');
         expect(emit).toHaveBeenCalledWith('updated');
+    });
+
+    test('a save with nothing changed leaves the entry and its history alone', () => {
+        const entry = makeEntry({ Title: 'Entry', UserName: 'user' });
+        const emit = mock(() => {});
+        const customFields = ref([]);
+        const form = useEntryForm({ entry }, emit, customFields);
+
+        form.startEdit();
+        const saved = form.saveEdit();
+
+        // Exits edit mode and reports success, but writes nothing: pushing an
+        // identical version into history would grow the vault on every stray
+        // click and force a full re-encrypt.
+        expect(saved).toBe(true);
+        expect(form.isEditing.value).toBe(false);
+        expect(entry.pushHistory).not.toHaveBeenCalled();
+        expect(entry.times.update).not.toHaveBeenCalled();
+        expect(emit).not.toHaveBeenCalled();
     });
 
     test('preserves protected custom fields as ProtectedValue on save', () => {

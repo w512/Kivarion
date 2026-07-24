@@ -70,6 +70,17 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         const normalizedCustomFields = validateCustomFields();
         if (!normalizedCustomFields) return false;
 
+        // Nothing was edited: leave edit mode without touching the entry.
+        // Writing anyway would push a duplicate version into the entry's
+        // history and rewrite the whole database (full KDF + re-encrypt of a
+        // vault that can be tens of megabytes) for no change at all.
+        // Validation still runs above, so a genuinely broken form is reported
+        // rather than quietly dismissed.
+        if (!isDirty.value) {
+            isEditing.value = false;
+            return true;
+        }
+
         const needsIcon =
             form.value.URL &&
             (!entry.customIcon || getField(entry, 'URL') !== form.value.URL);

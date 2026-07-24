@@ -224,16 +224,47 @@
         />
 
         <!-- External Modification Conflict -->
-        <ConfirmModal
-            :show="saveConflict"
-            title="File changed on disk"
-            message="This database was modified by another program (or another Kivarion window) since you opened it. Overwriting will replace those changes with your version."
-            confirm-text="Overwrite"
-            confirm-variant="danger"
-            cancel-text="Not now"
-            @confirm="overwriteOnConflict"
-            @cancel="dismissConflict"
-        />
+        <div v-if="saveConflict" class="modal-overlay" @click="dismissConflict">
+            <div class="modal-card unsaved-modal" @click.stop>
+                <h3>File changed on disk</h3>
+                <p>
+                    This database was modified by another program (or another
+                    Kivarion window) since you opened it. Keeping your version
+                    overwrites those changes; keeping the file discards
+                    everything you changed here since the last successful save.
+                </p>
+                <p v-if="conflictDiskTime" class="conflict-meta">
+                    Version on disk was written {{ conflictDiskTime }}.
+                </p>
+                <div class="modal-actions modal-actions--stacked">
+                    <button
+                        class="danger-btn"
+                        :disabled="isReloading"
+                        @click="overwriteOnConflict"
+                    >
+                        Keep my version (overwrite the file)
+                    </button>
+                    <button
+                        class="danger-btn"
+                        :disabled="isReloading"
+                        @click="reloadFromConflict"
+                    >
+                        {{
+                            isReloading
+                                ? 'Reloading…'
+                                : 'Keep the file (discard my changes)'
+                        }}
+                    </button>
+                    <button
+                        class="cancel-btn"
+                        :disabled="isReloading"
+                        @click="dismissConflict"
+                    >
+                        Decide later
+                    </button>
+                </div>
+            </div>
+        </div>
 
         <!-- Database Settings Modal -->
         <DatabaseSettingsModal
@@ -256,6 +287,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import {
+    formatDate,
     getField,
     isProtectedValue,
     STANDARD_FIELDS,
@@ -293,6 +325,7 @@ import { useDatabaseActions } from '../composables/useDatabaseActions.js';
 import { lockDatabase } from '../composables/useDatabaseLock.js';
 import { keyFileStorageKey } from '../composables/useDatabaseAuth.js';
 import { useClipboard } from '../composables/useClipboard.js';
+import { withSystemInteraction } from '../composables/useSystemInteraction.js';
 
 const router = useRouter();
 const store = useStore();
@@ -383,10 +416,24 @@ function finishAfterFlush(finish) {
         if (saved) {
             pendingTeardownFinish = null;
             finish();
-        } else {
+        } else if (!saveConflict.value) {
+            // On a conflict the dedicated modal is already up and offers the
+            // real choices; stacking "Close without saving?" on top of it would
+            // hide the cause behind a message that never names it. That modal
+            // resumes the teardown through `resumePendingTeardown`.
             showCloseAfterSaveErrorConfirm.value = true;
         }
     });
+}
+
+// Continue a close/quit that was parked while the user resolved a conflict.
+// Routed back through `finishAfterFlush` so a still-unsaved database gets the
+// same treatment it would have had, instead of closing with changes pending.
+function resumePendingTeardown() {
+    const finish = pendingTeardownFinish;
+    if (!finish) return;
+    pendingTeardownFinish = null;
+    finishAfterFlush(finish);
 }
 
 function confirmCloseWithoutWaiting() {
@@ -459,6 +506,14 @@ function isEditableTarget(target) {
     return tag === 'input' || tag === 'textarea' || target?.isContentEditable;
 }
 
+// Whether the user has text selected on the page. Detail fields (notes, URL,
+// custom fields) are plain selectable text, so hijacking Cmd+C there would both
+// break an ordinary copy and silently put the password in the clipboard when
+// the user meant to copy something else entirely.
+function hasTextSelection() {
+    return !!window.getSelection?.()?.toString();
+}
+
 function onGlobalShortcut(event) {
     const mod = event.metaKey || event.ctrlKey;
     if (!mod && event.key !== 'Escape') return;
@@ -488,7 +543,8 @@ function onGlobalShortcut(event) {
         mod &&
         key === 'c' &&
         selectedEntry.value &&
-        !isEditableTarget(event.target)
+        !isEditableTarget(event.target) &&
+        !hasTextSelection()
     ) {
         event.preventDefault();
         copyToClipboard(
@@ -555,21 +611,63 @@ const {
 // Database Actions logic
 const {
     saveDatabaseChanges,
+    reloadDatabaseFromDisk,
     addEntry: performAddEntry,
     addGroup: performAddGroup,
     isSaving,
+    isReloading,
     saveError,
     saveConflict,
+    conflictDiskMtime,
     hasUnsavedChanges,
 } = useDatabaseActions(store);
 
-function overwriteOnConflict() {
+const conflictDiskTime = computed(() =>
+    conflictDiskMtime.value
+        ? formatDate(new Date(conflictDiskMtime.value))
+        : '',
+);
+
+// The conflict modal is a decision point that a close/quit can be waiting on,
+// so each of its outcomes has to either resume that teardown or cancel it.
+async function overwriteOnConflict() {
     saveConflict.value = false;
-    saveDatabaseChanges({ force: true });
+    await saveDatabaseChanges({ force: true });
+    resumePendingTeardown();
+}
+
+async function reloadFromConflict() {
+    // The reload swaps the entire object graph; a half-typed entry draft would
+    // otherwise be written back onto the freshly loaded entry.
+    entryDetailRef.value?.discardPendingEdit?.();
+
+    if (!(await reloadDatabaseFromDisk())) {
+        // The reason is on the error banner — leave the choice on screen.
+        return;
+    }
+
+    restoreSelectionAfterReload();
+    resumePendingTeardown();
 }
 
 function dismissConflict() {
     saveConflict.value = false;
+    // A close/quit that was waiting on this decision is cancelled with it.
+    pendingTeardownFinish = null;
+}
+
+// UUIDs survive a reload, but the selected group or entry may not exist in the
+// version that was on disk.
+function restoreSelectionAfterReload() {
+    if (
+        store.selectedGroupUuid !== ALL_ENTRIES_UUID &&
+        !findGroupByUuid(store.db, store.selectedGroupUuid)
+    ) {
+        store.selectedGroupUuid = getObjectUuid(rootGroup.value);
+    }
+    if (!findEntryByUuid(store.db, selectedEntryUuid.value)) {
+        selectedEntryUuid.value = null;
+    }
 }
 
 const dbName = computed(() => {
@@ -1026,10 +1124,14 @@ async function confirmDatabaseSettings({
         localStorage.getItem(`kivarion-biometrics-${store.filePath}`) === 'true'
     ) {
         try {
-            await invoke('save_biometric_password', {
-                id: store.filePath,
-                pass: password,
-            });
+            // Saving the secret triggers a Touch ID prompt, which blurs the
+            // window — that must not be mistaken for the user leaving the app.
+            await withSystemInteraction(() =>
+                invoke('save_biometric_password', {
+                    id: store.filePath,
+                    pass: password,
+                }),
+            );
         } catch (e) {
             console.error(
                 'Failed to update biometric password, removing it:',
@@ -1147,6 +1249,12 @@ async function confirmDatabaseSettings({
     line-height: 1.45;
 }
 
+.conflict-meta {
+    margin: -0.5rem 0 1rem;
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
 .modal-actions {
     display: flex;
     gap: 0.5rem;
@@ -1191,6 +1299,12 @@ async function confirmDatabaseSettings({
 .cancel-btn:hover {
     border-color: var(--text-secondary);
     color: var(--text-primary);
+}
+
+.danger-btn:disabled,
+.cancel-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 /* Main layout */

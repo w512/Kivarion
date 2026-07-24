@@ -7,15 +7,31 @@ let managedClipboardText = null;
 async function clearClipboardIfStillManaged() {
     if (managedClipboardText === null) return;
 
+    // Read first so a value the user copied afterwards survives. `readText`
+    // rejects in a webview that does not have focus — which is exactly when
+    // this tends to run — and a failed read must not be taken as "leave it
+    // alone": wiping an unrelated clipboard entry is far better than leaving a
+    // password sitting in the clipboard forever. So clear blind on error.
+    let holdsOurSecret = true;
     try {
-        const currentText = await navigator.clipboard.readText();
-        if (currentText === managedClipboardText) {
-            await navigator.clipboard.writeText('');
-        }
+        holdsOurSecret =
+            (await navigator.clipboard.readText()) === managedClipboardText;
     } catch (err) {
-        console.error('Failed to clear clipboard', err);
-    } finally {
+        console.error('Could not read the clipboard; clearing it anyway', err);
+    }
+
+    if (!holdsOurSecret) {
         managedClipboardText = null;
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText('');
+        managedClipboardText = null;
+    } catch (err) {
+        // Keep tracking the value so a later attempt (the next lock, or app
+        // close) can retry, instead of silently giving up on the secret.
+        console.error('Failed to clear clipboard', err);
     }
 }
 

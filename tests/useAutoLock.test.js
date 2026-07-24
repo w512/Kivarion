@@ -15,6 +15,7 @@ let originalDateNow;
 let now;
 let fakeWindow;
 let fakeDocument;
+let systemInteractionActive;
 
 mock.module('../src/store.js', () => ({
     SETTING_LIMITS: {
@@ -34,6 +35,11 @@ mock.module('vue-router', () => ({
 
 mock.module('../src/composables/useDatabaseLock.js', () => ({
     lockDatabase: (...args) => lockDatabaseMock(...args),
+}));
+
+mock.module('../src/composables/useSystemInteraction.js', () => ({
+    isSystemInteractionActive: () => systemInteractionActive,
+    withSystemInteraction: async (run) => run(),
 }));
 
 const { useAutoLock } = await import('../src/composables/useAutoLock.js');
@@ -126,8 +132,9 @@ beforeEach(() => {
     globalThis.clearTimeout = clearTimeoutMock;
     Date.now = () => now;
 
+    systemInteractionActive = false;
     fakeWindow = makeEventTarget();
-    fakeDocument = makeEventTarget({ hidden: false });
+    fakeDocument = makeEventTarget({ hidden: false, hasFocus: () => false });
     Object.defineProperty(globalThis, 'window', {
         configurable: true,
         value: fakeWindow,
@@ -211,6 +218,49 @@ describe('useAutoLock', () => {
         fakeDocument.listeners.visibilitychange();
 
         expect(lockDatabaseMock).toHaveBeenCalledWith(router);
+    });
+
+    test('does not lock on focus loss while the OS holds focus (dialog, Touch ID, Quick Look)', async () => {
+        currentStore.lockOnFocusLoss = true;
+        systemInteractionActive = true;
+        mountAutoLock();
+        await nextTick();
+
+        fakeWindow.listeners.blur();
+
+        expect(lockDatabaseMock).not.toHaveBeenCalled();
+    });
+
+    test('still locks when the re-check finds the window in the background', async () => {
+        currentStore.lockOnFocusLoss = true;
+        systemInteractionActive = true;
+        mountAutoLock();
+        await nextTick();
+
+        fakeWindow.listeners.blur();
+        const recheck = timers.find((timer) => timer.delay === 1500);
+        expect(recheck).toBeTruthy();
+
+        // The dialog closed but the user really did switch to another app.
+        systemInteractionActive = false;
+        recheck.callback();
+
+        expect(lockDatabaseMock).toHaveBeenCalledWith(router);
+    });
+
+    test('cancels the pending re-check when focus comes back', async () => {
+        currentStore.lockOnFocusLoss = true;
+        systemInteractionActive = true;
+        mountAutoLock();
+        await nextTick();
+
+        fakeWindow.listeners.blur();
+        const recheck = timers.find((timer) => timer.delay === 1500);
+
+        fakeWindow.listeners.focus();
+
+        expect(clearTimeoutMock).toHaveBeenCalledWith(recheck.id);
+        expect(lockDatabaseMock).not.toHaveBeenCalled();
     });
 
     test('removes listeners and clears the timer when the database closes', async () => {

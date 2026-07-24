@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
 import { saveDatabase } from '../dbHelper.js';
 import { toExactArrayBuffer } from '../utils.js';
+import { withSystemInteraction } from './useSystemInteraction.js';
 
 // Per-database key-file association. KeePass remembers which key file unlocks a
 // given database; we mirror that by storing the key file's path (not its bytes)
@@ -291,10 +292,15 @@ export function useDatabaseAuth(router, passwordInputRef) {
             // Skip saving if we just authenticated via biometrics (avoids a redundant prompt).
             if (useBiometrics.value && !isBiometricAuthenticated.value) {
                 try {
-                    await invoke('save_biometric_password', {
-                        id: path,
-                        pass: password.value,
-                    });
+                    // `store.db` is already set at this point, so the Touch ID
+                    // prompt's window blur would otherwise trip auto-lock and
+                    // throw the user back to this screen right after unlocking.
+                    await withSystemInteraction(() =>
+                        invoke('save_biometric_password', {
+                            id: path,
+                            pass: password.value,
+                        }),
+                    );
                     localStorage.setItem(`kivarion-biometrics-${path}`, 'true');
                 } catch (e) {
                     console.error('Failed to save biometric password:', e);

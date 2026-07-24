@@ -132,6 +132,8 @@
                         type="submit"
                         form="entry-edit-form"
                         class="save-btn"
+                        :disabled="!isDirty"
+                        :title="isDirty ? 'Save changes' : 'No changes to save'"
                     >
                         Save
                     </button>
@@ -448,6 +450,11 @@ onUnmounted(() => {
     font-weight: 600;
     font-size: 0.8rem;
     cursor: pointer;
+}
+
+.save-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 .cancel-btn {

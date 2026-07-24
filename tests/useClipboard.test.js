@@ -146,6 +146,47 @@ describe('useClipboard', () => {
         expect(clipboardWrites).toContain('');
     });
 
+    test('clears the clipboard even when it cannot be read back', async () => {
+        const { api, unmount } = mountClipboard();
+        await api.copy('secret-password', null, { autoClear: true });
+
+        // WKWebView rejects readText when the window is not focused — which is
+        // exactly when the auto-clear timer fires. The secret must still go.
+        navigator.clipboard.readText = mock(async () => {
+            throw new Error('Document is not focused');
+        });
+
+        const clearTimer = timers.find((timer) => timer.delay === 30_000);
+        await clearTimer.callback();
+
+        expect(clipboardWrites).toContain('');
+        unmount();
+    });
+
+    test('keeps tracking the secret when clearing fails so a later lock retries', async () => {
+        const { api, unmount } = mountClipboard();
+        await api.copy('secret-password', null, { autoClear: true });
+
+        navigator.clipboard.writeText = mock(async () => {
+            throw new Error('Clipboard write blocked');
+        });
+
+        const clearTimer = timers.find((timer) => timer.delay === 30_000);
+        await clearTimer.callback();
+        expect(clipboardText).toBe('secret-password');
+
+        // Writing works again (e.g. the window regained focus) — locking the
+        // database must still be able to wipe the value.
+        navigator.clipboard.writeText = mock(async (text) => {
+            clipboardText = text;
+            clipboardWrites.push(text);
+        });
+        await clearManagedClipboard();
+
+        expect(clipboardText).toBe('');
+        unmount();
+    });
+
     test('tracks protected copies even when timed auto-clear is disabled so lock can clear them', async () => {
         currentStore.clipboardTimeout = 0;
         const { api, unmount } = mountClipboard();

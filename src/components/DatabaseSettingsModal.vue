@@ -132,6 +132,7 @@
 import { computed, ref, watch } from 'vue';
 import { open } from '@tauri-apps/plugin-dialog';
 import BaseModal from './BaseModal.vue';
+import { withSystemInteraction } from '../composables/useSystemInteraction.js';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -193,7 +194,11 @@ watch(
 );
 
 async function selectKeyFile() {
-    const selected = await open({ multiple: false });
+    // The native dialog takes focus away from the window; without this the
+    // "lock on focus loss" setting would close the database mid-edit.
+    const selected = await withSystemInteraction(() =>
+        open({ multiple: false }),
+    );
     if (selected) localKeyFilePath.value = selected;
 }
 

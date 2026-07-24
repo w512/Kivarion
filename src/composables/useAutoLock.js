@@ -2,6 +2,7 @@ import { onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useStore } from '../store.js';
 import { lockDatabase } from './useDatabaseLock.js';
+import { isSystemInteractionActive } from './useSystemInteraction.js';
 
 const ACTIVITY_EVENTS = [
     'mousemove',
@@ -10,10 +11,12 @@ const ACTIVITY_EVENTS = [
     'touchstart',
     'touchmove',
     'pointerdown',
-    'focus',
 ];
 const DOCUMENT_ACTIVITY_EVENTS = ['scroll'];
 const ACTIVITY_THROTTLE_MS = 2000;
+// How long to wait before re-testing a focus loss that was suppressed because
+// the OS held focus (native dialog, Touch ID, Quick Look).
+const SYSTEM_INTERACTION_RECHECK_MS = 1500;
 
 /**
  * App-level auto-lock. It stays active on every route while a database is open.
@@ -23,6 +26,7 @@ export function useAutoLock() {
     const router = useRouter();
 
     let lockTimer = null;
+    let focusLossRecheckTimer = null;
     let listenersActive = false;
     let lastActivity = 0;
 
@@ -30,6 +34,13 @@ export function useAutoLock() {
         if (lockTimer) {
             clearTimeout(lockTimer);
             lockTimer = null;
+        }
+    }
+
+    function clearFocusLossRecheck() {
+        if (focusLossRecheckTimer) {
+            clearTimeout(focusLossRecheckTimer);
+            focusLossRecheckTimer = null;
         }
     }
 
@@ -54,17 +65,46 @@ export function useAutoLock() {
         resetLockTimer();
     }
 
+    // A native dialog, the Touch ID prompt or Quick Look takes focus away from
+    // the window and fires exactly the same events as the user switching apps.
+    // Locking then would kill the very operation the user started, so those are
+    // suppressed — and re-checked afterwards, because a real app switch during
+    // a dialog must still end in a locked database.
+    function lockOnFocusLoss() {
+        if (!store.db || !store.lockOnFocusLoss) return;
+
+        if (!isSystemInteractionActive()) {
+            clearFocusLossRecheck();
+            lockNow();
+            return;
+        }
+
+        clearFocusLossRecheck();
+        focusLossRecheckTimer = setTimeout(() => {
+            focusLossRecheckTimer = null;
+            // Focus came back to us: the dialog closed and the user is here.
+            if (document.hasFocus?.() ?? true) return;
+            lockOnFocusLoss();
+        }, SYSTEM_INTERACTION_RECHECK_MS);
+    }
+
     function onVisibilityChange() {
         if (!store.db) return;
-        if (document.hidden && store.lockOnFocusLoss) {
-            lockNow();
-        } else if (!document.hidden) {
+        if (document.hidden) {
+            lockOnFocusLoss();
+        } else {
+            clearFocusLossRecheck();
             onActivity();
         }
     }
 
     function onWindowBlur() {
-        if (store.db && store.lockOnFocusLoss) lockNow();
+        lockOnFocusLoss();
+    }
+
+    function onWindowFocus() {
+        clearFocusLossRecheck();
+        onActivity();
     }
 
     function addListeners() {
@@ -78,6 +118,9 @@ export function useAutoLock() {
                 capture: true,
             });
         }
+        // Regaining focus counts as activity and also settles any focus loss
+        // that is still pending a re-check, so it gets its own handler.
+        window.addEventListener('focus', onWindowFocus, { passive: true });
         document.addEventListener('visibilitychange', onVisibilityChange);
         window.addEventListener('blur', onWindowBlur);
         listenersActive = true;
@@ -91,6 +134,7 @@ export function useAutoLock() {
         for (const event of DOCUMENT_ACTIVITY_EVENTS) {
             document.removeEventListener(event, onActivity, { capture: true });
         }
+        window.removeEventListener('focus', onWindowFocus);
         document.removeEventListener('visibilitychange', onVisibilityChange);
         window.removeEventListener('blur', onWindowBlur);
         listenersActive = false;
@@ -102,6 +146,7 @@ export function useAutoLock() {
             resetLockTimer();
         } else {
             clearLockTimer();
+            clearFocusLossRecheck();
             removeListeners();
         }
     }
@@ -118,6 +163,7 @@ export function useAutoLock() {
     onUnmounted(() => {
         stopWatch?.();
         clearLockTimer();
+        clearFocusLossRecheck();
         removeListeners();
     });
 }

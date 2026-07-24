@@ -1,8 +1,9 @@
 import { ref, computed, watch, onUnmounted } from 'vue';
-import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
+import { invokeWithBytes } from '../ipc.js';
 import { isImage, getMimeType } from '../utils';
 import { useClipboard } from './useClipboard';
+import { withSystemInteraction } from './useSystemInteraction.js';
 
 export function useEntryAttachments(entryRef, isMac) {
     const { copy } = useClipboard();
@@ -66,10 +67,13 @@ export function useEntryAttachments(entryRef, isMac) {
                 // The Rust side writes the decrypted bytes into a private,
                 // owner-only temp dir and deletes them after the preview closes.
                 // Passing the name (not a path) keeps path traversal out of reach.
-                await invoke('quick_look_attachment', {
-                    fileName: attachment.name,
-                    data: Array.from(attachment.data),
-                });
+                // Quick Look owns the screen until it is dismissed, so this must
+                // not read as the user leaving the app (auto-lock).
+                await withSystemInteraction(() =>
+                    invokeWithBytes('quick_look_attachment', attachment.data, {
+                        'file-name': attachment.name,
+                    }),
+                );
             } catch (err) {
                 console.error('Quick Look failed, fallback to modal', err);
                 openPreviewModal(attachment);
@@ -101,9 +105,16 @@ export function useEntryAttachments(entryRef, isMac) {
 
     async function exportAttachment(att) {
         try {
-            const filePath = await save({ defaultPath: att.name });
-            if (filePath)
-                await invoke('export_file', { path: filePath, data: att.data });
+            // The native save dialog holds focus; locking the database while it
+            // is open would abandon the export half-done.
+            await withSystemInteraction(async () => {
+                const filePath = await save({ defaultPath: att.name });
+                if (filePath) {
+                    await invokeWithBytes('export_file', att.data, {
+                        path: filePath,
+                    });
+                }
+            });
         } catch (err) {
             console.error('Failed to export attachment:', err);
         }

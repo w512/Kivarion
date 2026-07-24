@@ -24,6 +24,51 @@ fn file_exists(path: String) -> bool {
     std::path::Path::new(&path).exists()
 }
 
+// --- Raw-byte IPC --------------------------------------------------------
+//
+// Tauri serializes a `Uint8Array` nested inside a JSON argument object by
+// turning every byte into a decimal number (`Array.from`), so a payload costs
+// roughly four bytes of JSON text per byte of data and has to be re-parsed by
+// serde on this side. For a database that is tens of megabytes — rewritten on
+// every auto-save — that dominates the write. Commands that carry bulk bytes
+// therefore take the payload as the whole IPC body (`application/octet-stream`,
+// no transformation) and receive their scalar arguments as headers instead.
+//
+// Header values must be ISO-8859-1, so the frontend percent-encodes each one
+// (see `src/ipc.js`) and they are decoded back here — database paths regularly
+// contain non-ASCII characters.
+
+/// Prefix shared by every scalar argument passed alongside a raw byte body.
+const ARG_HEADER_PREFIX: &str = "x-kivarion-";
+
+/// Read one percent-encoded scalar argument from the request headers.
+fn arg(request: &tauri::ipc::Request<'_>, name: &str) -> Option<String> {
+    let raw = request
+        .headers()
+        .get(format!("{ARG_HEADER_PREFIX}{name}"))?
+        .to_str()
+        .ok()?;
+    percent_encoding::percent_decode_str(raw)
+        .decode_utf8()
+        .ok()
+        .map(std::borrow::Cow::into_owned)
+}
+
+/// Borrow the raw byte payload of a request.
+///
+/// A `Json` body means the webview fell back to the postMessage IPC interface
+/// (the custom protocol was blocked). Bulk commands cannot work in that mode,
+/// and neither can reading a database, so this is reported rather than silently
+/// handled with a slow path.
+fn raw_body<'a>(request: &'a tauri::ipc::Request<'_>) -> Result<&'a [u8], String> {
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => Ok(bytes),
+        tauri::ipc::InvokeBody::Json(_) => {
+            Err("Expected a raw byte payload; the custom protocol IPC is unavailable".to_string())
+        }
+    }
+}
+
 /// Marker prefix returned when the on-disk file changed since the caller last
 /// read it (another app instance or external program wrote to it). The frontend
 /// detects this prefix to offer an "overwrite anyway" choice instead of silently
@@ -38,6 +83,12 @@ fn with_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
     name.push(suffix);
     std::path::PathBuf::from(name)
 }
+
+/// Upper bound when scanning rotated backup slots. The retention depth the UI
+/// allows is far below this; the slack exists so slots left behind by a larger
+/// depth used earlier are still found — both to clean them up and to keep them
+/// listed for restore.
+const MAX_BACKUP_SLOTS: u32 = 64;
 
 /// `<path>.bak` for index 0, `<path>.bak.N` for N ≥ 1.
 fn backup_path(target: &std::path::Path, index: u32) -> std::path::PathBuf {
@@ -203,8 +254,14 @@ fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
     if depth == 0 {
         return Ok(());
     }
-    // Drop the oldest backup that would fall outside the retention window.
-    let _ = std::fs::remove_file(backup_path(target, depth - 1));
+    // Drop every slot outside the retention window, not just the first one:
+    // lowering the depth (say 10 → 3) used to strand `.bak.3`…`.bak.9` on disk
+    // forever — invisible to the restore UI, yet still holding old copies of
+    // the vault. Removing the whole tail also vacates `depth - 1` for the shift
+    // below.
+    for index in (depth - 1)..MAX_BACKUP_SLOTS {
+        let _ = std::fs::remove_file(backup_path(target, index));
+    }
     // Shift each remaining backup one slot older: .bak.(i-1) → .bak.i.
     for i in (1..depth).rev() {
         let from = backup_path(target, i - 1);
@@ -231,15 +288,35 @@ fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
 /// is `Some` and the target's current mtime differs, the save is refused with an
 /// `EXTERNAL_CONFLICT` error rather than overwriting another writer's changes.
 /// On success the new file's mtime is returned so the caller can keep tracking.
+///
+/// The database bytes arrive as the raw IPC body; everything else comes in
+/// headers (see *Raw-byte IPC* above).
 #[tauri::command]
-fn save_database(
-    path: String,
-    data: Vec<u8>,
+fn save_database(request: tauri::ipc::Request<'_>) -> Result<f64, String> {
+    let path = arg(&request, "path").ok_or("Missing target path")?;
+    // An absent mtime means "don't check" — either nothing is known about the
+    // file yet or the user chose to overwrite an external change.
+    let expected_mtime = arg(&request, "expected-mtime").and_then(|v| v.parse::<f64>().ok());
+    let backup = arg(&request, "backup").map(|v| v == "true");
+    let backup_depth = arg(&request, "backup-depth").and_then(|v| v.parse::<u32>().ok());
+
+    save_database_bytes(
+        &path,
+        raw_body(&request)?,
+        expected_mtime,
+        backup,
+        backup_depth,
+    )
+}
+
+fn save_database_bytes(
+    path: &str,
+    data: &[u8],
     expected_mtime: Option<f64>,
     backup: Option<bool>,
     backup_depth: Option<u32>,
 ) -> Result<f64, String> {
-    let target = std::path::Path::new(&path);
+    let target = std::path::Path::new(path);
     let _lock = SaveLockGuard::acquire(target)?;
     let tmp = with_suffix(target, ".tmp");
 
@@ -260,7 +337,7 @@ fn save_database(
     {
         use std::io::Write;
         let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        if let Err(e) = file.write_all(&data).and_then(|_| file.sync_all()) {
+        if let Err(e) = file.write_all(data).and_then(|_| file.sync_all()) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
         }
@@ -304,16 +381,14 @@ struct BackupInfo {
 fn list_backups(path: String) -> Vec<BackupInfo> {
     let target = std::path::Path::new(&path);
     let mut out = Vec::new();
-    // A generous upper bound; rotation never keeps more than this in practice.
-    for index in 0..64u32 {
+    // Scan every slot instead of stopping at the first gap. Numbering is not
+    // guaranteed contiguous — a backup deleted externally, or slots left by a
+    // depth that was lowered and raised again, leave holes — and the files past
+    // a hole are still perfectly good restore points.
+    for index in 0..MAX_BACKUP_SLOTS {
         let p = backup_path(target, index);
         let Ok(meta) = std::fs::metadata(&p) else {
-            // Slots are contiguous from 0; the first gap means we're done.
-            if index == 0 {
-                continue;
-            } else {
-                break;
-            }
+            continue;
         };
         out.push(BackupInfo {
             path: p.to_string_lossy().into_owned(),
@@ -330,9 +405,11 @@ fn list_backups(path: String) -> Vec<BackupInfo> {
 }
 
 /// Write bytes to a user-chosen path (used to export a decrypted attachment).
+/// The bytes are the raw IPC body; the target path comes in a header.
 #[tauri::command]
-fn export_file(path: String, data: Vec<u8>) -> Result<(), String> {
-    std::fs::write(&path, &data).map_err(|e| e.to_string())
+fn export_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let path = arg(&request, "path").ok_or("Missing target path")?;
+    std::fs::write(&path, raw_body(&request)?).map_err(|e| e.to_string())
 }
 
 /// Strip any directory components from an attachment name so it can never
@@ -358,9 +435,13 @@ fn sanitize_file_name(name: &str) -> String {
 ///
 /// The bytes are written by the Rust side (never exposed through the JS fs
 /// scope) into a private, owner-only (0700) temp directory, previewed, and
-/// deleted immediately after the preview window closes.
+/// deleted immediately after the preview window closes. The attachment bytes
+/// are the raw IPC body; its name comes in a header.
 #[tauri::command]
-async fn quick_look_attachment(file_name: String, data: Vec<u8>) -> Result<(), String> {
+async fn quick_look_attachment(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let file_name = arg(&request, "file-name").ok_or("Missing attachment name")?;
+    let data = raw_body(&request)?;
+
     #[cfg(target_os = "macos")]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -372,7 +453,7 @@ async fn quick_look_attachment(file_name: String, data: Vec<u8>) -> Result<(), S
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
 
         let path = dir.join(sanitize_file_name(&file_name));
-        std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+        std::fs::write(&path, data).map_err(|e| e.to_string())?;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
 
         // qlmanage -p blocks until the preview window is closed.
@@ -710,19 +791,55 @@ mod tests {
     }
 
     #[test]
+    fn rotate_backups_drops_slots_left_behind_by_a_larger_depth() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"current").unwrap();
+        // State from when the retention depth was still 6.
+        for index in 0..6 {
+            std::fs::write(backup_path(&target, index), format!("old-{index}")).unwrap();
+        }
+
+        // The user lowered the depth to 2.
+        rotate_backups(&target, 2).unwrap();
+
+        assert_eq!(read_bytes(&backup_path(&target, 0)), b"current");
+        assert_eq!(read_bytes(&backup_path(&target, 1)), b"old-0");
+        for index in 2..6 {
+            assert!(
+                !backup_path(&target, index).exists(),
+                ".bak.{index} was left stranded on disk"
+            );
+        }
+    }
+
+    #[test]
+    fn list_backups_reports_slots_after_a_gap() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        // `.bak.1` is missing — deleted externally, or left by an earlier depth.
+        std::fs::write(backup_path(&target, 0), b"newest").unwrap();
+        std::fs::write(backup_path(&target, 2), b"older").unwrap();
+
+        let backups = list_backups(target.to_string_lossy().into_owned());
+
+        let paths: Vec<String> = backups.into_iter().map(|b| b.path).collect();
+        assert!(
+            paths.contains(&backup_path(&target, 2).to_string_lossy().into_owned()),
+            "a backup past the gap was hidden from restore: {paths:?}"
+        );
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
     fn save_database_writes_atomically_and_creates_backup() {
         let dir = TempDir::new();
         let target = dir.path().join("vault.kdbx");
         std::fs::write(&target, b"old").unwrap();
 
-        let new_mtime = save_database(
-            target.to_string_lossy().into_owned(),
-            b"new".to_vec(),
-            None,
-            Some(true),
-            Some(2),
-        )
-        .unwrap();
+        let new_mtime =
+            save_database_bytes(&target.to_string_lossy(), b"new", None, Some(true), Some(2))
+                .unwrap();
 
         assert!(new_mtime > 0.0);
         assert_eq!(read_bytes(&target), b"new");
@@ -738,9 +855,9 @@ mod tests {
         std::fs::write(&target, b"current").unwrap();
         let stale_mtime = modified_ms(&target).unwrap() - 1.0;
 
-        let err = save_database(
-            target.to_string_lossy().into_owned(),
-            b"new".to_vec(),
+        let err = save_database_bytes(
+            &target.to_string_lossy(),
+            b"new",
             Some(stale_mtime),
             Some(true),
             Some(2),
@@ -761,9 +878,9 @@ mod tests {
         std::fs::write(&target, b"old").unwrap();
         std::fs::write(lock_path(&target), "pid=1 created_ms=0").unwrap();
 
-        save_database(
-            target.to_string_lossy().into_owned(),
-            b"new".to_vec(),
+        save_database_bytes(
+            &target.to_string_lossy(),
+            b"new",
             None,
             Some(false),
             Some(1),
@@ -785,9 +902,9 @@ mod tests {
         )
         .unwrap();
 
-        let err = save_database(
-            target.to_string_lossy().into_owned(),
-            b"new".to_vec(),
+        let err = save_database_bytes(
+            &target.to_string_lossy(),
+            b"new",
             None,
             Some(false),
             Some(1),
@@ -805,6 +922,179 @@ mod tests {
         assert_eq!(sanitize_file_name("../secret.txt"), "secret.txt");
         assert_eq!(sanitize_file_name("dir\\evil\0name.txt"), "direvilname.txt");
         assert_eq!(sanitize_file_name(""), "attachment");
+    }
+
+    // --- Raw-byte IPC contract --------------------------------------------
+    //
+    // These drive real invoke requests through the handler on Tauri's mock
+    // runtime, so they cover the part plain function tests cannot: that the
+    // bytes arrive as an untransformed body and that the scalar arguments are
+    // found under the exact header names `src/ipc.js` writes. Getting either
+    // side of that contract wrong breaks every save at runtime while the rest
+    // of the suite stays green.
+
+    fn mock_webview() -> tauri::WebviewWindow<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .invoke_handler(tauri::generate_handler![save_database, export_file])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("failed to build mock app");
+
+        tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("failed to build mock webview")
+    }
+
+    /// Encode a header value exactly the way `invokeWithBytes` does.
+    fn arg_header(value: &str) -> String {
+        value
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'-'
+                | b'_'
+                | b'.'
+                | b'!'
+                | b'~'
+                | b'*'
+                | b'\''
+                | b'('
+                | b')' => (b as char).to_string(),
+                _ => format!("%{b:02X}"),
+            })
+            .collect()
+    }
+
+    fn raw_invoke(
+        webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        cmd: &str,
+        data: &[u8],
+        args: &[(&str, &str)],
+    ) -> Result<tauri::ipc::InvokeResponseBody, String> {
+        let mut headers = tauri::http::HeaderMap::new();
+        for (name, value) in args {
+            headers.insert(
+                tauri::http::HeaderName::from_bytes(
+                    format!("{ARG_HEADER_PREFIX}{name}").as_bytes(),
+                )
+                .unwrap(),
+                arg_header(value).parse().unwrap(),
+            );
+        }
+
+        tauri::test::get_ipc_response(
+            webview,
+            tauri::webview::InvokeRequest {
+                cmd: cmd.into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Raw(data.to_vec()),
+                headers,
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .map_err(|e| format!("{e:?}"))
+    }
+
+    #[test]
+    fn save_database_command_reads_raw_body_and_header_arguments() {
+        let dir = TempDir::new();
+        // A non-ASCII path is the case percent-encoded headers exist for.
+        let target = dir.path().join("Хранилище.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+        let webview = mock_webview();
+
+        raw_invoke(
+            &webview,
+            "save_database",
+            b"new-vault-bytes",
+            &[
+                ("path", &target.to_string_lossy()),
+                ("backup", "true"),
+                ("backup-depth", "2"),
+            ],
+        )
+        .expect("save_database rejected a raw request");
+
+        assert_eq!(read_bytes(&target), b"new-vault-bytes");
+        assert_eq!(read_bytes(&backup_path(&target, 0)), b"old");
+    }
+
+    #[test]
+    fn save_database_command_honours_the_expected_mtime_header() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"current").unwrap();
+        let stale = modified_ms(&target).unwrap() - 1.0;
+        let webview = mock_webview();
+
+        let err = raw_invoke(
+            &webview,
+            "save_database",
+            b"new",
+            &[
+                ("path", &target.to_string_lossy()),
+                ("expected-mtime", &stale.to_string()),
+                ("backup", "false"),
+            ],
+        )
+        .unwrap_err();
+
+        assert!(err.contains(CONFLICT_PREFIX), "unexpected error: {err}");
+        assert_eq!(read_bytes(&target), b"current");
+    }
+
+    #[test]
+    fn export_file_command_writes_the_raw_body() {
+        let dir = TempDir::new();
+        let target = dir.path().join("attachment.bin");
+        let webview = mock_webview();
+
+        // Byte values that JSON-number-array encoding would have inflated.
+        let payload: Vec<u8> = (0..=255u8).collect();
+        raw_invoke(
+            &webview,
+            "export_file",
+            &payload,
+            &[("path", &target.to_string_lossy())],
+        )
+        .expect("export_file rejected a raw request");
+
+        assert_eq!(read_bytes(&target), payload);
+    }
+
+    #[test]
+    fn bulk_commands_reject_a_json_body_instead_of_corrupting_the_file() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"untouched").unwrap();
+        let webview = mock_webview();
+
+        let mut headers = tauri::http::HeaderMap::new();
+        headers.insert(
+            tauri::http::HeaderName::from_static("x-kivarion-path"),
+            arg_header(&target.to_string_lossy()).parse().unwrap(),
+        );
+
+        let err = tauri::test::get_ipc_response(
+            &webview,
+            tauri::webview::InvokeRequest {
+                cmd: "save_database".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "http://tauri.localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!([1, 2, 3])),
+                headers,
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        )
+        .map_err(|e| format!("{e:?}"))
+        .unwrap_err();
+
+        assert!(err.contains("raw byte payload"), "unexpected error: {err}");
+        assert_eq!(read_bytes(&target), b"untouched");
     }
 }
 

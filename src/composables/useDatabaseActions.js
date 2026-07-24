@@ -1,5 +1,9 @@
 import { computed, ref } from 'vue';
-import { saveDatabase } from '../dbHelper.js';
+import {
+    loadDatabaseFromDisk,
+    readFileMtime,
+    saveDatabase,
+} from '../dbHelper.js';
 import {
     ALL_ENTRIES_UUID,
     findGroupByUuid,
@@ -13,8 +17,13 @@ export function useDatabaseActions(store) {
     const isSaving = ref(false);
     const saveError = ref(null);
     // Distinct from saveError: the file was changed on disk by another writer.
-    // The UI offers an explicit "overwrite" rather than treating it as a fault.
+    // The UI turns this into an explicit choice (keep mine / take the file's
+    // version) rather than treating it as a fault.
     const saveConflict = ref(false);
+    // mtime of the on-disk version at the moment the conflict was detected, so
+    // the modal can say how fresh the other writer's version is.
+    const conflictDiskMtime = ref(null);
+    const isReloading = ref(false);
     const lastSavedDbVersion = ref(store.dbVersion);
     const hasUnsavedChanges = computed(() => {
         return (
@@ -87,6 +96,9 @@ export function useDatabaseActions(store) {
                     if (error?.code === 'EXTERNAL_CONFLICT') {
                         // Let the UI ask the user; don't treat it as a hard error.
                         saveConflict.value = true;
+                        conflictDiskMtime.value = store.filePath
+                            ? await readFileMtime(store.filePath)
+                            : null;
                     } else {
                         const message =
                             error?.message || String(error) || 'Unknown error';
@@ -106,6 +118,54 @@ export function useDatabaseActions(store) {
         }
 
         return ok && !hasUnsavedChanges.value;
+    }
+
+    /**
+     * Resolve an external-modification conflict by taking the version on disk.
+     *
+     * The file is re-read with the credentials of the currently open database,
+     * so it works without asking for the master password again. **Every unsaved
+     * in-memory change is discarded** — the caller must have confirmed that
+     * with the user, and must drop any pending entry-edit draft first, since
+     * the whole object graph is replaced.
+     *
+     * @returns {Promise<boolean>} true when the database was replaced.
+     */
+    async function reloadDatabaseFromDisk() {
+        if (!store.db || !store.filePath || isSaving.value) return false;
+
+        isReloading.value = true;
+        try {
+            const db = await loadDatabaseFromDisk(
+                store.filePath,
+                store.db.credentials,
+            );
+
+            store.db = db;
+            store.knownMtime = await readFileMtime(store.filePath);
+            store.touchDb();
+
+            // Memory now matches the file, so nothing is outstanding: drop the
+            // dirty marker, the queued save and the conflict together.
+            pendingSaveVersion = null;
+            forceNextSave = false;
+            lastSavedDbVersion.value = store.dbVersion;
+            saveConflict.value = false;
+            conflictDiskMtime.value = null;
+            saveError.value = null;
+            return true;
+        } catch (error) {
+            console.error('Failed to reload the database from disk:', error);
+            // Keep `saveConflict` set: the choice is still open, the banner
+            // just explains why this half of it did not work. A different
+            // master password on disk is the likely cause.
+            saveError.value = `Could not reload the file from disk: ${
+                error?.message || error
+            }`;
+            return false;
+        } finally {
+            isReloading.value = false;
+        }
     }
 
     function addEntry(targetGroupUuid) {
@@ -147,11 +207,14 @@ export function useDatabaseActions(store) {
 
     return {
         saveDatabaseChanges,
+        reloadDatabaseFromDisk,
         addEntry,
         addGroup,
         isSaving,
+        isReloading,
         saveError,
         saveConflict,
+        conflictDiskMtime,
         hasUnsavedChanges,
         lastSavedDbVersion,
     };
