@@ -8,20 +8,46 @@
 // last-database path). This keeps an XSS-compromised frontend from reading or
 // writing arbitrary files under the user's home directory.
 
+// --- Threading -----------------------------------------------------------
+//
+// Tauri runs a command that is not `async` on the **main thread**, so every
+// filesystem command below used to block the UI for as long as it took: a save
+// of a large vault is a multi-megabyte write plus two fsyncs, and `qlmanage`
+// does not return until the user closes the preview window. Declaring the
+// commands `async` moves them off the main thread, and `run_blocking` then
+// hands the actual blocking work to the runtime's blocking pool so it does not
+// occupy an async worker either. Even a bare `stat` is routed through it —
+// on an unresponsive network or removable volume it can hang just as long.
+
+/// Run blocking filesystem work on the async runtime's blocking pool.
+async fn run_blocking<T, F>(work: F) -> Result<T, String>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| format!("Background filesystem task failed: {e}"))
+}
+
 /// Read a file's raw bytes (used to load the selected `.kdbx`).
 ///
 /// Returned as a raw IPC `Response` so the bytes reach the webview as an
 /// `ArrayBuffer` instead of an inflated JSON number array.
 #[tauri::command]
-fn read_database(path: String) -> Result<tauri::ipc::Response, String> {
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+async fn read_database(path: String) -> Result<tauri::ipc::Response, String> {
+    let bytes = run_blocking(move || std::fs::read(&path))
+        .await?
+        .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Check whether a path exists (used to validate the remembered last DB path).
 #[tauri::command]
-fn file_exists(path: String) -> bool {
-    std::path::Path::new(&path).exists()
+async fn file_exists(path: String) -> bool {
+    run_blocking(move || std::path::Path::new(&path).exists())
+        .await
+        .unwrap_or(false)
 }
 
 // --- Raw-byte IPC --------------------------------------------------------
@@ -244,8 +270,11 @@ fn modified_ms(path: &std::path::Path) -> Option<f64> {
 /// Modification time (ms since epoch) of a file, or `None` if it doesn't exist.
 /// Used by the frontend to track external changes for conflict detection.
 #[tauri::command]
-fn file_mtime(path: String) -> Option<f64> {
-    modified_ms(std::path::Path::new(&path))
+async fn file_mtime(path: String) -> Option<f64> {
+    run_blocking(move || modified_ms(std::path::Path::new(&path)))
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Rotate `<path>.bak` → `<path>.bak.1` → … keeping at most `depth` backups,
@@ -292,21 +321,19 @@ fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
 /// The database bytes arrive as the raw IPC body; everything else comes in
 /// headers (see *Raw-byte IPC* above).
 #[tauri::command]
-fn save_database(request: tauri::ipc::Request<'_>) -> Result<f64, String> {
+async fn save_database(request: tauri::ipc::Request<'_>) -> Result<f64, String> {
     let path = arg(&request, "path").ok_or("Missing target path")?;
     // An absent mtime means "don't check" — either nothing is known about the
     // file yet or the user chose to overwrite an external change.
     let expected_mtime = arg(&request, "expected-mtime").and_then(|v| v.parse::<f64>().ok());
     let backup = arg(&request, "backup").map(|v| v == "true");
     let backup_depth = arg(&request, "backup-depth").and_then(|v| v.parse::<u32>().ok());
+    // The blocking pool needs an owned payload. One memcpy is nothing next to
+    // the write and two fsyncs it is about to do.
+    let data = raw_body(&request)?.to_vec();
 
-    save_database_bytes(
-        &path,
-        raw_body(&request)?,
-        expected_mtime,
-        backup,
-        backup_depth,
-    )
+    run_blocking(move || save_database_bytes(&path, &data, expected_mtime, backup, backup_depth))
+        .await?
 }
 
 fn save_database_bytes(
@@ -378,8 +405,14 @@ struct BackupInfo {
 /// List the rotated backups (`<path>.bak`, `<path>.bak.N`) for a database,
 /// most-recent first, so the UI can offer a restore.
 #[tauri::command]
-fn list_backups(path: String) -> Vec<BackupInfo> {
-    let target = std::path::Path::new(&path);
+async fn list_backups(path: String) -> Vec<BackupInfo> {
+    run_blocking(move || collect_backups(&path))
+        .await
+        .unwrap_or_default()
+}
+
+fn collect_backups(path: &str) -> Vec<BackupInfo> {
+    let target = std::path::Path::new(path);
     let mut out = Vec::new();
     // Scan every slot instead of stopping at the first gap. Numbering is not
     // guaranteed contiguous — a backup deleted externally, or slots left by a
@@ -407,9 +440,11 @@ fn list_backups(path: String) -> Vec<BackupInfo> {
 /// Write bytes to a user-chosen path (used to export a decrypted attachment).
 /// The bytes are the raw IPC body; the target path comes in a header.
 #[tauri::command]
-fn export_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+async fn export_file(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let path = arg(&request, "path").ok_or("Missing target path")?;
-    std::fs::write(&path, raw_body(&request)?).map_err(|e| e.to_string())
+    let data = raw_body(&request)?.to_vec();
+
+    run_blocking(move || std::fs::write(&path, &data).map_err(|e| e.to_string())).await?
 }
 
 /// Strip any directory components from an attachment name so it can never
@@ -431,37 +466,48 @@ fn sanitize_file_name(name: &str) -> String {
     }
 }
 
+/// Write the decrypted bytes into a private, owner-only (0700) temp directory,
+/// preview them, and delete the file as soon as the preview window closes.
+/// Blocking from start to finish — always call it off the main thread.
+#[cfg(target_os = "macos")]
+fn preview_with_quick_look(file_name: &str, data: &[u8]) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let dir = std::env::temp_dir().join("Kivarion-quicklook");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    // Restrict the directory to the current user only.
+    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+
+    let path = dir.join(sanitize_file_name(file_name));
+    std::fs::write(&path, data).map_err(|e| e.to_string())?;
+    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+
+    // qlmanage -p blocks until the preview window is closed.
+    let _ = Command::new("qlmanage").arg("-p").arg(&path).status();
+
+    // Remove the decrypted file as soon as the window closes.
+    let _ = std::fs::remove_file(&path);
+    Ok(())
+}
+
 /// Preview a decrypted attachment via macOS Quick Look.
 ///
 /// The bytes are written by the Rust side (never exposed through the JS fs
-/// scope) into a private, owner-only (0700) temp directory, previewed, and
-/// deleted immediately after the preview window closes. The attachment bytes
-/// are the raw IPC body; its name comes in a header.
+/// scope) into a private, owner-only temp directory, previewed, and deleted
+/// immediately after the preview window closes. The attachment bytes are the
+/// raw IPC body; its name comes in a header.
 #[tauri::command]
 async fn quick_look_attachment(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let file_name = arg(&request, "file-name").ok_or("Missing attachment name")?;
-    let data = raw_body(&request)?;
+    let data = raw_body(&request)?.to_vec();
 
     #[cfg(target_os = "macos")]
     {
-        use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
-
-        let dir = std::env::temp_dir().join("Kivarion-quicklook");
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        // Restrict the directory to the current user only.
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-
-        let path = dir.join(sanitize_file_name(&file_name));
-        std::fs::write(&path, data).map_err(|e| e.to_string())?;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-
-        // qlmanage -p blocks until the preview window is closed.
-        let _ = Command::new("qlmanage").arg("-p").arg(&path).status();
-
-        // Remove the decrypted file as soon as the window closes.
-        let _ = std::fs::remove_file(&path);
-        Ok(())
+        // `qlmanage` does not return until the user closes the preview, which
+        // can be minutes — by far the longest block in this file, and the one
+        // that must never sit on the main thread or an async worker.
+        run_blocking(move || preview_with_quick_look(&file_name, &data)).await?
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -743,6 +789,19 @@ mod tests {
     }
 
     #[test]
+    fn run_blocking_leaves_the_calling_thread() {
+        let caller = std::thread::current().id();
+
+        let worker =
+            tauri::async_runtime::block_on(run_blocking(|| std::thread::current().id())).unwrap();
+
+        // The whole point: a command's filesystem work must not run where the
+        // caller is. In the app the caller is the main thread, and a save of a
+        // large vault froze the UI for as long as the write and fsyncs took.
+        assert_ne!(worker, caller);
+    }
+
+    #[test]
     fn with_suffix_appends_without_replacing_extension() {
         let path = std::path::Path::new("/tmp/vault.kdbx");
 
@@ -821,7 +880,7 @@ mod tests {
         std::fs::write(backup_path(&target, 0), b"newest").unwrap();
         std::fs::write(backup_path(&target, 2), b"older").unwrap();
 
-        let backups = list_backups(target.to_string_lossy().into_owned());
+        let backups = collect_backups(&target.to_string_lossy());
 
         let paths: Vec<String> = backups.into_iter().map(|b| b.path).collect();
         assert!(
