@@ -36,4 +36,4 @@ docs/
 build-mac.sh
 
 # Developer ID provisioning profile (per-developer, fetched from the Apple portal)
-Kivarion.provisionprofile
+Kivarion.provisionprofile*
