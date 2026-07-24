@@ -90,7 +90,10 @@
             </aside>
 
             <!-- Resizer for Sidebar -->
-            <div class="resizer" @mousedown.prevent="startResizeSidebar"></div>
+            <div
+                class="resizer"
+                @pointerdown.prevent="startResizeSidebar"
+            ></div>
 
             <!-- Column 2: Entry list -->
             <main class="entries-column">
@@ -107,7 +110,7 @@
             <div
                 v-if="selectedEntry"
                 class="resizer"
-                @mousedown.prevent="startResizeEntries"
+                @pointerdown.prevent="startResizeEntries"
             ></div>
 
             <!-- Column 3: Entry detail -->
@@ -591,22 +594,37 @@ watch(
     { deep: true },
 );
 
-// Column widths logic
+// Column widths logic.
+//
+// The `reserve` values are what the columns to the right of each divider need
+// at minimum (the CSS min-widths below, plus the 4px dividers), so dragging one
+// column wide in a narrow window cannot push the others off screen.
+const RESIZER_WIDTH = 4;
+const ENTRIES_MIN_WIDTH = 200;
+const DETAIL_MIN_WIDTH = 260;
+
 const {
     width: sidebarWidth,
     isResizing: isResizingSidebar,
     startResize: startResizeSidebar,
-} = useResizable('kivarion-sidebar-width', 220, 150, 600, null, [
-    'kivarion_sidebarWidth',
-]);
+} = useResizable('kivarion-sidebar-width', 220, {
+    minWidth: 150,
+    maxWidth: 600,
+    legacyKeys: ['kivarion_sidebarWidth'],
+    reserve: ENTRIES_MIN_WIDTH + DETAIL_MIN_WIDTH + RESIZER_WIDTH * 2,
+});
 
 const {
     width: entriesWidth,
     isResizing: isResizingEntries,
     startResize: startResizeEntries,
-} = useResizable('kivarion-entries-width', 300, 200, 800, sidebarWidth, [
-    'kivarion_entriesWidth',
-]);
+} = useResizable('kivarion-entries-width', 300, {
+    minWidth: ENTRIES_MIN_WIDTH,
+    maxWidth: 800,
+    offsetSource: sidebarWidth,
+    legacyKeys: ['kivarion_entriesWidth'],
+    reserve: DETAIL_MIN_WIDTH + RESIZER_WIDTH,
+});
 
 // Database Actions logic
 const {
@@ -1327,6 +1345,9 @@ async function confirmDatabaseSettings({
     z-index: 10;
     margin: 0 -2px; /* Overlap borders to make target bigger */
     position: relative;
+    /* Pointer events only: without this a touch drag scrolls the page instead
+       of resizing, and the browser cancels the pointer stream mid-drag. */
+    touch-action: none;
 }
 
 .resizer:hover,
@@ -1367,6 +1388,9 @@ async function confirmDatabaseSettings({
 /* Detail column */
 .detail-column {
     flex: 1;
+    /* Kept in sync with DETAIL_MIN_WIDTH, which reserves this much room when
+       the other columns are dragged. */
+    min-width: 260px;
     overflow-y: auto;
     padding: 0 0.75rem 1rem;
 }
