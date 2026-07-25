@@ -18,11 +18,13 @@
                 </div>
                 <div v-else-if="field.id === 'URL'" class="field-value">
                     <a
-                        :href="ensureProtocol(field.value)"
+                        v-if="field.href"
+                        :href="field.href"
                         target="_blank"
                         rel="noopener"
                         >{{ field.value }}</a
                     >
+                    <span v-else>{{ field.value }}</span>
                 </div>
                 <div
                     v-else
@@ -121,7 +123,7 @@
 
 <script setup>
 import { ref, computed } from 'vue';
-import { getField } from '../../utils';
+import { getField, normalizeHttpUrl } from '../../utils';
 import { useClipboard } from '../../composables/useClipboard';
 
 const props = defineProps({
@@ -143,18 +145,17 @@ const standardFields = computed(() => [
         label: 'Password',
         value: getField(props.entry, 'Password'),
     },
-    { id: 'URL', label: 'URL', value: getField(props.entry, 'URL') },
+    {
+        id: 'URL',
+        label: 'URL',
+        value: getField(props.entry, 'URL'),
+        href: normalizeHttpUrl(getField(props.entry, 'URL')),
+    },
     { id: 'Notes', label: 'Notes', value: getField(props.entry, 'Notes') },
 ]);
 
 function maskedPassword(pw) {
-    return pw ? '•'.repeat(Math.min(pw.length, 20)) : '';
-}
-
-function ensureProtocol(url) {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    return 'https://' + url;
+    return pw ? '••••••••' : '';
 }
 
 function copy(text, fieldId) {

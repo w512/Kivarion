@@ -7,14 +7,37 @@ const ICON_ENDPOINT = 'https://icon.horse/icon/';
 const MAX_ICON_BYTES = 100 * 1024;
 const ICON_FETCH_TIMEOUT_MS = 8000;
 const ICON_DEBOUNCE_MS = globalThis.__KIVARION_ICON_DEBOUNCE_MS__ ?? 300;
+const MAX_ICON_CACHE_ENTRIES =
+    globalThis.__KIVARION_ICON_CACHE_MAX_ENTRIES__ ?? 100;
 const ALLOWED_ICON_MIME = new Set(['image/png']);
 
 const iconCache = new Map();
 const inFlightFetches = new Map();
-const pendingDownloads = new WeakMap();
+const pendingDownloads = new Map();
+let cacheGeneration = 0;
+let cacheListenerRegistered = false;
+
+export function clearEntryIconCaches() {
+    cacheGeneration++;
+    iconCache.clear();
+    inFlightFetches.clear();
+
+    for (const pending of pendingDownloads.values()) {
+        clearTimeout(pending.timer);
+        pending.resolve(false);
+    }
+    pendingDownloads.clear();
+}
+
+function registerCacheCleanup() {
+    if (cacheListenerRegistered || typeof window === 'undefined') return;
+    window.addEventListener('kivarion:before-lock', clearEntryIconCaches);
+    cacheListenerRegistered = true;
+}
 
 export function useEntryIcons(emit) {
     const store = useStore();
+    registerCacheCleanup();
 
     function downloadIcon(entry) {
         if (!entry) return Promise.resolve(false);
@@ -23,7 +46,10 @@ export function useEntryIcons(emit) {
         if (pending) {
             clearTimeout(pending.timer);
             pending.resolve(false);
+            pendingDownloads.delete(entry);
         }
+
+        if (store.downloadSiteIcons === false) return Promise.resolve(false);
 
         return new Promise((resolve) => {
             const timer = setTimeout(async () => {
@@ -46,54 +72,82 @@ export function useEntryIcons(emit) {
 }
 
 async function applyIcon(entry, store, emit) {
+    if (store.downloadSiteIcons === false) return false;
+
     const url = normalizeHttpUrl(getField(entry, 'URL'));
-    if (!url || !store.db) return false;
+    const db = store.db;
+    if (!url || !db) return false;
 
     const domain = new URL(url).hostname.toLowerCase();
     const buffer = await fetchIconForDomain(domain);
-    if (!buffer || !buffer.byteLength || !store.db) return false;
+    if (
+        !buffer ||
+        !buffer.byteLength ||
+        store.db !== db ||
+        store.downloadSiteIcons === false
+    ) {
+        return false;
+    }
 
     const oldIconId = getIconId(entry.customIcon);
-    const oldIcon = oldIconId ? store.db.meta.customIcons.get(oldIconId) : null;
+    const oldIcon = oldIconId ? db.meta.customIcons.get(oldIconId) : null;
 
     if (oldIcon?.data && arrayBuffersEqual(oldIcon.data, buffer)) {
         return false;
     }
 
-    const existingIconId = findCustomIconByData(store.db, buffer);
+    const existingIconId = findCustomIconByData(db, buffer);
     const nextIcon = existingIconId
         ? new kdbxweb.KdbxUuid(existingIconId)
         : kdbxweb.KdbxUuid.random();
 
     if (!existingIconId) {
-        store.db.meta.customIcons.set(nextIcon.id, { data: buffer });
+        db.meta.customIcons.set(nextIcon.id, { data: buffer });
     }
 
     if (oldIconId === nextIcon.id) return false;
 
     entry.customIcon = nextIcon;
     entry.times.update();
-    removeUnusedCustomIcon(store.db, oldIconId);
+    removeUnusedCustomIcon(db, oldIconId);
     emit('updated');
     return true;
 }
 
 async function fetchIconForDomain(domain) {
-    if (iconCache.has(domain)) return iconCache.get(domain).slice(0);
+    if (iconCache.has(domain)) {
+        const cached = iconCache.get(domain);
+        iconCache.delete(domain);
+        iconCache.set(domain, cached);
+        return cached.slice(0);
+    }
     if (inFlightFetches.has(domain))
         return (await inFlightFetches.get(domain)).slice(0);
 
-    const promise = fetchIcon(domain)
+    const generation = cacheGeneration;
+    let promise;
+    promise = fetchIcon(domain)
         .then((buffer) => {
-            iconCache.set(domain, buffer.slice(0));
+            if (generation === cacheGeneration) cacheIcon(domain, buffer);
             return buffer;
         })
         .finally(() => {
-            inFlightFetches.delete(domain);
+            if (inFlightFetches.get(domain) === promise) {
+                inFlightFetches.delete(domain);
+            }
         });
 
     inFlightFetches.set(domain, promise);
     return (await promise).slice(0);
+}
+
+function cacheIcon(domain, buffer) {
+    iconCache.delete(domain);
+    iconCache.set(domain, buffer.slice(0));
+
+    while (iconCache.size > MAX_ICON_CACHE_ENTRIES) {
+        iconCache.delete(iconCache.keys().next().value);
+    }
 }
 
 async function fetchIcon(domain) {

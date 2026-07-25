@@ -69,6 +69,11 @@
                         </svg>
                     </button>
                 </div>
+                <PasswordStrength
+                    v-if="localPassword"
+                    :password="localPassword"
+                    class="password-strength-indicator"
+                />
             </div>
 
             <div v-if="hasCredentialChange" class="form-group">
@@ -132,6 +137,7 @@
 import { computed, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import BaseModal from './BaseModal.vue';
+import PasswordStrength from './PasswordStrength.vue';
 import { withSystemInteraction } from '../composables/useSystemInteraction.js';
 
 const props = defineProps({
@@ -280,6 +286,10 @@ function handleConfirm() {
 
 .password-wrapper {
     position: relative;
+}
+
+.password-strength-indicator {
+    margin-top: 0.5rem;
 }
 
 .modal-input {

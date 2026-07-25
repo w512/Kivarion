@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import * as kdbxweb from 'kdbxweb';
 import {
+    buildDatabaseView,
+    deleteMovesToRecycleBin,
     findEntryByUuid,
     findGroupByUuid,
     getAllEntries,
+    getRestoreTargetGroup,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
     getUniqueGroupName,
     groupNameExistsInParent,
+    isObjectInRecycleBin,
     resolveGroupMove,
     toEntryListItem,
     toGroupTreeNode,
@@ -63,12 +68,16 @@ function makeDb() {
     childGroup.parentGroup = root;
     recycleGroup.parentGroup = root;
     duplicateGroup.parentGroup = root;
+    rootEntry.parentGroup = root;
+    childEntry.parentGroup = childGroup;
+    recycleEntry.parentGroup = recycleGroup;
 
     return {
         meta: { recycleBinUuid: uuid('recycle'), customIcons: new Map() },
         getDefaultGroup: () => root,
         root,
         childGroup,
+        recycleGroup,
         rootEntry,
         childEntry,
         recycleEntry,
@@ -116,24 +125,32 @@ describe('kdbx view helpers', () => {
                     uuid: 'child',
                     name: 'Child',
                     entryCount: 1,
+                    recursiveEntryCount: 1,
                     isRecycleBin: false,
+                    isInRecycleBin: false,
                     children: [],
                 },
                 {
                     uuid: 'recycle',
                     name: 'Recycle Bin',
                     entryCount: 1,
+                    recursiveEntryCount: 1,
                     isRecycleBin: true,
+                    isInRecycleBin: true,
                     children: [],
                 },
                 {
                     uuid: 'duplicate',
                     name: 'New group',
                     entryCount: 0,
+                    recursiveEntryCount: 0,
                     isRecycleBin: false,
+                    isInRecycleBin: false,
                     children: [],
                 },
             ],
+            recursiveEntryCount: 2,
+            isInRecycleBin: false,
         });
 
         expect(toEntryListItem(db.childEntry, db)).toMatchObject({
@@ -141,6 +158,75 @@ describe('kdbx view helpers', () => {
             title: 'Child Entry',
             iconSrc: null,
         });
+    });
+
+    test('builds a reusable search/list index without protected values', () => {
+        const db = makeDb();
+        db.childEntry.fields.set('Notes', 'Needle in notes');
+        db.childEntry.fields.set(
+            'Secret',
+            kdbxweb.ProtectedValue.fromString('hidden needle'),
+        );
+
+        const view = buildDatabaseView(db);
+
+        expect(view.entries).toEqual([db.rootEntry, db.childEntry]);
+        expect(view.entriesByGroup.get('child')).toEqual([db.childEntry]);
+        expect(
+            view.searchIndex.find((row) => row.entry === db.childEntry).text,
+        ).toContain('needle in notes');
+        expect(
+            view.searchIndex.find((row) => row.entry === db.childEntry).text,
+        ).not.toContain('hidden needle');
+    });
+
+    test('caches custom icon data URLs by icon id', () => {
+        const db = makeDb();
+        db.meta.customIcons.set('icon-1', {
+            data: new Uint8Array([1, 2, 3]).buffer,
+        });
+        db.childEntry.customIcon = uuid('icon-1');
+        const cache = new Map();
+
+        const first = toEntryListItem(db.childEntry, db, cache).iconSrc;
+        db.meta.customIcons.get('icon-1').data = new Uint8Array([9]).buffer;
+        const second = toEntryListItem(db.childEntry, db, cache).iconSrc;
+
+        expect(first).toBe(second);
+        expect(cache.size).toBe(1);
+    });
+
+    test('detects recycled objects and resolves their restore targets', () => {
+        const db = makeDb();
+        db.recycleEntry.previousParentGroup = db.childGroup.uuid;
+
+        expect(isObjectInRecycleBin(db, db.recycleGroup)).toBe(true);
+        expect(isObjectInRecycleBin(db, db.recycleEntry)).toBe(true);
+        expect(isObjectInRecycleBin(db, db.childEntry)).toBe(false);
+        expect(getRestoreTargetGroup(db, db.recycleEntry)).toBe(db.childGroup);
+
+        // A missing previous parent falls back to the root.
+        db.recycleEntry.previousParentGroup = uuid('missing');
+        expect(getRestoreTargetGroup(db, db.recycleEntry)).toBe(db.root);
+    });
+
+    test('only promises a restorable delete when kdbxweb would really recycle', () => {
+        const db = makeDb();
+        db.meta.recycleBinEnabled = true;
+
+        expect(deleteMovesToRecycleBin(db, db.childEntry)).toBe(true);
+        expect(deleteMovesToRecycleBin(db, db.childGroup)).toBe(true);
+        // Already in the bin: the next delete is the permanent one.
+        expect(deleteMovesToRecycleBin(db, db.recycleEntry)).toBe(false);
+
+        db.meta.recycleBinEnabled = false;
+        expect(deleteMovesToRecycleBin(db, db.childEntry)).toBe(false);
+
+        // `Kdbx.remove` needs the uuid too — with the setting alone it deletes
+        // permanently, so the confirmation must not offer a restore.
+        db.meta.recycleBinEnabled = true;
+        db.meta.recycleBinUuid = undefined;
+        expect(deleteMovesToRecycleBin(db, db.childEntry)).toBe(false);
     });
 
     test('resolves valid group moves into move() arguments', () => {

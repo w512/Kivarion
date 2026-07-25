@@ -98,6 +98,8 @@ describe('normalizeHttpUrl', () => {
         expect(normalizeHttpUrl('ftp://example.com')).toBe('');
         expect(normalizeHttpUrl('not a url')).toBe('');
         expect(normalizeHttpUrl('mailto:user@example.com')).toBe('');
+        expect(normalizeHttpUrl('http://user:pass@example.com')).toBe('');
+        expect(normalizeHttpUrl('https://user@example.com')).toBe('');
     });
 });
 
@@ -305,6 +307,17 @@ describe('generatePassword', () => {
             excludeSimilar: true,
         });
         expect(entropy).toBeCloseTo(8 * Math.log2(8));
+    });
+    test('estimates entered-password entropy from the classes actually used', () => {
+        const lowercaseEntropy = estimatePasswordEntropy({
+            password: 'abcdefghijkl',
+        });
+        expect(lowercaseEntropy).toBeCloseTo(12 * Math.log2(26));
+        expect(passwordStrengthLabel(lowercaseEntropy)).toBe('Fair');
+
+        const mixedEntropy = estimatePasswordEntropy({ password: 'abcDEF12!' });
+        expect(mixedEntropy).toBeCloseTo(9 * Math.log2(26 + 26 + 10 + 33));
+        expect(estimatePasswordEntropy({ password: '' })).toBe(0);
     });
     test('maps entropy to strength labels', () => {
         expect(passwordStrengthLabel(20)).toBe('Weak');

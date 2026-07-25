@@ -8,7 +8,12 @@
                 </span>
                 <EntrySort v-model="currentSort" />
             </div>
-            <button class="add-btn" title="New entry" @click="emit('add')">
+            <button
+                v-if="!canRestore"
+                class="add-btn"
+                title="New entry"
+                @click="emit('add')"
+            >
                 <svg
                     width="14"
                     height="14"
@@ -27,21 +32,36 @@
 
         <EntryListEmpty v-if="entries.length === 0" />
 
-        <div v-else class="entries-container" @keydown.capture="onListKeydown">
-            <EntryItem
-                v-for="entry in sortedEntries"
-                :key="entry.uuid"
-                :entry="entry"
-                :selected="isSelected(entry)"
-                @select="emit('select', entry.uuid)"
-                @drag-start="emit('entry-drag-start', entry.uuid)"
-            />
+        <div
+            v-else
+            ref="scrollRef"
+            class="entries-container"
+            @scroll="updateViewport"
+            @keydown.capture="onListKeydown"
+        >
+            <div class="entries-spacer" :style="{ height: totalHeight + 'px' }">
+                <div
+                    v-for="row in visibleRows"
+                    :key="row.entry.uuid"
+                    class="entry-position"
+                    :style="{ transform: `translateY(${row.top}px)` }"
+                >
+                    <EntryItem
+                        :entry="row.entry"
+                        :selected="isSelected(row.entry)"
+                        :can-restore="canRestore"
+                        @select="emit('select', row.entry.uuid)"
+                        @restore="emit('restore', row.entry.uuid)"
+                        @drag-start="emit('entry-drag-start', row.entry.uuid)"
+                    />
+                </div>
+            </div>
         </div>
     </div>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import EntryItem from './entry-list/EntryItem.vue';
 import EntrySort from './entry-list/EntrySort.vue';
 import EntryListEmpty from './entry-list/EntryListEmpty.vue';
@@ -49,9 +69,16 @@ import EntryListEmpty from './entry-list/EntryListEmpty.vue';
 const props = defineProps({
     entries: { type: Array, default: () => [] },
     selectedEntryUuid: { type: String, default: null },
+    canRestore: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['select', 'add', 'delete', 'entry-drag-start']);
+const emit = defineEmits([
+    'select',
+    'add',
+    'delete',
+    'restore',
+    'entry-drag-start',
+]);
 
 // Normalize persisted value (legacy 'date' meant last-modified -> 'created' here).
 function normalizeSortBy(v) {
@@ -97,23 +124,91 @@ const sortedEntries = computed(() => {
     });
 });
 
+const ROW_HEIGHT = 44;
+const OVERSCAN = 6;
+const scrollRef = ref(null);
+const scrollTop = ref(0);
+const viewportHeight = ref(600);
+let resizeObserver = null;
+
+const totalHeight = computed(() => sortedEntries.value.length * ROW_HEIGHT);
+const visibleRows = computed(() => {
+    const start = Math.max(
+        0,
+        Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN,
+    );
+    const count = Math.ceil(viewportHeight.value / ROW_HEIGHT) + OVERSCAN * 2;
+    return sortedEntries.value.slice(start, start + count).map((entry, i) => ({
+        entry,
+        top: (start + i) * ROW_HEIGHT,
+    }));
+});
+
 const isSelected = (entry) => entry.uuid === props.selectedEntryUuid;
+
+function updateViewport() {
+    const element = scrollRef.value;
+    if (!element) return;
+    scrollTop.value = element.scrollTop || 0;
+    viewportHeight.value = element.clientHeight || 600;
+}
+
+function scrollRowIntoView(index) {
+    const element = scrollRef.value;
+    if (!element || index < 0) return;
+    const top = index * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < element.scrollTop) element.scrollTop = top;
+    else if (bottom > element.scrollTop + element.clientHeight) {
+        element.scrollTop = bottom - element.clientHeight;
+    }
+    updateViewport();
+}
+
+async function focusEntry(uuid) {
+    await nextTick();
+    const rows = scrollRef.value?.querySelectorAll?.('[data-entry-uuid]') || [];
+    Array.from(rows)
+        .find((row) => row.dataset.entryUuid === uuid)
+        ?.focus();
+}
 
 function onListKeydown(event) {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    const rows = Array.from(
-        event.currentTarget.querySelectorAll('.entry-row[tabindex="0"]'),
-    );
-    const index = rows.indexOf(document.activeElement);
+    const uuid =
+        event.target?.closest?.('[data-entry-uuid]')?.dataset?.entryUuid;
+    const index = sortedEntries.value.findIndex((entry) => entry.uuid === uuid);
     if (index < 0) return;
 
     event.preventDefault();
     const nextIndex =
         event.key === 'ArrowDown'
-            ? Math.min(index + 1, rows.length - 1)
+            ? Math.min(index + 1, sortedEntries.value.length - 1)
             : Math.max(index - 1, 0);
-    rows[nextIndex]?.focus();
+    const next = sortedEntries.value[nextIndex];
+    scrollRowIntoView(nextIndex);
+    if (next) void focusEntry(next.uuid);
 }
+
+watch(
+    () => props.selectedEntryUuid,
+    (uuid) => {
+        const index = sortedEntries.value.findIndex(
+            (entry) => entry.uuid === uuid,
+        );
+        scrollRowIntoView(index);
+    },
+);
+
+onMounted(() => {
+    updateViewport();
+    if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(updateViewport);
+        if (scrollRef.value) resizeObserver.observe(scrollRef.value);
+    }
+});
+
+onUnmounted(() => resizeObserver?.disconnect());
 </script>
 
 <style scoped>
@@ -149,10 +244,26 @@ function onListKeydown(event) {
 
 .entries-container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+}
+
+.entries-spacer {
+    position: relative;
+    width: 100%;
+}
+
+.entry-position {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 44px;
+    padding-bottom: 2px;
+    box-sizing: border-box;
+}
+
+.entry-position :deep(.entry-row) {
+    height: 42px;
+    box-sizing: border-box;
 }
 
 .add-btn {

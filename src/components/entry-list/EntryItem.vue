@@ -5,6 +5,7 @@
         role="button"
         tabindex="0"
         :aria-pressed="selected"
+        :data-entry-uuid="entry.uuid"
         draggable="true"
         @click="$emit('select')"
         @keydown.enter="$emit('select')"
@@ -39,6 +40,28 @@
                 <span class="entry-date">{{ formattedDate }}</span>
             </div>
         </div>
+        <button
+            v-if="canRestore"
+            class="restore-btn"
+            title="Restore entry"
+            aria-label="Restore entry"
+            @click.stop="$emit('restore')"
+            @keydown.stop
+        >
+            <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            >
+                <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                <path d="M3 3v5h5" />
+            </svg>
+        </button>
     </div>
 </template>
 
@@ -48,9 +71,10 @@ import { computed } from 'vue';
 const props = defineProps({
     entry: { type: Object, required: true },
     selected: { type: Boolean, default: false },
+    canRestore: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['select', 'drag-start']);
+const emit = defineEmits(['select', 'restore', 'drag-start']);
 
 function onDragStart(event) {
     event.dataTransfer.effectAllowed = 'move';
@@ -119,6 +143,26 @@ const formattedDate = computed(() => {
 .entry-row.active .entry-icon {
     background: rgba(99, 102, 241, 0.15);
     color: var(--accent-color);
+}
+
+.restore-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.restore-btn:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+    background: rgba(99, 102, 241, 0.1);
 }
 
 .entry-info {

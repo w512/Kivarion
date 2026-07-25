@@ -2,7 +2,7 @@
 import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDatabaseAuth } from '../composables/useDatabaseAuth.js';
-import { estimatePasswordEntropy, passwordStrengthLabel } from '../utils.js';
+import PasswordStrength from '../components/PasswordStrength.vue';
 
 const router = useRouter();
 const passwordInput = ref(null);
@@ -37,12 +37,6 @@ const {
     store,
 } = useDatabaseAuth(router, passwordInput);
 
-const newPasswordEntropy = computed(() =>
-    estimatePasswordEntropy({ length: newPassword.value.length }),
-);
-const newPasswordStrength = computed(() =>
-    passwordStrengthLabel(newPasswordEntropy.value),
-);
 const newKeyFileName = computed(() =>
     newKeyFilePath.value ? newKeyFilePath.value.split(/[\\/]/).pop() : '',
 );
@@ -342,25 +336,7 @@ onMounted(() => {
                             :disabled="isLoading"
                         />
                     </div>
-                    <div class="password-strength">
-                        <div class="strength-bar">
-                            <div
-                                class="strength-fill"
-                                :class="newPasswordStrength.toLowerCase()"
-                                :style="{
-                                    width:
-                                        Math.min(
-                                            100,
-                                            Math.round(
-                                                (newPasswordEntropy / 120) *
-                                                    100,
-                                            ),
-                                        ) + '%',
-                                }"
-                            ></div>
-                        </div>
-                        <span>{{ newPasswordStrength }}</span>
-                    </div>
+                    <PasswordStrength :password="newPassword" />
                     <p
                         v-if="newPassword && newPassword.length < 12"
                         class="password-hint"
@@ -842,40 +818,6 @@ h1 {
 .create-field input:focus {
     border-color: var(--accent-color);
     box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
-}
-
-.password-strength {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    color: var(--text-secondary);
-    font-size: 0.78rem;
-}
-
-.strength-bar {
-    flex: 1;
-    height: 6px;
-    border-radius: 999px;
-    background: var(--border-color);
-    overflow: hidden;
-}
-
-.strength-fill {
-    height: 100%;
-    min-width: 4px;
-    border-radius: inherit;
-    background: var(--error-color);
-    transition: width 0.2s;
-}
-
-.strength-fill.fair,
-.strength-fill.good {
-    background: #f59e0b;
-}
-
-.strength-fill.strong,
-.strength-fill.excellent {
-    background: #22c55e;
 }
 
 .password-hint {

@@ -178,6 +178,44 @@ describe('useDatabaseActions save queue', () => {
         expect(actions.hasUnsavedChanges.value).toBe(false);
     });
 
+    test('debounces ordinary auto-saves but an explicit flush remains immediate', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+
+        store.dbVersion = 1;
+        actions.saveDatabaseChanges({ debounce: true });
+        await tick();
+        expect(saveInvokeMock.mock.calls.length).toBe(0);
+
+        await expect(actions.saveDatabaseChanges()).resolves.toBe(true);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
+
+        // The explicit flush cancels the delayed callback, so it cannot write
+        // the same database version again after the debounce window.
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
+    });
+
+    test('flushes a pending debounced save so a lock cannot drop it', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+
+        // Nothing waiting: the flush must not start a write of its own.
+        expect(await actions.flushPendingSave()).toBe(false);
+        expect(saveInvokeMock.mock.calls.length).toBe(0);
+
+        store.dbVersion = 1;
+        actions.saveDatabaseChanges({ debounce: true });
+        const flushed = actions.flushPendingSave();
+
+        // Auto-lock nulls the database right after dispatching before-lock; the
+        // save is already under way with the database it captured.
+        store.db = null;
+
+        await expect(flushed).resolves.toBe(true);
+        expect(saveInvokeMock.mock.calls.length).toBe(1);
+    });
+
     test('retries an existing save error even when the db version did not change', async () => {
         const { store } = makeStore();
         const actions = useDatabaseActions(store);

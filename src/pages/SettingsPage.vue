@@ -13,7 +13,13 @@ const router = useRouter();
 const store = useStore();
 
 function goBack() {
-    router.back();
+    // A window opened/reloaded directly on #/settings has no in-app history.
+    // In that case return to the useful route rather than leaving the app.
+    if (window.history.state?.back) {
+        router.back();
+    } else {
+        router.replace({ name: store.db ? 'database' : 'home' });
+    }
 }
 
 // Restore is only possible with a database open (we reuse its credentials to
@@ -151,6 +157,24 @@ async function restoreBackup(backup) {
                     <label class="switch">
                         <input
                             v-model="store.lockOnFocusLoss"
+                            type="checkbox"
+                        />
+                        <span class="switch-track"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Download website icons</h3>
+                    <p>
+                        Send website domains to icon.horse to download favicons
+                    </p>
+                </div>
+                <div class="setting-action">
+                    <label class="switch">
+                        <input
+                            v-model="store.downloadSiteIcons"
                             type="checkbox"
                         />
                         <span class="switch-track"></span>

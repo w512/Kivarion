@@ -12,6 +12,8 @@ import {
     getUniqueGroupName,
 } from '../kdbxView.js';
 
+const AUTO_SAVE_DEBOUNCE_MS = globalThis.__KIVARION_SAVE_DEBOUNCE_MS__ ?? 300;
+
 export function useDatabaseActions(store) {
     // Surfaced to the UI so a failed save is never silent.
     const isSaving = ref(false);
@@ -36,6 +38,34 @@ export function useDatabaseActions(store) {
     let pendingSaveVersion = null;
     let activeSavePromise = null;
     let forceNextSave = false;
+    let autoSaveTimer = null;
+
+    // Rapid field edits used to rerun Argon2 and encrypt the entire vault for
+    // every small mutation. Delay ordinary auto-saves briefly; explicit flushes
+    // (close, retry, settings changes) still call saveDatabaseChanges directly.
+    function scheduleDatabaseSave() {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(() => {
+            autoSaveTimer = null;
+            void saveDatabaseChanges();
+        }, AUTO_SAVE_DEBOUNCE_MS);
+        return Promise.resolve(false);
+    }
+
+    /**
+     * Turn a still-pending debounced auto-save into an immediate one.
+     *
+     * Auto-lock drops `store.db` without asking any questions, so the delayed
+     * callback would find no database and drop the mutation on the floor. Lock
+     * paths call this while the database is still open; it is a no-op when
+     * nothing is waiting.
+     *
+     * @returns {Promise<boolean>} the save result, or false when nothing was pending.
+     */
+    function flushPendingSave() {
+        if (autoSaveTimer === null) return Promise.resolve(false);
+        return saveDatabaseChanges();
+    }
 
     /**
      * Persist the current database through a single in-process queue.
@@ -49,11 +79,18 @@ export function useDatabaseActions(store) {
      * On failure the database remains dirty (`hasUnsavedChanges`) and the error
      * is exposed via `saveError` so the UI can warn the user and offer a retry.
      *
+     * `{ debounce: true }` coalesces rapid mutations into a single delayed
+     * write and resolves `false` right away — its result says nothing about
+     * the eventual save, so call this plainly whenever the outcome matters.
+     *
      * @returns {Promise<boolean>} true when the latest database version is saved.
      */
-    function saveDatabaseChanges({ force = false } = {}) {
+    function saveDatabaseChanges({ force = false, debounce = false } = {}) {
         if (!store.db) return Promise.resolve(false);
+        if (debounce && !force) return scheduleDatabaseSave();
 
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
         if (force) forceNextSave = true;
         pendingSaveVersion = store.dbVersion;
 
@@ -149,6 +186,8 @@ export function useDatabaseActions(store) {
             // dirty marker, the queued save and the conflict together.
             pendingSaveVersion = null;
             forceNextSave = false;
+            clearTimeout(autoSaveTimer);
+            autoSaveTimer = null;
             lastSavedDbVersion.value = store.dbVersion;
             saveConflict.value = false;
             conflictDiskMtime.value = null;
@@ -182,7 +221,7 @@ export function useDatabaseActions(store) {
         entry.fields.set('Title', 'New entry');
         entry.times.update();
         store.touchDb();
-        saveDatabaseChanges();
+        saveDatabaseChanges({ debounce: true });
         return getObjectUuid(entry);
     }
 
@@ -201,12 +240,13 @@ export function useDatabaseActions(store) {
             getUniqueGroupName(parentGroup),
         );
         store.touchDb();
-        saveDatabaseChanges();
+        saveDatabaseChanges({ debounce: true });
         return getObjectUuid(group);
     }
 
     return {
         saveDatabaseChanges,
+        flushPendingSave,
         reloadDatabaseFromDisk,
         addEntry,
         addGroup,

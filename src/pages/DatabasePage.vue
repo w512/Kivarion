@@ -83,6 +83,7 @@
                     @add-group="addGroup"
                     @rename-group="requestRenameGroup"
                     @delete-group="requestDeleteGroup"
+                    @restore-group="restoreGroup"
                     @empty-recycle-bin="requestEmptyRecycleBin"
                     @move-group="moveGroup"
                     @move-entry="moveEntry"
@@ -100,9 +101,11 @@
                 <EntryList
                     :entries="filteredEntries"
                     :selected-entry-uuid="selectedEntryUuid"
+                    :can-restore="selectedGroupIsInRecycleBin"
                     @select="selectEntry"
                     @add="addEntry"
                     @delete="requestDelete"
+                    @restore="restoreEntry"
                 />
             </main>
 
@@ -183,9 +186,15 @@
         <!-- Delete Entry Confirmation -->
         <ConfirmModal
             :show="showDeleteConfirm"
-            title="Delete entry?"
-            :message="`“${getEntryTitle(entryToDelete)}” will be deleted. This action cannot be undone.`"
-            confirm-text="Delete"
+            :title="
+                entryDeleteIsPermanent
+                    ? 'Delete entry?'
+                    : 'Move entry to Recycle Bin?'
+            "
+            :message="entryDeleteMessage"
+            :confirm-text="
+                entryDeleteIsPermanent ? 'Delete' : 'Move to Recycle Bin'
+            "
             confirm-variant="danger"
             @confirm="confirmDelete"
             @cancel="cancelDelete"
@@ -207,9 +216,15 @@
         <!-- Delete Group Confirmation -->
         <ConfirmModal
             :show="showDeleteGroupConfirm"
-            title="Delete group?"
-            :message="`“${groupToDeleteName}” and all its entries will be deleted. This action cannot be undone.`"
-            confirm-text="Delete"
+            :title="
+                groupDeleteIsPermanent
+                    ? 'Delete group?'
+                    : 'Move group to Recycle Bin?'
+            "
+            :message="groupDeleteMessage"
+            :confirm-text="
+                groupDeleteIsPermanent ? 'Delete' : 'Move to Recycle Bin'
+            "
             confirm-variant="danger"
             @confirm="confirmDeleteGroup"
             @cancel="cancelGroupAction"
@@ -289,28 +304,24 @@ import { homeDir } from '@tauri-apps/api/path';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
-import {
-    formatDate,
-    getField,
-    isProtectedValue,
-    STANDARD_FIELDS,
-    toExactArrayBuffer,
-} from '../utils';
+import { formatDate, getField, toExactArrayBuffer } from '../utils';
 import {
     ALL_ENTRIES_UUID,
+    buildDatabaseView,
+    deleteMovesToRecycleBin,
     findEntryByUuid,
     findGroupByUuid,
-    getAllEntries,
     getDefaultGroup,
     getObjectUuid,
     getRecycleBinGroup,
+    getRestoreTargetGroup,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
     groupNameExistsInParent,
+    isObjectInRecycleBin,
+    isRecycleBinGroup,
     normalizeGroupName,
     resolveGroupMove,
-    toEntryListItem,
-    toGroupTreeNode,
 } from '../kdbxView.js';
 
 // Components
@@ -335,6 +346,10 @@ import { withSystemInteraction } from '../composables/useSystemInteraction.js';
 
 const router = useRouter();
 const store = useStore();
+
+// Data URLs are expensive to build for large custom icons. Keep one cache for
+// the lifetime of this open database and explicitly discard it on lock/reload.
+const customIconDataUrls = new Map();
 
 onMounted(() => {
     if (!store.db) {
@@ -364,6 +379,8 @@ onUnmounted(() => {
     unlistenCloseRequested = null;
     unlistenQuitRequested?.();
     unlistenQuitRequested = null;
+    clearTimeout(searchDebounceTimer);
+    customIconDataUrls.clear();
 });
 
 // Native teardown guards: a window close (red button / Cmd+W) or an app quit
@@ -468,6 +485,8 @@ const selectedEntryUuid = ref(null);
 const entryDetailRef = ref(null);
 const headerRef = ref(null);
 const searchQuery = ref('');
+const debouncedSearchQuery = ref('');
+let searchDebounceTimer = null;
 const showDeleteConfirm = ref(false);
 const entryToDeleteUuid = ref(null);
 
@@ -481,6 +500,15 @@ const showDeleteGroupConfirm = ref(false);
 const showEmptyRecycleBinConfirm = ref(false);
 const groupToDeleteUuid = ref(null);
 const groupToDeleteName = computed(() => getGroupName(groupToDeleteUuid.value));
+const groupDeleteIsPermanent = computed(() => {
+    const group = findGroupByUuid(store.db, groupToDeleteUuid.value);
+    return !deleteMovesToRecycleBin(store.db, group);
+});
+const groupDeleteMessage = computed(() =>
+    groupDeleteIsPermanent.value
+        ? `“${groupToDeleteName.value}” and all its contents will be permanently deleted. This action cannot be undone.`
+        : `“${groupToDeleteName.value}” and all its contents will be moved to the Recycle Bin. You can restore the group later.`,
+);
 const homeDirPath = ref('');
 
 const showSettingsModal = ref(false);
@@ -493,6 +521,10 @@ const collapsedGroups = ref({});
 const { copy: copyToClipboard } = useClipboard();
 
 function prepareForForcedLock() {
+    // Runs synchronously from the `kivarion:before-lock` dispatch, i.e. while
+    // `store.db` is still set: a debounced auto-save must be started here or
+    // auto-lock silently loses the mutation that was waiting for it.
+    void flushPendingSave();
     entryDetailRef.value?.discardPendingEdit?.();
     pendingNavigation.value = null;
     pendingTeardownFinish = null;
@@ -505,6 +537,7 @@ function prepareForForcedLock() {
     showEmptyRecycleBinConfirm.value = false;
     showSettingsModal.value = false;
     selectedEntryUuid.value = null;
+    customIconDataUrls.clear();
 }
 
 function isEditableTarget(target) {
@@ -570,6 +603,24 @@ watch(newGroupName, () => {
     groupNameError.value = '';
 });
 
+// Keep typing responsive: the input updates immediately, while the full-vault
+// search runs only after a short pause. Clearing remains instant.
+watch(searchQuery, (value) => {
+    clearTimeout(searchDebounceTimer);
+    if (!value.trim()) {
+        debouncedSearchQuery.value = '';
+        return;
+    }
+    searchDebounceTimer = setTimeout(() => {
+        debouncedSearchQuery.value = value;
+    }, 150);
+});
+
+watch(
+    () => store.db,
+    () => customIconDataUrls.clear(),
+);
+
 function collapsedGroupsStorageKey(path = store.filePath) {
     return path ? `kivarion-collapsed-groups-${path}` : null;
 }
@@ -632,6 +683,7 @@ const {
 // Database Actions logic
 const {
     saveDatabaseChanges,
+    flushPendingSave,
     reloadDatabaseFromDisk,
     addEntry: performAddEntry,
     addGroup: performAddGroup,
@@ -726,13 +778,14 @@ const rootGroup = computed(() => {
     return getDefaultGroup(store.db);
 });
 
-const groupTree = computed(() => {
-    // Depend on dbVersion directly: rootGroup keeps the same object identity
-    // across mutations, so without this the snapshot below would never rebuild.
+const databaseView = computed(() => {
+    // KDBX objects retain their identity across edits, so dbVersion is the
+    // explicit invalidation key for the whole lightweight view/search index.
     store.dbVersion;
-    const root = rootGroup.value;
-    return root ? [toGroupTreeNode(root, store.db)] : [];
+    return buildDatabaseView(store.db, customIconDataUrls);
 });
+
+const groupTree = computed(() => databaseView.value.groupTree);
 
 const selectedGroup = computed(() => {
     store.dbVersion;
@@ -752,45 +805,37 @@ const entryToDelete = computed(() => {
     return findEntryByUuid(store.db, entryToDeleteUuid.value);
 });
 
-const totalEntriesCount = computed(() => {
-    store.dbVersion;
-    if (!store.db) return 0;
-    return getAllEntries(store.db).length;
+const entryDeleteIsPermanent = computed(
+    () => !deleteMovesToRecycleBin(store.db, entryToDelete.value),
+);
+
+const entryDeleteMessage = computed(() => {
+    const title = getEntryTitle(entryToDelete.value);
+    return entryDeleteIsPermanent.value
+        ? `“${title}” will be permanently deleted. This action cannot be undone.`
+        : `“${title}” will be moved to the Recycle Bin. You can restore it later.`;
 });
 
-const currentRawEntries = computed(() => {
-    store.dbVersion;
-    if (!store.db || !selectedGroup.value) return [];
+const totalEntriesCount = computed(() => databaseView.value.entries.length);
 
-    if (store.selectedGroupUuid === ALL_ENTRIES_UUID) {
-        return getAllEntries(store.db);
-    }
-
-    return selectedGroup.value.entries || [];
-});
-
-function entryMatches(entry, q) {
-    if (!entry?.fields) return false;
-    for (const [key, val] of entry.fields) {
-        // Skip protected fields entirely (Password and any protected custom field).
-        if (isProtectedValue(val)) continue;
-        if (typeof val !== 'string') continue;
-        // For custom fields the field name itself is user content — match it too.
-        if (!STANDARD_FIELDS.includes(key) && key.toLowerCase().includes(q))
-            return true;
-        if (val.toLowerCase().includes(q)) return true;
-    }
-    return false;
-}
+const selectedGroupIsInRecycleBin = computed(() =>
+    isObjectInRecycleBin(store.db, selectedGroup.value),
+);
 
 const filteredEntries = computed(() => {
-    store.dbVersion;
-    const q = searchQuery.value.trim().toLowerCase();
-    const rawEntries = q
-        ? getAllEntries(store.db).filter((entry) => entryMatches(entry, q))
-        : currentRawEntries.value;
+    const view = databaseView.value;
+    const q = debouncedSearchQuery.value.trim().toLocaleLowerCase();
+    if (q) {
+        return view.searchIndex
+            .filter((row) => row.text.includes(q))
+            .map((row) => view.entryItems.get(getObjectUuid(row.entry)));
+    }
 
-    return rawEntries.map((entry) => toEntryListItem(entry, store.db));
+    const rawEntries =
+        store.selectedGroupUuid === ALL_ENTRIES_UUID
+            ? view.entries
+            : view.entriesByGroup.get(store.selectedGroupUuid) || [];
+    return rawEntries.map((entry) => view.entryItems.get(getObjectUuid(entry)));
 });
 
 function selectGroup(groupUuid) {
@@ -843,14 +888,15 @@ function confirmDelete() {
     const entry = entryToDelete.value;
     if (!store.db || !entry) return;
 
-    store.db.remove(entry);
+    if (isObjectInRecycleBin(store.db, entry)) store.db.move(entry, null);
+    else store.db.remove(entry);
     if (selectedEntryUuid.value === entryToDeleteUuid.value) {
         selectedEntryUuid.value = null;
     }
     entryToDeleteUuid.value = null;
     showDeleteConfirm.value = false;
     store.touchDb();
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function cancelDelete() {
@@ -858,9 +904,21 @@ function cancelDelete() {
     showDeleteConfirm.value = false;
 }
 
+function restoreEntry(entryUuid) {
+    const entry = findEntryByUuid(store.db, entryUuid);
+    if (!entry || !isObjectInRecycleBin(store.db, entry)) return;
+
+    const target = getRestoreTargetGroup(store.db, entry);
+    if (!target) return;
+    store.db.move(entry, target);
+    if (selectedEntryUuid.value === entryUuid) selectedEntryUuid.value = null;
+    store.touchDb();
+    saveDatabaseChanges({ debounce: true });
+}
+
 function onEntryUpdated() {
     store.touchDb();
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function closeDatabase({ forgetFile = false } = {}) {
@@ -972,12 +1030,20 @@ function confirmRenameGroup() {
     groupToRenameUuid.value = null;
     groupNameError.value = '';
     showRenameModal.value = false;
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function requestDeleteGroup(groupUuid) {
     const root = rootGroup.value;
-    if (!store.db || !groupUuid || groupUuid === getObjectUuid(root)) return;
+    const group = findGroupByUuid(store.db, groupUuid);
+    if (
+        !store.db ||
+        !group ||
+        groupUuid === getObjectUuid(root) ||
+        isRecycleBinGroup(store.db, group)
+    ) {
+        return;
+    }
 
     groupToDeleteUuid.value = groupUuid;
     showDeleteGroupConfirm.value = true;
@@ -999,11 +1065,23 @@ function deleteConfirmedGroup() {
         selectedEntryUuid.value = null;
     }
 
-    store.db.remove(group);
+    if (isObjectInRecycleBin(store.db, group)) store.db.move(group, null);
+    else store.db.remove(group);
     groupToDeleteUuid.value = null;
     showDeleteGroupConfirm.value = false;
     store.touchDb();
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
+}
+
+function restoreGroup(groupUuid) {
+    const group = findGroupByUuid(store.db, groupUuid);
+    if (!group || !isObjectInRecycleBin(store.db, group)) return;
+
+    const target = getRestoreTargetGroup(store.db, group);
+    if (!target) return;
+    store.db.move(group, target);
+    store.touchDb();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function moveGroup({ draggedUuid, targetUuid, position }) {
@@ -1012,7 +1090,7 @@ function moveGroup({ draggedUuid, targetUuid, position }) {
 
     store.db.move(plan.group, plan.toGroup, plan.atIndex);
     store.touchDb();
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function moveEntry({ entryUuid, targetGroupUuid }) {
@@ -1024,7 +1102,7 @@ function moveEntry({ entryUuid, targetGroupUuid }) {
     store.selectedGroupUuid = targetGroupUuid;
     selectedEntryUuid.value = entryUuid;
     store.touchDb();
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function requestEmptyRecycleBin() {
@@ -1055,7 +1133,7 @@ function emptyConfirmedRecycleBin() {
 
     showEmptyRecycleBinConfirm.value = false;
     store.touchDb();
-    saveDatabaseChanges();
+    saveDatabaseChanges({ debounce: true });
 }
 
 function cancelGroupAction() {
@@ -1366,7 +1444,9 @@ async function confirmDatabaseSettings({
     min-width: 150px;
     border-right: 1px solid var(--border-color);
     background: var(--card-bg);
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding: 0.75rem 0.5rem;
 }
 
@@ -1386,7 +1466,7 @@ async function confirmDatabaseSettings({
     min-width: 200px;
     border-right: 1px solid var(--border-color);
     background: var(--card-bg);
-    overflow-y: auto;
+    overflow: hidden;
     padding: 0.5rem;
 }
 

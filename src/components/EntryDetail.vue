@@ -51,6 +51,7 @@
                         <transition name="dropdown">
                             <div v-if="showMenu" class="dropdown-menu">
                                 <button
+                                    v-if="store.downloadSiteIcons"
                                     class="menu-item"
                                     @click="
                                         downloadIcon(entry);

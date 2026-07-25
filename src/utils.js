@@ -158,6 +158,30 @@ function passwordCharClasses(options = {}) {
 }
 
 export function estimatePasswordEntropy(options = {}) {
+    if (Object.hasOwn(options, 'password')) {
+        const password = String(options.password ?? '');
+        const characters = Array.from(password);
+        if (!characters.length) return 0;
+
+        let charsetSize = 0;
+        if (characters.some((char) => /[a-z]/.test(char))) charsetSize += 26;
+        if (characters.some((char) => /[A-Z]/.test(char))) charsetSize += 26;
+        if (characters.some((char) => /[0-9]/.test(char))) charsetSize += 10;
+        if (characters.some((char) => /[ -/:-@[-`{-~]/.test(char))) {
+            charsetSize += 33;
+        }
+
+        // There is no dependable fixed alphabet size for arbitrary Unicode.
+        // Count distinct non-ASCII characters to keep the estimate
+        // conservative instead of assuming a very large character pool.
+        const otherCharacters = new Set(
+            characters.filter((char) => !/[\x20-\x7e]/.test(char)),
+        );
+        charsetSize += otherCharacters.size;
+
+        return characters.length * Math.log2(charsetSize);
+    }
+
     const length = Math.max(0, Math.floor(options.length ?? 20));
     const charsetSize = passwordCharClasses(options).join('').length;
     if (!length || !charsetSize) return 0;

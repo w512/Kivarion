@@ -64,8 +64,10 @@ export function useEntryAttachments(entryRef, isMac) {
     async function openPreview(attachment) {
         if (isMac.value) {
             try {
-                // The Rust side writes the decrypted bytes into a private,
-                // owner-only temp dir and deletes them after the preview closes.
+                // The Rust side writes the decrypted bytes into a unique,
+                // owner-only temp dir and deletes it after the preview closes;
+                // stale dirs are removed at next launch. Quick Look itself may
+                // retain OS-managed preview cache data that the app cannot purge.
                 // Passing the name (not a path) keeps path traversal out of reach.
                 // Quick Look owns the screen until it is dismissed, so this must
                 // not read as the user leaving the app (auto-lock).

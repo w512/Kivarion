@@ -157,17 +157,29 @@ fn parse_lock_value(contents: &str, key: &str) -> Option<u128> {
 }
 
 #[cfg(unix)]
+fn process_exists_from_kill(result: i32, errno: Option<i32>) -> bool {
+    result == 0 || !matches!(errno, Some(libc::ESRCH))
+}
+
+#[cfg(unix)]
 fn process_is_running(pid: u32) -> bool {
     if pid == std::process::id() {
         return true;
     }
 
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // Signal 0 performs only the existence/permission check and does not fork.
+    // EPERM means the process exists but belongs to another user; only ESRCH
+    // proves it is gone. Unknown errors are treated conservatively as live.
+    let result = unsafe { libc::kill(pid, 0) };
+    process_exists_from_kill(
+        result,
+        (result != 0)
+            .then(|| std::io::Error::last_os_error().raw_os_error())
+            .flatten(),
+    )
 }
 
 #[cfg(windows)]
@@ -493,37 +505,132 @@ fn sanitize_file_name(name: &str) -> String {
     }
 }
 
-/// Write the decrypted bytes into a private, owner-only (0700) temp directory,
-/// preview them, and delete the file as soon as the preview window closes.
-/// Blocking from start to finish — always call it off the main thread.
 #[cfg(target_os = "macos")]
-fn preview_with_quick_look(file_name: &str, data: &[u8]) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    use std::process::Command;
+const QUICK_LOOK_TEMP_DIR: &str = "Kivarion-quicklook";
 
-    let dir = std::env::temp_dir().join("Kivarion-quicklook");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    // Restrict the directory to the current user only.
-    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+#[cfg(target_os = "macos")]
+static NEXT_QUICK_LOOK_DIR_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(target_os = "macos")]
+fn quick_look_temp_root() -> std::path::PathBuf {
+    std::env::temp_dir().join(QUICK_LOOK_TEMP_DIR)
+}
+
+/// Remove decrypted previews left behind if an earlier process crashed or was
+/// killed before `qlmanage` returned.
+#[cfg(target_os = "macos")]
+fn clear_quick_look_temp_dir_at(root: &std::path::Path) -> Result<(), String> {
+    let metadata = match std::fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    } else {
+        std::fs::remove_file(root).map_err(|error| error.to_string())
+    }
+}
+
+/// RAII cleanup ensures every preview's private directory is removed on all
+/// normal and error return paths after it has been created.
+#[cfg(target_os = "macos")]
+struct QuickLookTempDir {
+    path: std::path::PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl QuickLookTempDir {
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for QuickLookTempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Create a separate owner-only directory for each preview so equal attachment
+/// names and concurrent Quick Look windows can never share a decrypted file.
+#[cfg(target_os = "macos")]
+fn create_quick_look_temp_dir_at(root: &std::path::Path) -> Result<QuickLookTempDir, String> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    use std::sync::atomic::Ordering;
+
+    let mut root_builder = std::fs::DirBuilder::new();
+    root_builder.recursive(true).mode(0o700);
+    root_builder
+        .create(root)
+        .map_err(|error| error.to_string())?;
+    let root_metadata = std::fs::symlink_metadata(root).map_err(|error| error.to_string())?;
+    if !root_metadata.is_dir() || root_metadata.file_type().is_symlink() {
+        return Err("Quick Look temporary path is not a directory".to_string());
+    }
+    std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| error.to_string())?;
+
+    for _ in 0..100 {
+        let id = NEXT_QUICK_LOOK_DIR_ID.fetch_add(1, Ordering::Relaxed);
+        let path = root.join(format!("preview-{}-{id}", std::process::id()));
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(&path) {
+            Ok(()) => return Ok(QuickLookTempDir { path }),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Err("Could not create a unique Quick Look temporary directory".to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn write_quick_look_attachment(
+    dir: &std::path::Path,
+    file_name: &str,
+    data: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
 
     let path = dir.join(sanitize_file_name(file_name));
-    std::fs::write(&path, data).map_err(|e| e.to_string())?;
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| error.to_string())?;
+    file.write_all(data).map_err(|error| error.to_string())?;
+    Ok(path)
+}
 
-    // qlmanage -p blocks until the preview window is closed.
+/// Write the decrypted bytes into a unique private, owner-only (0700) temp
+/// directory, preview them, and delete the whole directory as soon as the
+/// preview window closes. Blocking from start to finish — always call it off
+/// the main thread.
+#[cfg(target_os = "macos")]
+fn preview_with_quick_look(file_name: &str, data: &[u8]) -> Result<(), String> {
+    use std::process::Command;
+
+    let dir = create_quick_look_temp_dir_at(&quick_look_temp_root())?;
+    let path = write_quick_look_attachment(dir.path(), file_name, data)?;
+
+    // qlmanage -p blocks until the preview window is closed. `dir` stays alive
+    // for that whole call and removes the decrypted file when it is dropped.
     let _ = Command::new("qlmanage").arg("-p").arg(&path).status();
-
-    // Remove the decrypted file as soon as the window closes.
-    let _ = std::fs::remove_file(&path);
     Ok(())
 }
 
 /// Preview a decrypted attachment via macOS Quick Look.
 ///
 /// The bytes are written by the Rust side (never exposed through the JS fs
-/// scope) into a private, owner-only temp directory, previewed, and deleted
-/// immediately after the preview window closes. The attachment bytes are the
-/// raw IPC body; its name comes in a header.
+/// scope) into a unique private, owner-only temp directory, previewed, and
+/// deleted immediately after the preview window closes. The attachment bytes
+/// are the raw IPC body; its name comes in a header.
 #[tauri::command]
 async fn quick_look_attachment(request: tauri::ipc::Request<'_>) -> Result<(), String> {
     let file_name = arg(&request, "file-name").ok_or("Missing attachment name")?;
@@ -828,6 +935,14 @@ mod tests {
         assert_ne!(worker, caller);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unix_pid_check_treats_eperm_as_live_and_esrch_as_dead() {
+        assert!(process_exists_from_kill(0, None));
+        assert!(process_exists_from_kill(-1, Some(libc::EPERM)));
+        assert!(!process_exists_from_kill(-1, Some(libc::ESRCH)));
+    }
+
     #[test]
     fn with_suffix_appends_without_replacing_extension() {
         let path = std::path::Path::new("/tmp/vault.kdbx");
@@ -986,6 +1101,55 @@ mod tests {
         assert_eq!(sanitize_file_name("../secret.txt"), "secret.txt");
         assert_eq!(sanitize_file_name("dir\\evil\0name.txt"), "direvilname.txt");
         assert_eq!(sanitize_file_name(""), "attachment");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quick_look_startup_cleanup_removes_stale_previews() {
+        let temp = TempDir::new();
+        let root = temp.path().join("Kivarion-quicklook");
+        let stale_dir = root.join("preview-from-crashed-process");
+        std::fs::create_dir_all(&stale_dir).unwrap();
+        std::fs::write(stale_dir.join("secret.txt"), b"decrypted").unwrap();
+
+        clear_quick_look_temp_dir_at(&root).unwrap();
+
+        assert!(!root.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quick_look_uses_unique_private_directories_and_files() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new();
+        let root = temp.path().join("Kivarion-quicklook");
+        let first = create_quick_look_temp_dir_at(&root).unwrap();
+        let second = create_quick_look_temp_dir_at(&root).unwrap();
+        let first_path = first.path().to_path_buf();
+
+        assert_ne!(first.path(), second.path());
+        assert_eq!(
+            std::fs::metadata(first.path())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        let attachment =
+            write_quick_look_attachment(first.path(), "../secret.txt", b"decrypted").unwrap();
+        assert_eq!(attachment.parent(), Some(first.path()));
+        assert_eq!(read_bytes(&attachment), b"decrypted");
+        assert_eq!(
+            std::fs::metadata(&attachment).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        drop(first);
+        assert!(!first_path.exists());
+        assert!(second.path().exists());
     }
 
     // --- Raw-byte IPC contract --------------------------------------------
@@ -1217,6 +1381,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
+
+            #[cfg(target_os = "macos")]
+            if let Err(error) = clear_quick_look_temp_dir_at(&quick_look_temp_root()) {
+                eprintln!("Could not clear stale Quick Look previews: {error}");
+            }
 
             // Where the remembered database / key files live. Deliberately not
             // in the webview's localStorage: a grant is derived from it.

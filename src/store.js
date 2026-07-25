@@ -56,6 +56,9 @@ export const useStore = defineStore('main', () => {
     const lockOnFocusLoss = ref(
         localStorage.getItem('kivarion-lock-on-focus-loss') === 'true',
     );
+    const downloadSiteIcons = ref(
+        localStorage.getItem('kivarion-download-site-icons') !== 'false',
+    );
 
     // Backup policy: keep rotating `.bak` copies on each save.
     const backupEnabled = ref(
@@ -123,6 +126,13 @@ export const useStore = defineStore('main', () => {
         );
     });
 
+    watch(downloadSiteIcons, (newVal) => {
+        localStorage.setItem(
+            'kivarion-download-site-icons',
+            newVal ? 'true' : 'false',
+        );
+    });
+
     watch(backupEnabled, (newVal) => {
         localStorage.setItem(
             'kivarion-backup-enabled',
@@ -151,6 +161,7 @@ export const useStore = defineStore('main', () => {
         clipboardTimeout,
         autoLockTimeout,
         lockOnFocusLoss,
+        downloadSiteIcons,
         backupEnabled,
         backupDepth,
     };

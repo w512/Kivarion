@@ -1,4 +1,5 @@
 import {
+    afterAll,
     afterEach,
     beforeEach,
     describe,
@@ -11,6 +12,24 @@ import { reactive } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 
 globalThis.__KIVARION_ICON_DEBOUNCE_MS__ = 0;
+globalThis.__KIVARION_ICON_CACHE_MAX_ENTRIES__ = 2;
+
+const originalWindowDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    'window',
+);
+const iconEventListeners = new Map();
+Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+        addEventListener(type, listener) {
+            iconEventListeners.set(type, listener);
+        },
+        dispatchEvent(event) {
+            iconEventListeners.get(event.type)?.(event);
+        },
+    },
+});
 
 let currentStore;
 let fetchMock;
@@ -24,7 +43,8 @@ mock.module('@tauri-apps/plugin-http', () => ({
     fetch: (...args) => fetchMock(...args),
 }));
 
-const { useEntryIcons } = await import('../src/composables/useEntryIcons.js');
+const { clearEntryIconCaches, useEntryIcons } =
+    await import('../src/composables/useEntryIcons.js');
 
 function response({
     ok = true,
@@ -61,6 +81,7 @@ function makeEntry(url = 'https://example.com') {
 function makeStore(entries) {
     const root = { entries, groups: [] };
     currentStore = reactive({
+        downloadSiteIcons: true,
         db: {
             meta: { customIcons: new Map() },
             getDefaultGroup: () => root,
@@ -75,6 +96,7 @@ async function tick() {
 }
 
 beforeEach(() => {
+    clearEntryIconCaches();
     fetchMock = mock(async () => response());
     currentStore = null;
     consoleErrorSpy = spyOn(console, 'error').mockImplementation(() => {});
@@ -82,6 +104,15 @@ beforeEach(() => {
 
 afterEach(() => {
     consoleErrorSpy?.mockRestore();
+});
+
+afterAll(() => {
+    if (originalWindowDescriptor) {
+        Object.defineProperty(globalThis, 'window', originalWindowDescriptor);
+    } else {
+        delete globalThis.window;
+    }
+    delete globalThis.__KIVARION_ICON_CACHE_MAX_ENTRIES__;
 });
 
 describe('useEntryIcons', () => {
@@ -100,6 +131,17 @@ describe('useEntryIcons', () => {
         expect(store.db.meta.customIcons.size).toBe(1);
         expect(entry.times.update).toHaveBeenCalledTimes(1);
         expect(emit).toHaveBeenCalledWith('updated');
+    });
+
+    test('does not contact icon.horse when website icons are disabled', async () => {
+        const entry = makeEntry();
+        const store = makeStore([entry]);
+        store.downloadSiteIcons = false;
+
+        const { downloadIcon } = useEntryIcons(mock(() => {}));
+        expect(await downloadIcon(entry)).toBe(false);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(entry.customIcon).toBeUndefined();
     });
 
     test('rejects non-image/png responses without mutating the entry', async () => {
@@ -178,6 +220,39 @@ describe('useEntryIcons', () => {
         expect(changed).toBe(true);
         expect(store.db.meta.customIcons.has(oldIcon.id)).toBe(true);
         expect(store.db.meta.customIcons.size).toBe(2);
+    });
+
+    test('clears the icon cache before the database locks', async () => {
+        const entries = [
+            makeEntry('https://clear.example/a'),
+            makeEntry('https://clear.example/b'),
+            makeEntry('https://clear.example/c'),
+        ];
+        makeStore(entries);
+        const { downloadIcon } = useEntryIcons(mock(() => {}));
+
+        await downloadIcon(entries[0]);
+        await downloadIcon(entries[1]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        window.dispatchEvent({ type: 'kivarion:before-lock' });
+        await downloadIcon(entries[2]);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    test('evicts the least recently used icon when the cache is full', async () => {
+        const entries = [
+            makeEntry('https://first-cache.example/a'),
+            makeEntry('https://second-cache.example'),
+            makeEntry('https://third-cache.example'),
+            makeEntry('https://first-cache.example/b'),
+        ];
+        makeStore(entries);
+        const { downloadIcon } = useEntryIcons(mock(() => {}));
+
+        for (const entry of entries) await downloadIcon(entry);
+
+        expect(fetchMock).toHaveBeenCalledTimes(4);
     });
 
     test('coalesces concurrent fetches for the same domain', async () => {

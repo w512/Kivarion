@@ -8,6 +8,7 @@ version = "0.8.1"
 dependencies = [
  "block2",
  "core-foundation 0.10.1",
+ "libc",
  "objc2",
  "objc2-foundation",
  "objc2-local-authentication",

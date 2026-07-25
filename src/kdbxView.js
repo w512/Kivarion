@@ -1,10 +1,13 @@
 import * as kdbxweb from 'kdbxweb';
-import { getField } from './utils.js';
+import { getField, isProtectedValue, STANDARD_FIELDS } from './utils.js';
 
 export const ALL_ENTRIES_UUID = 'all';
 
 export function getObjectUuid(obj) {
-    return typeof obj?.uuid === 'string' ? obj.uuid : obj?.uuid?.id || null;
+    if (typeof obj === 'string') return obj;
+    return typeof obj?.uuid === 'string'
+        ? obj.uuid
+        : obj?.uuid?.id || obj?.id || null;
 }
 
 export function getDefaultGroup(db) {
@@ -171,37 +174,170 @@ export function getRecycleBinGroup(db) {
     );
 }
 
-export function toGroupTreeNode(group, db) {
+export function isObjectInRecycleBin(db, object) {
+    const bin = getRecycleBinGroup(db);
+    if (!bin || !object) return false;
+
+    const group = object.entries && object.groups ? object : object.parentGroup;
+    return !!group && groupContainsGroupUuid(bin, getObjectUuid(group));
+}
+
+/**
+ * Whether `Kdbx.remove` would move the object to the Recycle Bin instead of
+ * deleting it for good. Mirrors kdbxweb's own condition exactly — it needs the
+ * setting *and* a `recycleBinUuid` in the metadata — so the confirmation never
+ * promises a restorable delete that the library then performs permanently.
+ */
+export function deleteMovesToRecycleBin(db, object) {
+    if (!db?.meta?.recycleBinEnabled || !db.meta.recycleBinUuid) return false;
+    return !isObjectInRecycleBin(db, object);
+}
+
+export function getRestoreTargetGroup(db, object) {
+    const root = getDefaultGroup(db);
+    if (!root || !object) return null;
+
+    const previousUuid = getObjectUuid(object.previousParentGroup);
+    const previous = findGroupByUuid(db, previousUuid);
+    const bin = getRecycleBinGroup(db);
+
+    if (
+        !previous ||
+        (bin && groupContainsGroupUuid(bin, getObjectUuid(previous))) ||
+        (object.groups &&
+            groupContainsGroupUuid(object, getObjectUuid(previous)))
+    ) {
+        return root;
+    }
+    return previous;
+}
+
+export function toGroupTreeNode(group, db, inRecycleBin = false) {
+    const isRecycleBin = isRecycleBinGroup(db, group);
+    const isInRecycleBin = inRecycleBin || isRecycleBin;
+    const children = (group?.groups || []).map((child) =>
+        toGroupTreeNode(child, db, isInRecycleBin),
+    );
+    const childEntryCount = children.reduce(
+        (count, child) =>
+            count +
+            (!isInRecycleBin && child.isRecycleBin
+                ? 0
+                : child.recursiveEntryCount),
+        0,
+    );
+
     return {
         uuid: getObjectUuid(group),
         name: group?.name || '',
         entryCount: group?.entries?.length || 0,
-        isRecycleBin: isRecycleBinGroup(db, group),
-        children: (group?.groups || []).map((child) =>
-            toGroupTreeNode(child, db),
-        ),
+        recursiveEntryCount: (group?.entries?.length || 0) + childEntryCount,
+        isRecycleBin,
+        isInRecycleBin,
+        children,
     };
 }
 
-export function toEntryListItem(entry, db) {
+export function toEntryListItem(entry, db, iconDataUrls) {
     return {
         uuid: getObjectUuid(entry),
         title: getField(entry, 'Title') || 'No title',
         createdAt: entry?.times?.creationTime || new Date(0),
         modifiedAt: entry?.times?.lastModTime || new Date(0),
-        iconSrc: getEntryIconSrc(entry, db),
+        iconSrc: getEntryIconSrc(entry, db, iconDataUrls),
     };
 }
 
-function getEntryIconSrc(entry, db) {
+function getEntryIconSrc(entry, db, iconDataUrls) {
     if (!entry?.customIcon || !db?.meta?.customIcons) return null;
 
     const iconId = entry.customIcon.id || entry.customIcon;
+    if (iconDataUrls?.has(iconId)) return iconDataUrls.get(iconId);
+
     const customIcon = db.meta.customIcons.get(iconId);
     if (!customIcon?.data) return null;
 
     const b64 = kdbxweb.ByteUtils.bytesToBase64(
         new Uint8Array(customIcon.data),
     );
-    return `data:image/png;base64,${b64}`;
+    const dataUrl = `data:image/png;base64,${b64}`;
+    iconDataUrls?.set(iconId, dataUrl);
+    return dataUrl;
+}
+
+function entrySearchText(entry) {
+    if (!entry?.fields) return '';
+
+    const parts = [];
+    for (const [key, value] of entry.fields) {
+        // Passwords and protected custom fields must never be copied into the
+        // plaintext index, even transiently.
+        if (isProtectedValue(value) || typeof value !== 'string') continue;
+        if (!STANDARD_FIELDS.includes(key)) parts.push(key);
+        parts.push(value);
+    }
+    return parts.join('\n').toLocaleLowerCase();
+}
+
+/**
+ * Build all immutable list/tree/search view data in one traversal. The caller
+ * rebuilds this snapshot only when dbVersion changes, instead of recursively
+ * walking the KDBX graph once for counts, again for the list, and once per
+ * search keystroke.
+ */
+export function buildDatabaseView(db, iconDataUrls = new Map()) {
+    const entries = [];
+    const entriesByGroup = new Map();
+    const entryItems = new Map();
+    const searchIndex = [];
+
+    function visit(group, inRecycleBin = false) {
+        const isRecycleBin = isRecycleBinGroup(db, group);
+        const isInRecycleBin = inRecycleBin || isRecycleBin;
+        const ownEntries = group?.entries || [];
+        entriesByGroup.set(getObjectUuid(group), ownEntries);
+
+        for (const entry of ownEntries) {
+            const uuid = getObjectUuid(entry);
+            entryItems.set(uuid, toEntryListItem(entry, db, iconDataUrls));
+            if (!isInRecycleBin) {
+                entries.push(entry);
+                searchIndex.push({ entry, text: entrySearchText(entry) });
+            }
+        }
+
+        const children = (group?.groups || []).map((child) =>
+            visit(child, isInRecycleBin),
+        );
+        const recursiveEntryCount =
+            ownEntries.length +
+            children.reduce(
+                (count, child) =>
+                    count +
+                    (!isInRecycleBin && child.isRecycleBin
+                        ? 0
+                        : child.recursiveEntryCount),
+                0,
+            );
+
+        return {
+            uuid: getObjectUuid(group),
+            name: group?.name || '',
+            entryCount: ownEntries.length,
+            recursiveEntryCount,
+            isRecycleBin,
+            isInRecycleBin,
+            children,
+        };
+    }
+
+    const root = getDefaultGroup(db);
+    const groupTree = root ? [visit(root)] : [];
+    return {
+        entries,
+        entriesByGroup,
+        entryItems,
+        searchIndex,
+        groupTree,
+    };
 }

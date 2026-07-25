@@ -1,60 +1,42 @@
 <template>
-    <div class="group-tree" @keydown.capture="onTreeKeydown">
-        <!-- Virtual "All Entries" group -->
-        <GroupNode
-            v-if="depth === 0"
-            :group="{
-                uuid: 'all',
-                name: 'All Entries',
-                entryCount: allEntriesCount,
-                children: [],
-            }"
-            :selected-group-uuid="selectedGroupUuid"
-            :all-entries-count="allEntriesCount"
-            :refresh-key="refreshKey"
-            :depth="0"
-            @select="emit('select', $event)"
-        />
-
-        <!-- Regular groups -->
-        <div v-for="group in groups" :key="group.uuid">
-            <GroupNode
-                :group="group"
-                :selected-group-uuid="selectedGroupUuid"
-                :is-collapsed="isCollapsed(group.uuid)"
-                :refresh-key="refreshKey"
-                :depth="depth"
-                @select="emit('select', $event)"
-                @toggle-collapse="toggleCollapse"
-                @add-group="handleAddGroup"
-                @rename-group="emit('rename-group', $event)"
-                @delete-group="emit('delete-group', $event)"
-                @empty-recycle-bin="emit('empty-recycle-bin', $event)"
-                @move-group="handleMoveGroup"
-                @move-entry="handleMoveEntry"
-            />
-
-            <GroupTree
-                v-if="group.children?.length && !isCollapsed(group.uuid)"
-                :groups="group.children"
-                :selected-group-uuid="selectedGroupUuid"
-                :all-entries-count="allEntriesCount"
-                :refresh-key="refreshKey"
-                :collapsed-groups="collapsedGroups"
-                :depth="depth + 1"
-                @select="(uuid) => emit('select', uuid)"
-                @add-group="handleAddGroup"
-                @rename-group="(uuid) => emit('rename-group', uuid)"
-                @delete-group="(uuid) => emit('delete-group', uuid)"
-                @empty-recycle-bin="(uuid) => emit('empty-recycle-bin', uuid)"
-                @move-group="handleMoveGroup"
-                @move-entry="handleMoveEntry"
-            />
+    <div
+        ref="scrollRef"
+        class="group-tree"
+        role="tree"
+        @scroll="updateViewport"
+        @keydown.capture="onTreeKeydown"
+    >
+        <div class="tree-spacer" :style="{ height: totalHeight + 'px' }">
+            <div
+                v-for="row in visibleRows"
+                :key="row.group.uuid"
+                class="group-position"
+                :style="{ transform: `translateY(${row.top}px)` }"
+            >
+                <GroupNode
+                    :group="row.group"
+                    :selected-group-uuid="selectedGroupUuid"
+                    :is-collapsed="isCollapsed(row.group.uuid)"
+                    :all-entries-count="allEntriesCount"
+                    :refresh-key="refreshKey"
+                    :depth="row.depth"
+                    @select="emit('select', $event)"
+                    @toggle-collapse="toggleCollapse"
+                    @add-group="handleAddGroup"
+                    @rename-group="emit('rename-group', $event)"
+                    @delete-group="emit('delete-group', $event)"
+                    @restore-group="emit('restore-group', $event)"
+                    @empty-recycle-bin="emit('empty-recycle-bin', $event)"
+                    @move-group="handleMoveGroup"
+                    @move-entry="emit('move-entry', $event)"
+                />
+            </div>
         </div>
     </div>
 </template>
 
 <script setup>
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import GroupNode from './GroupNode.vue';
 
 const props = defineProps({
@@ -71,10 +53,61 @@ const emit = defineEmits([
     'add-group',
     'rename-group',
     'delete-group',
+    'restore-group',
     'empty-recycle-bin',
     'move-group',
     'move-entry',
 ]);
+
+const ROW_HEIGHT = 37;
+const OVERSCAN = 8;
+const scrollRef = ref(null);
+const scrollTop = ref(0);
+const viewportHeight = ref(600);
+let resizeObserver = null;
+
+const allEntriesGroup = computed(() => ({
+    uuid: 'all',
+    name: 'All Entries',
+    entryCount: props.allEntriesCount,
+    recursiveEntryCount: props.allEntriesCount,
+    children: [],
+}));
+
+// Flatten only expanded branches. Besides making virtualization straightforward,
+// this removes one Vue component instance per recursion level/node.
+const flattenedGroups = computed(() => {
+    props.refreshKey;
+    const rows = [];
+    if (props.depth === 0) {
+        rows.push({ group: allEntriesGroup.value, depth: 0 });
+    }
+
+    function append(groups, depth) {
+        for (const group of groups) {
+            rows.push({ group, depth });
+            if (group.children?.length && !isCollapsed(group.uuid)) {
+                append(group.children, depth + 1);
+            }
+        }
+    }
+
+    append(props.groups, props.depth);
+    return rows;
+});
+
+const totalHeight = computed(() => flattenedGroups.value.length * ROW_HEIGHT);
+const visibleRows = computed(() => {
+    const start = Math.max(
+        0,
+        Math.floor(scrollTop.value / ROW_HEIGHT) - OVERSCAN,
+    );
+    const count = Math.ceil(viewportHeight.value / ROW_HEIGHT) + OVERSCAN * 2;
+    return flattenedGroups.value.slice(start, start + count).map((row, i) => ({
+        ...row,
+        top: (start + i) * ROW_HEIGHT,
+    }));
+});
 
 function isCollapsed(uuid) {
     return !!props.collapsedGroups[uuid];
@@ -85,46 +118,99 @@ function toggleCollapse(uuid) {
 }
 
 function handleAddGroup(uuid) {
-    // If a subgroup is added to a collapsed parent, expand it immediately so
-    // the newly-created child is visible instead of appearing as if nothing happened.
     props.collapsedGroups[uuid] = false;
     emit('add-group', uuid);
 }
 
 function handleMoveGroup(payload) {
-    // When nesting a group into a collapsed target, expand it so the moved group
-    // is visible instead of seeming to vanish.
     if (payload?.position === 'inside' && payload.targetUuid) {
         props.collapsedGroups[payload.targetUuid] = false;
     }
     emit('move-group', payload);
 }
 
-function handleMoveEntry(payload) {
-    emit('move-entry', payload);
+function updateViewport() {
+    const element = scrollRef.value;
+    if (!element) return;
+    scrollTop.value = element.scrollTop || 0;
+    viewportHeight.value = element.clientHeight || 600;
+}
+
+function scrollRowIntoView(index) {
+    const element = scrollRef.value;
+    if (!element || index < 0) return;
+    const top = index * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < element.scrollTop) element.scrollTop = top;
+    else if (bottom > element.scrollTop + element.clientHeight) {
+        element.scrollTop = bottom - element.clientHeight;
+    }
+    updateViewport();
+}
+
+async function focusGroup(uuid) {
+    await nextTick();
+    const nodes =
+        scrollRef.value?.querySelectorAll?.('[data-group-uuid]') || [];
+    Array.from(nodes)
+        .find((node) => node.dataset.groupUuid === uuid)
+        ?.focus();
 }
 
 function onTreeKeydown(event) {
     if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
-    const nodes = Array.from(
-        event.currentTarget.querySelectorAll('.group-node[tabindex="0"]'),
+    const uuid =
+        event.target?.closest?.('[data-group-uuid]')?.dataset?.groupUuid;
+    const index = flattenedGroups.value.findIndex(
+        (row) => row.group.uuid === uuid,
     );
-    const index = nodes.indexOf(document.activeElement);
     if (index < 0) return;
 
     event.preventDefault();
     const nextIndex =
         event.key === 'ArrowDown'
-            ? Math.min(index + 1, nodes.length - 1)
+            ? Math.min(index + 1, flattenedGroups.value.length - 1)
             : Math.max(index - 1, 0);
-    nodes[nextIndex]?.focus();
+    const next = flattenedGroups.value[nextIndex];
+    scrollRowIntoView(nextIndex);
+    if (next) void focusGroup(next.group.uuid);
 }
+
+onMounted(() => {
+    updateViewport();
+    if (typeof ResizeObserver !== 'undefined') {
+        resizeObserver = new ResizeObserver(updateViewport);
+        if (scrollRef.value) resizeObserver.observe(scrollRef.value);
+    }
+});
+
+onUnmounted(() => resizeObserver?.disconnect());
 </script>
 
 <style scoped>
 .group-tree {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.tree-spacer {
+    position: relative;
+    width: 100%;
+}
+
+.group-position {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 37px;
+    padding-bottom: 1px;
+    box-sizing: border-box;
+}
+
+.group-position :deep(.group-node) {
+    height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+    box-sizing: border-box;
 }
 </style>

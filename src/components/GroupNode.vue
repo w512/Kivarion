@@ -15,6 +15,7 @@
         tabindex="0"
         :aria-selected="isSelected"
         :aria-expanded="hasChildren ? !isCollapsed : undefined"
+        :data-group-uuid="group.uuid"
         @click="$emit('select', group.uuid)"
         @contextmenu.prevent="onRightClick"
         @keydown.enter.prevent="$emit('select', group.uuid)"
@@ -76,7 +77,31 @@
                 }"
                 @click.stop
             >
-                <div class="menu-item" @click="handleAction('add')">
+                <div
+                    v-if="isInRecycleBin"
+                    class="menu-item restore"
+                    @click="handleAction('restore')"
+                >
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                        <path d="M3 3v5h5" />
+                    </svg>
+                    Restore Group
+                </div>
+                <div
+                    v-if="!isRecycleBin && !isInRecycleBin"
+                    class="menu-item"
+                    @click="handleAction('add')"
+                >
                     <svg
                         width="14"
                         height="14"
@@ -112,7 +137,11 @@
                     </svg>
                     Rename
                 </div>
-                <div class="menu-item delete" @click="handleAction('delete')">
+                <div
+                    v-if="!isRoot && !isRecycleBin"
+                    class="menu-item delete"
+                    @click="handleAction('delete')"
+                >
                     <svg
                         width="14"
                         height="14"
@@ -176,6 +205,7 @@ const emit = defineEmits([
     'add-group',
     'rename-group',
     'delete-group',
+    'restore-group',
     'empty-recycle-bin',
     'move-group',
     'move-entry',
@@ -183,6 +213,9 @@ const emit = defineEmits([
 
 const isAllEntries = computed(() => props.group.uuid === 'all');
 const isRecycleBin = computed(() => props.group.isRecycleBin === true);
+const isInRecycleBin = computed(
+    () => props.group.isInRecycleBin === true && !isRecycleBin.value,
+);
 const isRoot = computed(() => props.depth === 0 && !isAllEntries.value);
 const isSelected = computed(() => props.group.uuid === props.selectedGroupUuid);
 const hasChildren = computed(() => {
@@ -197,7 +230,7 @@ const entryCount = computed(() => {
     props.refreshKey;
     return isAllEntries.value
         ? props.allEntriesCount
-        : props.group.entryCount || 0;
+        : (props.group.recursiveEntryCount ?? props.group.entryCount ?? 0);
 });
 
 const contextMenu = ref({
@@ -238,6 +271,7 @@ function handleAction(action) {
     if (action === 'add') emit('add-group', props.group.uuid);
     else if (action === 'rename') emit('rename-group', props.group.uuid);
     else if (action === 'delete') emit('delete-group', props.group.uuid);
+    else if (action === 'restore') emit('restore-group', props.group.uuid);
     else if (action === 'empty') emit('empty-recycle-bin', props.group.uuid);
     contextMenu.value.visible = false;
 }
@@ -253,7 +287,9 @@ const {
     isInvalidTarget,
 } = useGroupDragDrop();
 
-const isDraggable = computed(() => !isAllEntries.value && !isRoot.value);
+const isDraggable = computed(
+    () => !isAllEntries.value && !isRoot.value && !isRecycleBin.value,
+);
 const isDragging = computed(() => draggingUuid.value === props.group.uuid);
 const entryDropTarget = ref(false);
 const dropClass = computed(() => {
@@ -492,6 +528,13 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
 }
 .menu-item:hover svg {
     color: var(--text-primary);
+}
+.menu-item.restore:hover {
+    color: var(--accent-color);
+    background: rgba(99, 102, 241, 0.1);
+}
+.menu-item.restore:hover svg {
+    color: var(--accent-color);
 }
 .menu-item.delete:hover {
     color: var(--error-color);
