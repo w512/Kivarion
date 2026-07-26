@@ -8,6 +8,12 @@ import { withSystemInteraction } from './useSystemInteraction.js';
 
 const MAX_ATTACHMENT_NAME_LENGTH = 255;
 
+// An attachment lives inside the `.kdbx`, so its cost is not the one-off read:
+// every later save re-encrypts it along with the rest of the vault, the backup
+// rotation copies it, and rename/delete keep a second copy in entry history.
+// Above this size the user is told that before the file is read at all.
+export const LARGE_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+
 function hasInvalidAttachmentNameCharacters(name) {
     return (
         name.includes('/') ||
@@ -138,6 +144,8 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
     const isAddingAttachment = ref(false);
     const attachmentError = ref('');
     const attachmentVersion = ref(0);
+    const pendingLargeAttachment = ref(null);
+    let resolveLargeAttachment = null;
 
     const attachments = computed(() => {
         // KDBX maps are not reactive. dbVersion covers mutations made anywhere
@@ -156,6 +164,10 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
         }
         return list;
     });
+
+    const totalAttachmentsSize = computed(() =>
+        attachments.value.reduce((total, att) => total + att.size, 0),
+    );
 
     watch(
         attachments,
@@ -177,12 +189,45 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
         { immediate: true },
     );
 
+    // A pending size confirmation must never outlive what it was asked about:
+    // the entry can change and auto-lock can close the database while the modal
+    // is open, and an unanswered promise would keep addAttachment hanging.
+    function answerLargeAttachment(accepted) {
+        const resolve = resolveLargeAttachment;
+        resolveLargeAttachment = null;
+        pendingLargeAttachment.value = null;
+        resolve?.(accepted);
+    }
+
+    function confirmLargeAttachment() {
+        answerLargeAttachment(true);
+    }
+
+    function cancelLargeAttachment() {
+        answerLargeAttachment(false);
+    }
+
+    watch([entryRef, () => store.db], () => {
+        if (resolveLargeAttachment) answerLargeAttachment(false);
+    });
+
     onUnmounted(() => {
+        if (resolveLargeAttachment) answerLargeAttachment(false);
         for (const url of attachmentThumbnails.value.values()) {
             URL.revokeObjectURL(url);
         }
         if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
     });
+
+    function askAboutLargeAttachment(selection) {
+        return new Promise((resolve) => {
+            resolveLargeAttachment = resolve;
+            pendingLargeAttachment.value = {
+                name: selection.fileName,
+                size: selection.size,
+            };
+        });
+    }
 
     async function addAttachment() {
         if (isAddingAttachment.value || !store.db || !entryRef.value) return;
@@ -193,24 +238,32 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
         isAddingAttachment.value = true;
 
         try {
-            const picked = await withSystemInteraction(async () => {
-                const selection = await invoke('pick_attachment_file');
-                if (!selection) return null;
-                const bytes = await invoke('read_database', {
-                    path: selection.path,
-                });
-                return { selection, bytes };
-            });
-            if (!picked) return;
+            // Only the picker takes the screen away from the app; the read and
+            // the confirmation below run with the window focused again.
+            const selection = await withSystemInteraction(() =>
+                invoke('pick_attachment_file'),
+            );
+            if (!selection) return;
             if (store.db !== db || entryRef.value !== entry) return;
 
-            const data = new Uint8Array(toExactArrayBuffer(picked.bytes));
+            if (selection.size > LARGE_ATTACHMENT_SIZE) {
+                const accepted = await askAboutLargeAttachment(selection);
+                if (!accepted) return;
+                if (store.db !== db || entryRef.value !== entry) return;
+            }
+
+            const bytes = await invoke('read_database', {
+                path: selection.path,
+            });
+            if (store.db !== db || entryRef.value !== entry) return;
+
+            const data = new Uint8Array(toExactArrayBuffer(bytes));
             const binary = await db.createBinary(data);
             if (store.db !== db || entryRef.value !== entry) return;
 
             const result = addEntryAttachment(
                 entry,
-                picked.selection.fileName,
+                selection.fileName,
                 binary,
             );
             if (!result.ok) throw new Error(result.error);
@@ -220,6 +273,7 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
             console.error('Failed to add attachment:', error);
             attachmentError.value = 'Could not add this attachment.';
         } finally {
+            if (resolveLargeAttachment) answerLargeAttachment(false);
             isAddingAttachment.value = false;
         }
     }
@@ -321,11 +375,15 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
     return {
         attachments,
         attachmentThumbnails,
+        totalAttachmentsSize,
         showPreview,
         previewUrl,
         previewName,
         isAddingAttachment,
         attachmentError,
+        pendingLargeAttachment,
+        confirmLargeAttachment,
+        cancelLargeAttachment,
         addAttachment,
         renameAttachment,
         deleteAttachment,

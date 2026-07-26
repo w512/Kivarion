@@ -16,7 +16,7 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 - **Structure management** — create, rename, and delete groups and entries.
 - **Recycle Bin** — deleted groups and entries go to the KeePass Recycle Bin and can be restored to where they came from; deleting them again (or emptying the bin) is permanent.
 - **Global search** — the search field in the top bar filters entries across the entire database, regardless of the selected group. It searches the **Title**, **UserName**, **URL**, **Notes**, and **custom fields** by both name and value. Matching is case-insensitive and substring-based. Protected fields, including passwords and hidden custom fields, are excluded from search.
-- **Attachment support** — add, preview, export, rename, and delete files attached to entries.
+- **Attachment support** — add, preview, export, rename, and delete files attached to entries. Adding a file larger than 10 MB asks for confirmation first: attachments live inside the database, so every later save re-encrypts them.
 - **Website favicons** — automatically fetch icons for entries through `icon.horse`. Off-switch in Settings for anyone who would rather not send entry domains to a third party.
 - **Password generator** — create strong passwords with configurable options.
 - **Auto-save** — every operation is written to the file (rapid edits are coalesced for a fraction of a second, and anything pending is flushed before locking or closing).

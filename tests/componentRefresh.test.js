@@ -220,6 +220,10 @@ describe('component refresh behaviour', () => {
                     useEntryAttachments: () => ({
                         attachments: ref([]),
                         attachmentThumbnails: ref({}),
+                        totalAttachmentsSize: ref(0),
+                        pendingLargeAttachment: ref(null),
+                        confirmLargeAttachment() {},
+                        cancelLargeAttachment() {},
                         showPreview: ref(false),
                         previewUrl: ref(''),
                         previewName: ref(''),

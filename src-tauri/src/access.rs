@@ -376,12 +376,15 @@ pub async fn pick_key_file(
 }
 
 /// One attachment source selected by the user. The backend returns the display
-/// name separately so the webview never has to guess platform path separators.
+/// name separately so the webview never has to guess platform path separators,
+/// and the size so the frontend can warn about a large file *before* reading it
+/// into memory and embedding it in the vault.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PickedAttachment {
     path: String,
     file_name: String,
+    size: u64,
 }
 
 /// Let the user pick a file to attach to an entry. Granted for reading only;
@@ -396,15 +399,28 @@ pub async fn pick_attachment_file(
         let _ = tx.send(file);
     });
 
-    Ok(await_choice(rx).await.map(|path| {
-        access.grant_read(&path);
-        PickedAttachment {
-            file_name: path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "attachment".to_string()),
-            path: path.to_string_lossy().into_owned(),
-        }
+    let Some(path) = await_choice(rx).await else {
+        return Ok(None);
+    };
+    access.grant_read(&path);
+
+    // An unreadable file reports 0 rather than failing the pick: the read that
+    // follows surfaces the real error, and no size means no size warning.
+    let probe = path.clone();
+    let size = crate::run_blocking(move || {
+        std::fs::metadata(&probe)
+            .map(|meta| meta.len())
+            .unwrap_or(0)
+    })
+    .await?;
+
+    Ok(Some(PickedAttachment {
+        file_name: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "attachment".to_string()),
+        path: path.to_string_lossy().into_owned(),
+        size,
     }))
 }
 
@@ -543,13 +559,15 @@ mod tests {
         let picked = PickedAttachment {
             path: "/tmp/report.pdf".to_string(),
             file_name: "report.pdf".to_string(),
+            size: 42_000_000,
         };
 
         assert_eq!(
             serde_json::to_value(picked).unwrap(),
             serde_json::json!({
                 "path": "/tmp/report.pdf",
-                "fileName": "report.pdf"
+                "fileName": "report.pdf",
+                "size": 42_000_000
             })
         );
     }

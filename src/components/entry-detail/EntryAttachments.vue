@@ -1,7 +1,12 @@
 <template>
     <div class="attachments-section">
         <div class="section-header">
-            <h3>Attachments</h3>
+            <h3>
+                Attachments
+                <span v-if="attachments.length" class="attachments-total">
+                    {{ attachments.length }} · {{ formatSize(totalSize) }}
+                </span>
+            </h3>
             <button
                 class="add-attachment-btn"
                 :disabled="adding"
@@ -242,6 +247,7 @@ import { formatSize } from '../../utils';
 defineProps({
     attachments: { type: Array, default: () => [] },
     thumbnails: { type: Map, default: () => new Map() },
+    totalSize: { type: Number, default: 0 },
     adding: { type: Boolean, default: false },
     error: { type: String, default: '' },
 });
@@ -288,6 +294,12 @@ onUnmounted(() => {
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin: 0;
+}
+
+.attachments-total {
+    margin-left: 0.4rem;
+    font-weight: 400;
+    opacity: 0.75;
 }
 
 .add-attachment-btn {

@@ -155,6 +155,7 @@
             <EntryAttachments
                 :attachments="attachments"
                 :thumbnails="attachmentThumbnails"
+                :total-size="totalAttachmentsSize"
                 :adding="isAddingAttachment"
                 :error="attachmentError"
                 @add="addAttachment"
@@ -203,6 +204,16 @@
         />
 
         <ConfirmModal
+            :show="!!pendingLargeAttachment"
+            title="Add this large file?"
+            :message="largeAttachmentMessage"
+            confirm-text="Add anyway"
+            confirm-variant="primary"
+            @confirm="confirmLargeAttachment"
+            @cancel="cancelLargeAttachment"
+        />
+
+        <ConfirmModal
             :show="showDeleteAttachment"
             title="Delete attachment?"
             :message="`“${attachmentToDeleteName}” will be removed from this entry. You can restore it from entry history.`"
@@ -236,7 +247,12 @@ import { useEntryIcons } from '../composables/useEntryIcons';
 import { useEntryForm } from '../composables/useEntryForm';
 
 // Utils
-import { getField, isProtectedValue, STANDARD_FIELDS } from '../utils';
+import {
+    formatSize,
+    getField,
+    isProtectedValue,
+    STANDARD_FIELDS,
+} from '../utils';
 
 const props = defineProps({
     entry: { type: Object, required: true },
@@ -285,11 +301,15 @@ const { isEditing, isDirty, form, formError, startEdit, cancelEdit, saveEdit } =
 const {
     attachments,
     attachmentThumbnails,
+    totalAttachmentsSize,
     showPreview,
     previewUrl,
     previewName,
     isAddingAttachment,
     attachmentError,
+    pendingLargeAttachment,
+    confirmLargeAttachment,
+    cancelLargeAttachment,
     addAttachment,
     renameAttachment,
     deleteAttachment,
@@ -299,6 +319,12 @@ const {
     exportAttachment,
     copyAttachmentName,
 } = useEntryAttachments(toRef(props, 'entry'), isMac, emit);
+
+const largeAttachmentMessage = computed(() => {
+    const pending = pendingLargeAttachment.value;
+    if (!pending) return '';
+    return `“${pending.name}” is ${formatSize(pending.size)}. It is stored inside the database, so every later save re-encrypts it and each backup keeps a copy.`;
+});
 
 function requestRenameAttachment(attachment) {
     clearAttachmentError();
