@@ -1,6 +1,6 @@
 [package]
 name = "Kivarion"
-version = "0.8.1"
+version = "1.0.0"
 description = "Password manager that works with KDBX (KeePass) files"
 authors = ["Nick Blokhin"]
 license = "GPL-3.0-only"
