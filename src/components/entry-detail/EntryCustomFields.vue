@@ -146,22 +146,55 @@
                 :key="index"
                 class="custom-field-edit-row"
             >
-                <div class="form-group field-key-group">
-                    <input v-model="field.key" placeholder="Name" />
-                </div>
-                <div class="form-group field-value-group">
-                    <input
-                        v-model="field.value"
-                        :type="field.protected ? 'password' : 'text'"
-                        placeholder="Value"
-                    />
-                </div>
+                <input
+                    v-model="field.key"
+                    type="text"
+                    class="field-input field-key"
+                    :class="{ 'field-input--missing': isKeyMissing(field) }"
+                    placeholder="Name"
+                    :title="
+                        isKeyMissing(field)
+                            ? 'A field without a name is discarded when the entry is saved'
+                            : ''
+                    "
+                />
+                <input
+                    v-model="field.value"
+                    :type="field.protected ? 'password' : 'text'"
+                    class="field-input field-value-input"
+                    placeholder="Value"
+                />
                 <label
                     class="protected-toggle"
-                    title="Store this custom field as a protected KeePass value"
+                    :class="{ 'protected-toggle--on': field.protected }"
+                    :title="
+                        field.protected
+                            ? 'Protected: stored as a protected KeePass value'
+                            : 'Not protected: click to store this field as a protected KeePass value'
+                    "
                 >
                     <input v-model="field.protected" type="checkbox" />
-                    <span>Protected</span>
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <rect x="3" y="11" width="18" height="11" rx="2" />
+                        <path
+                            v-if="field.protected"
+                            d="M7 11V7a5 5 0 0 1 10 0v4"
+                        />
+                        <path v-else d="M7 11V7a5 5 0 0 1 9.9-1" />
+                    </svg>
+                    <!-- The pill is icon-only; the label still names the
+                         checkbox for screen readers. -->
+                    <span class="visually-hidden">Protected</span>
                 </label>
                 <button
                     type="button"
@@ -216,6 +249,12 @@ function addField() {
         { key: '', value: '', protected: false },
     ];
     emit('update:modelValue', newFields);
+}
+
+// A row with a value but no name is dropped by the form's validation on save,
+// which is invisible until the entry comes back without it.
+function isKeyMissing(field) {
+    return !(field.key || '').trim() && !!(field.value || '').trim();
 }
 
 function removeField(index) {
@@ -366,55 +405,122 @@ function copy(text, fieldId, isProtected = false) {
     border-radius: 8px;
 }
 
+/* One row is one field: name, value and the two controls stay on a single line
+   at any column width — the inputs shrink (flex-basis 0, min-width 0) instead
+   of pushing the controls onto a second line. */
 .custom-field-edit-row {
     display: flex;
-    gap: 0.5rem;
+    align-items: center;
+    gap: 0.4rem;
     margin-bottom: 0.5rem;
-    align-items: flex-start;
 }
 
-.field-key-group {
-    flex: 1;
-}
-
-.field-value-group {
-    flex: 2;
-}
-
-.custom-field-edit-row input[type='text'],
-.custom-field-edit-row input[type='password'] {
-    width: 100%;
-    padding: 0.5rem 0.75rem;
+.field-input {
+    height: 36px;
+    min-width: 0;
+    padding: 0 0.7rem;
     border-radius: 8px;
     border: 1px solid var(--border-color);
     background: var(--input-bg);
     color: var(--text-primary);
+    font-family: inherit;
     font-size: 0.85rem;
     outline: none;
+    transition:
+        border-color 0.2s,
+        box-shadow 0.2s;
+}
+
+.field-input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.field-key {
+    flex: 1 1 0;
+}
+
+.field-value-input {
+    flex: 2 1 0;
+}
+
+/* The form discards a nameless field on save; say so before it happens. */
+.field-input--missing,
+.field-input--missing:focus {
+    border-color: var(--error-color);
+}
+
+.field-input--missing:focus {
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
 }
 
 .protected-toggle {
-    display: flex;
+    position: relative;
+    display: inline-flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.5rem 0;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--card-bg);
     color: var(--text-secondary);
-    font-size: 0.75rem;
-    white-space: nowrap;
     cursor: pointer;
+    transition: all 0.15s;
 }
 
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.protected-toggle:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.protected-toggle--on {
+    border-color: var(--accent-color);
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--accent-color);
+}
+
+/* The checkbox stays in the DOM for keyboard use and screen readers; the pill
+   itself is the visual state. */
 .protected-toggle input {
-    accent-color: var(--accent-color);
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.protected-toggle:focus-within {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
 }
 
 .remove-field-btn {
-    padding: 0.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
     color: var(--text-secondary);
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: 8px;
+    transition: all 0.15s;
 }
 
 .remove-field-btn:hover {
