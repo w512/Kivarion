@@ -150,8 +150,11 @@
         </div>
 
         <div v-if="!isEditing" class="detail-scroll-content">
-            <EntryViewFields :entry="entry" />
-            <EntryCustomFields :is-editing="false" :fields="customFields" />
+            <EntryViewFields :entry="entry" :email-field="emailField" />
+            <EntryCustomFields
+                :is-editing="false"
+                :fields="otherCustomFields"
+            />
             <EntryAttachments
                 :attachments="attachments"
                 :thumbnails="attachmentThumbnails"
@@ -250,6 +253,7 @@ import { useEntryForm } from '../composables/useEntryForm';
 import {
     formatSize,
     getField,
+    isEmailFieldName,
     isProtectedValue,
     STANDARD_FIELDS,
 } from '../utils';
@@ -291,6 +295,25 @@ const customFields = computed(() => {
     }
     return fields.sort((a, b) => a.key.localeCompare(b.key));
 });
+
+// An e-mail identifies the account like the username does, so the view shows it
+// in the main group instead of under "Custom Fields" — but only in the view:
+// `customFields` itself still feeds the edit form, where it stays an ordinary
+// custom field. A protected one is left where it is, because the masking and
+// the reveal button live in the custom-field section.
+const emailField = computed(
+    () =>
+        customFields.value.find(
+            (field) =>
+                !field.protected && field.value && isEmailFieldName(field.key),
+        ) || null,
+);
+
+const otherCustomFields = computed(() =>
+    emailField.value
+        ? customFields.value.filter((field) => field !== emailField.value)
+        : customFields.value,
+);
 
 // Use Composables
 const { downloadIcon } = useEntryIcons(emit);

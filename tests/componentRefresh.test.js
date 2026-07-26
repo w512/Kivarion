@@ -191,63 +191,82 @@ beforeEach(() => {
     };
 });
 
+// Records the props a child was rendered with, so a test can assert what the
+// parent decided instead of re-rendering the child's markup.
+function makePropCapturingStub(name, props, sink) {
+    // Declaring the props is what makes Vue camelize `:email-field` for us.
+    return {
+        name,
+        props,
+        setup(componentProps) {
+            sink(componentProps);
+            return () => null;
+        },
+    };
+}
+
+function entryDetailStubs(overrides = {}) {
+    return {
+        '../store': { useStore: () => currentStore },
+        '@tauri-apps/plugin-os': { type: async () => 'linux' },
+        './entry-detail/EntryViewFields.vue': {
+            default: makeStubComponent('EntryViewFields'),
+        },
+        './entry-detail/EntryEditFields.vue': {
+            default: makeStubComponent('EntryEditFields'),
+        },
+        './entry-detail/EntryCustomFields.vue': {
+            default: makeStubComponent('EntryCustomFields'),
+        },
+        './entry-detail/EntryAttachments.vue': {
+            default: makeStubComponent('EntryAttachments'),
+        },
+        './entry-detail/EntryMetadata.vue': {
+            default: makeStubComponent('EntryMetadata'),
+        },
+        './entry-detail/AttachmentPreviewModal.vue': {
+            default: makeStubComponent('AttachmentPreviewModal'),
+        },
+        '../composables/useEntryAttachments': {
+            useEntryAttachments: () => ({
+                attachments: ref([]),
+                attachmentThumbnails: ref({}),
+                totalAttachmentsSize: ref(0),
+                pendingLargeAttachment: ref(null),
+                confirmLargeAttachment() {},
+                cancelLargeAttachment() {},
+                showPreview: ref(false),
+                previewUrl: ref(''),
+                previewName: ref(''),
+                openPreview() {},
+                closePreview() {},
+                exportAttachment() {},
+                copyAttachmentName() {},
+            }),
+        },
+        '../composables/useEntryIcons': {
+            useEntryIcons: () => ({ downloadIcon() {} }),
+        },
+        '../composables/useEntryForm': {
+            useEntryForm: () => ({
+                isEditing: ref(false),
+                isDirty: ref(false),
+                form: reactive({ CustomFields: [] }),
+                formError: ref(''),
+                startEdit() {},
+                cancelEdit() {},
+                saveEdit: () => true,
+            }),
+        },
+        ...overrides,
+    };
+}
+
 describe('component refresh behaviour', () => {
     test('EntryDetail refreshes raw entry fields when store.dbVersion changes', async () => {
         const EntryDetail = await loadVueComponent(
             'src/components/EntryDetail.vue',
-            {
-                '../store': { useStore: () => currentStore },
-                '@tauri-apps/plugin-os': { type: async () => 'linux' },
-                './entry-detail/EntryViewFields.vue': {
-                    default: makeStubComponent('EntryViewFields'),
-                },
-                './entry-detail/EntryEditFields.vue': {
-                    default: makeStubComponent('EntryEditFields'),
-                },
-                './entry-detail/EntryCustomFields.vue': {
-                    default: makeStubComponent('EntryCustomFields'),
-                },
-                './entry-detail/EntryAttachments.vue': {
-                    default: makeStubComponent('EntryAttachments'),
-                },
-                './entry-detail/EntryMetadata.vue': {
-                    default: makeStubComponent('EntryMetadata'),
-                },
-                './entry-detail/AttachmentPreviewModal.vue': {
-                    default: makeStubComponent('AttachmentPreviewModal'),
-                },
-                '../composables/useEntryAttachments': {
-                    useEntryAttachments: () => ({
-                        attachments: ref([]),
-                        attachmentThumbnails: ref({}),
-                        totalAttachmentsSize: ref(0),
-                        pendingLargeAttachment: ref(null),
-                        confirmLargeAttachment() {},
-                        cancelLargeAttachment() {},
-                        showPreview: ref(false),
-                        previewUrl: ref(''),
-                        previewName: ref(''),
-                        openPreview() {},
-                        closePreview() {},
-                        exportAttachment() {},
-                        copyAttachmentName() {},
-                    }),
-                },
-                '../composables/useEntryIcons': {
-                    useEntryIcons: () => ({ downloadIcon() {} }),
-                },
-                '../composables/useEntryForm': {
-                    useEntryForm: () => ({
-                        isEditing: ref(false),
-                        isDirty: ref(false),
-                        form: reactive({ CustomFields: [] }),
-                        formError: ref(''),
-                        startEdit() {},
-                        cancelEdit() {},
-                        saveEdit: () => true,
-                    }),
-                },
-            },
+            entryDetailStubs(),
         );
 
         const entry = markRaw({
@@ -270,6 +289,88 @@ describe('component refresh behaviour', () => {
         expect(textContent(findFirst(root, (node) => node.type === 'h2'))).toBe(
             'New title',
         );
+    });
+
+    test('EntryDetail shows an e-mail custom field with the main fields, not twice', async () => {
+        let viewProps;
+        let customProps;
+        const EntryDetail = await loadVueComponent(
+            'src/components/EntryDetail.vue',
+            entryDetailStubs({
+                './entry-detail/EntryViewFields.vue': {
+                    default: makePropCapturingStub(
+                        'EntryViewFields',
+                        ['entry', 'emailField'],
+                        (props) => (viewProps = props),
+                    ),
+                },
+                './entry-detail/EntryCustomFields.vue': {
+                    default: makePropCapturingStub(
+                        'EntryCustomFields',
+                        ['isEditing', 'fields'],
+                        (props) => (customProps = props),
+                    ),
+                },
+            }),
+        );
+
+        const entry = markRaw({
+            fields: new Map([
+                ['Title', 'Mailbox'],
+                ['UserName', 'user'],
+                ['E-mail', 'user@example.com'],
+                ['Recovery code', '123456'],
+            ]),
+        });
+        mount(EntryDetail, () => ({ entry }));
+        await nextTick();
+
+        expect(viewProps.emailField).toEqual({
+            key: 'E-mail',
+            value: 'user@example.com',
+            protected: false,
+        });
+        expect(customProps.fields.map((field) => field.key)).toEqual([
+            'Recovery code',
+        ]);
+    });
+
+    test('EntryDetail leaves a protected e-mail field in the custom section', async () => {
+        let viewProps;
+        let customProps;
+        const EntryDetail = await loadVueComponent(
+            'src/components/EntryDetail.vue',
+            entryDetailStubs({
+                './entry-detail/EntryViewFields.vue': {
+                    default: makePropCapturingStub(
+                        'EntryViewFields',
+                        ['entry', 'emailField'],
+                        (props) => (viewProps = props),
+                    ),
+                },
+                './entry-detail/EntryCustomFields.vue': {
+                    default: makePropCapturingStub(
+                        'EntryCustomFields',
+                        ['isEditing', 'fields'],
+                        (props) => (customProps = props),
+                    ),
+                },
+            }),
+        );
+
+        // Masking and the reveal button live in the custom-field section, so a
+        // protected value must not be lifted into the always-visible group.
+        const entry = markRaw({
+            fields: new Map([
+                ['Title', 'Mailbox'],
+                ['Email', { getText: () => 'user@example.com' }],
+            ]),
+        });
+        mount(EntryDetail, () => ({ entry }));
+        await nextTick();
+
+        expect(viewProps.emailField).toBeNull();
+        expect(customProps.fields.map((field) => field.key)).toEqual(['Email']);
     });
 
     test('DatabaseSettingsModal exposes verification progress and inline errors', async () => {

@@ -36,6 +36,16 @@ export function isStandardFieldName(name) {
     );
 }
 
+// KeePass has no e-mail field, so it is an ordinary custom field — but it
+// identifies the account just like the username does, which is why the detail
+// view shows it among the main fields instead of below them. Stored, searched
+// and edited it stays a custom field; only the reading order changes.
+const EMAIL_FIELD_NAMES = ['email', 'e-mail', 'e mail', 'mail'];
+
+export function isEmailFieldName(name) {
+    return EMAIL_FIELD_NAMES.includes(normalizeFieldName(name));
+}
+
 export function isProtectedValue(val) {
     return (
         !!val && typeof val !== 'string' && typeof val.getText === 'function'

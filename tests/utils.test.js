@@ -11,6 +11,7 @@ import {
     isProtectedValue,
     passwordStrengthLabel,
     isUnsafeAttachmentPreview,
+    isEmailFieldName,
     isStandardFieldName,
     normalizeHttpUrl,
     STANDARD_FIELDS,
@@ -75,6 +76,14 @@ describe('field helpers', () => {
         expect(isStandardFieldName(' Password ')).toBe(true);
         expect(isStandardFieldName('password')).toBe(true);
         expect(isStandardFieldName('ApiKey')).toBe(false);
+    });
+
+    test('recognises the custom field names promoted into the main group', () => {
+        expect(isEmailFieldName('Email')).toBe(true);
+        expect(isEmailFieldName(' e-mail ')).toBe(true);
+        expect(isEmailFieldName('MAIL')).toBe(true);
+        expect(isEmailFieldName('Recovery email')).toBe(false);
+        expect(isEmailFieldName('')).toBe(false);
     });
 });
 

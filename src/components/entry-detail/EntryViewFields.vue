@@ -128,6 +128,8 @@ import { useClipboard } from '../../composables/useClipboard';
 
 const props = defineProps({
     entry: { type: Object, required: true },
+    // A custom field the parent promoted into this group (see isEmailFieldName).
+    emailField: { type: Object, default: null },
 });
 
 const showPassword = ref(false);
@@ -140,6 +142,16 @@ const standardFields = computed(() => [
         label: 'Username',
         value: getField(props.entry, 'UserName'),
     },
+    // Right below the username: both name the account this entry is for.
+    ...(props.emailField
+        ? [
+              {
+                  id: props.emailField.key,
+                  label: props.emailField.key,
+                  value: props.emailField.value,
+              },
+          ]
+        : []),
     {
         id: 'Password',
         label: 'Password',
