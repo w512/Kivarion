@@ -2,7 +2,33 @@
     <div class="attachments-section">
         <div class="section-header">
             <h3>Attachments</h3>
+            <button
+                class="add-attachment-btn"
+                :disabled="adding"
+                @click="$emit('add')"
+            >
+                <span v-if="adding" class="spinner" aria-hidden="true"></span>
+                <svg
+                    v-else
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                {{ adding ? 'Adding…' : 'Add' }}
+            </button>
         </div>
+
+        <p v-if="error" class="attachment-error" role="alert">
+            {{ error }}
+        </p>
 
         <div v-if="attachments.length === 0" class="no-attachments">
             No attachments
@@ -152,6 +178,55 @@
                                 </svg>
                                 Export
                             </button>
+                            <button
+                                class="menu-item"
+                                @click="
+                                    $emit('rename', att);
+                                    activeMenu = null;
+                                "
+                            >
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <path d="M12 20h9" />
+                                    <path
+                                        d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"
+                                    />
+                                </svg>
+                                Rename
+                            </button>
+                            <button
+                                class="menu-item delete"
+                                @click="
+                                    $emit('delete', att);
+                                    activeMenu = null;
+                                "
+                            >
+                                <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                >
+                                    <polyline points="3 6 5 6 21 6" />
+                                    <path d="M19 6l-1 14H6L5 6" />
+                                    <path d="M10 11v6" />
+                                    <path d="M14 11v6" />
+                                    <path d="M9 6V4h6v2" />
+                                </svg>
+                                Delete
+                            </button>
                         </div>
                     </transition>
                 </div>
@@ -167,9 +242,11 @@ import { formatSize } from '../../utils';
 defineProps({
     attachments: { type: Array, default: () => [] },
     thumbnails: { type: Map, default: () => new Map() },
+    adding: { type: Boolean, default: false },
+    error: { type: String, default: '' },
 });
 
-defineEmits(['preview', 'copy-name', 'export']);
+defineEmits(['add', 'preview', 'copy-name', 'export', 'rename', 'delete']);
 
 const activeMenu = ref(null);
 
@@ -197,12 +274,63 @@ onUnmounted(() => {
     padding-top: 1rem;
 }
 
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
 .section-header h3 {
     font-size: 0.8rem;
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 1rem;
+    margin: 0;
+}
+
+.add-attachment-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--card-bg);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.add-attachment-btn:hover:not(:disabled) {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.add-attachment-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+.attachment-error {
+    margin: 0 0 0.75rem;
+    padding: 0.55rem 0.7rem;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--error-color);
+    font-size: 0.78rem;
 }
 
 .no-attachments {
@@ -326,6 +454,20 @@ onUnmounted(() => {
 
 .menu-item:hover {
     background: var(--badge-bg);
+}
+
+.menu-item.delete {
+    color: var(--error-color);
+}
+
+.menu-item.delete:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .dropdown-enter-active,

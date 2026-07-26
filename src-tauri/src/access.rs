@@ -242,6 +242,19 @@ impl PathAccess {
             .cloned()
     }
 
+    /// Drop every persisted database → key-file association without revoking
+    /// the in-memory grants of the current session. The latter matters when the
+    /// command is run from Settings while a database is still open; its next
+    /// save must continue to work, while a restart restores no key-file grants.
+    pub(crate) fn clear_key_file_associations(&self) -> usize {
+        let mut removed = 0;
+        self.update(|remembered| {
+            removed = remembered.key_files.len();
+            remembered.key_files.clear();
+        });
+        removed
+    }
+
     fn update<F: FnOnce(&mut Remembered)>(&self, edit: F) {
         {
             let mut remembered = self.remembered.lock().unwrap_or_else(|e| e.into_inner());
@@ -362,6 +375,39 @@ pub async fn pick_key_file(
     }))
 }
 
+/// One attachment source selected by the user. The backend returns the display
+/// name separately so the webview never has to guess platform path separators.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedAttachment {
+    path: String,
+    file_name: String,
+}
+
+/// Let the user pick a file to attach to an entry. Granted for reading only;
+/// `read_database` performs the actual allowlisted byte read.
+#[tauri::command]
+pub async fn pick_attachment_file(
+    app: tauri::AppHandle,
+    access: State<'_, PathAccess>,
+) -> Result<Option<PickedAttachment>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog().file().pick_file(move |file| {
+        let _ = tx.send(file);
+    });
+
+    Ok(await_choice(rx).await.map(|path| {
+        access.grant_read(&path);
+        PickedAttachment {
+            file_name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "attachment".to_string()),
+            path: path.to_string_lossy().into_owned(),
+        }
+    }))
+}
+
 /// Let the user choose where to export an attachment. Granted for writing only.
 #[tauri::command]
 pub async fn pick_export_path(
@@ -395,6 +441,14 @@ pub async fn remembered_database(access: State<'_, PathAccess>) -> Result<Option
 
     let probe = path.clone();
     if !crate::run_blocking(move || Path::new(&probe).exists()).await? {
+        // A moved/deleted database must not leave its remembered key-file
+        // association in remembered-paths.json forever.
+        access.update(|remembered| {
+            if remembered.database.as_deref() == Some(path.as_str()) {
+                remembered.database = None;
+            }
+            remembered.key_files.remove(&path);
+        });
         return Ok(None);
     }
 
@@ -425,6 +479,9 @@ pub fn forget_database(access: State<'_, PathAccess>, path: Option<String>) {
     }
     access.update(|remembered| {
         remembered.database = None;
+        if let Some(path) = path.as_deref() {
+            remembered.key_files.remove(path);
+        }
     });
 }
 
@@ -479,6 +536,22 @@ mod tests {
 
     fn access() -> PathAccess {
         PathAccess::new(None)
+    }
+
+    #[test]
+    fn picked_attachment_serializes_the_frontend_contract() {
+        let picked = PickedAttachment {
+            path: "/tmp/report.pdf".to_string(),
+            file_name: "report.pdf".to_string(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(picked).unwrap(),
+            serde_json::json!({
+                "path": "/tmp/report.pdf",
+                "fileName": "report.pdf"
+            })
+        );
     }
 
     #[test]
@@ -565,6 +638,29 @@ mod tests {
         access.grant_database(Path::new("/Users/me/vault.kdbx"));
 
         assert!(access.check("/Users/me/./vault.kdbx", Access::Read).is_ok());
+    }
+
+    #[test]
+    fn clearing_key_file_associations_keeps_the_remembered_database() {
+        let access = access();
+        access.update(|remembered| {
+            remembered.database = Some("/Users/me/vault.kdbx".to_string());
+            remembered.key_files.insert(
+                "/Users/me/vault.kdbx".to_string(),
+                "/Users/me/vault.key".to_string(),
+            );
+            remembered.key_files.insert(
+                "/Users/me/old.kdbx".to_string(),
+                "/Users/me/old.key".to_string(),
+            );
+        });
+
+        assert_eq!(access.clear_key_file_associations(), 2);
+        assert_eq!(
+            access.remembered_database(),
+            Some("/Users/me/vault.kdbx".to_string())
+        );
+        assert!(access.remembered.lock().unwrap().key_files.is_empty());
     }
 
     #[test]
@@ -674,6 +770,38 @@ mod tests {
                 .unwrap(),
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn a_missing_remembered_database_drops_its_key_file_association() {
+        use tauri::Manager;
+
+        let path = std::env::temp_dir()
+            .join(format!(
+                "kivarion-access-{}-moved-away.kdbx",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned();
+        let _ = std::fs::remove_file(&path);
+        let access = access();
+        access.update(|remembered| {
+            remembered.database = Some(path.clone());
+            remembered
+                .key_files
+                .insert(path.clone(), "/tmp/old.key".to_string());
+        });
+        let app = MockApp::new(access);
+
+        assert_eq!(
+            app.call("remembered_database", serde_json::json!({}))
+                .unwrap(),
+            serde_json::Value::Null
+        );
+        let state = app.webview.state::<PathAccess>();
+        let remembered = state.remembered.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(remembered.database.is_none());
+        assert!(!remembered.key_files.contains_key(&path));
     }
 
     #[test]

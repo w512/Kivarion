@@ -84,11 +84,13 @@ function readable(filePath) {
     }
 }
 
-function makeStubComponent(name) {
+function makeStubComponent(name, { renderSlot = false } = {}) {
     return defineComponent({
         name,
-        setup() {
-            return () => null;
+        setup(_props, { slots }) {
+            return renderSlot
+                ? () => h('div', null, slots.default?.())
+                : () => null;
         },
     });
 }
@@ -109,7 +111,21 @@ const renderer = createRenderer({
         if (index >= 0) siblings.splice(index, 1);
     },
     createElement(type) {
-        return { type, props: {}, children: [] };
+        return {
+            type,
+            props: {},
+            children: [],
+            listeners: {},
+            addEventListener(event, handler) {
+                this.listeners[event] = handler;
+            },
+            removeEventListener(event) {
+                delete this.listeners[event];
+            },
+            getRootNode() {
+                return null;
+            },
+        };
     },
     createText(text) {
         return { type: '#text', text };
@@ -167,6 +183,8 @@ function allText(root) {
 
 beforeEach(() => {
     currentStore = reactive({ dbVersion: 0 });
+    globalThis.Document = class Document {};
+    globalThis.ShadowRoot = class ShadowRoot {};
     globalThis.document = {
         addEventListener() {},
         removeEventListener() {},
@@ -248,6 +266,65 @@ describe('component refresh behaviour', () => {
         expect(textContent(findFirst(root, (node) => node.type === 'h2'))).toBe(
             'New title',
         );
+    });
+
+    test('DatabaseSettingsModal exposes verification progress and inline errors', async () => {
+        const DatabaseSettingsModal = await loadVueComponent(
+            'src/components/DatabaseSettingsModal.vue',
+            {
+                './BaseModal.vue': {
+                    default: makeStubComponent('BaseModal', {
+                        renderSlot: true,
+                    }),
+                },
+                './PasswordStrength.vue': {
+                    default: makeStubComponent('PasswordStrength'),
+                },
+                '@tauri-apps/api/core': { invoke: async () => null },
+                '../composables/useSystemInteraction.js': {
+                    withSystemInteraction: (action) => action(),
+                },
+            },
+        );
+        const state = reactive({
+            show: false,
+            busy: false,
+            error: '',
+        });
+        const { root } = mount(DatabaseSettingsModal, () => ({
+            show: state.show,
+            dbName: 'Vault',
+            keyFilePath: null,
+            busy: state.busy,
+            error: state.error,
+        }));
+
+        state.show = true;
+        state.busy = true;
+        state.error = 'Current password or key file is incorrect.';
+        await nextTick();
+
+        expect(allText(root)).toContain('Verifying…');
+        expect(allText(root)).toContain(
+            'Current password or key file is incorrect.',
+        );
+        expect(
+            findFirst(root, (node) => node.props?.class === 'confirm-btn')
+                ?.props.disabled,
+        ).toBe(true);
+        expect(
+            findFirst(root, (node) => node.props?.class === 'cancel-btn')?.props
+                .disabled,
+        ).toBe(true);
+
+        state.busy = false;
+        await nextTick();
+
+        expect(allText(root)).toContain('Save Changes');
+        expect(
+            findFirst(root, (node) => node.props?.class === 'confirm-btn')
+                ?.props.disabled,
+        ).toBe(false);
     });
 
     test('GroupTree refreshes raw group labels and counts when refreshKey changes', async () => {

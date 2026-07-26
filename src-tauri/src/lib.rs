@@ -40,8 +40,8 @@ where
         .map_err(|e| format!("Background filesystem task failed: {e}"))
 }
 
-/// Read a file's raw bytes (used to load the selected `.kdbx`, a rotated backup
-/// of it, or a key file).
+/// Read a file's raw bytes (used to load the selected `.kdbx`, a rotated backup,
+/// a key file, or a user-picked attachment source).
 ///
 /// Returned as a raw IPC `Response` so the bytes reach the webview as an
 /// `ArrayBuffer` instead of an inflated JSON number array.
@@ -516,21 +516,96 @@ fn quick_look_temp_root() -> std::path::PathBuf {
     std::env::temp_dir().join(QUICK_LOOK_TEMP_DIR)
 }
 
+/// Extract the owner PID from the directory format created below:
+/// `preview-<pid>-<per-process id>`. Invalid/legacy names have no owner and are
+/// safe to treat as stale.
+#[cfg(target_os = "macos")]
+fn quick_look_preview_pid(name: &std::ffi::OsStr) -> Option<u32> {
+    let name = name.to_str()?.strip_prefix("preview-")?;
+    let (pid, id) = name.split_once('-')?;
+    let pid = pid.parse::<u32>().ok()?;
+    let _ = id.parse::<u64>().ok()?;
+    (pid != 0).then_some(pid)
+}
+
 /// Remove decrypted previews left behind if an earlier process crashed or was
-/// killed before `qlmanage` returned.
+/// killed before `qlmanage` returned, while preserving preview directories
+/// owned by another live Kivarion process.
 #[cfg(target_os = "macos")]
 fn clear_quick_look_temp_dir_at(root: &std::path::Path) -> Result<(), String> {
+    clear_quick_look_temp_dir_at_with(root, process_is_running)
+}
+
+/// Predicate-injected implementation keeps startup cleanup deterministic in
+/// tests without spawning or killing real processes.
+#[cfg(target_os = "macos")]
+fn clear_quick_look_temp_dir_at_with(
+    root: &std::path::Path,
+    is_process_running: impl Fn(u32) -> bool,
+) -> Result<(), String> {
     let metadata = match std::fs::symlink_metadata(root) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.to_string()),
     };
 
-    if metadata.is_dir() && !metadata.file_type().is_symlink() {
-        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
-    } else {
-        std::fs::remove_file(root).map_err(|error| error.to_string())
+    // Never follow an unexpected root symlink. The normal root is a directory;
+    // a file or symlink at that path cannot contain a valid active preview.
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return std::fs::remove_file(root).map_err(|error| error.to_string());
     }
+
+    let mut first_error = None;
+    let entries = std::fs::read_dir(root).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                first_error.get_or_insert_with(|| error.to_string());
+                continue;
+            }
+        };
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                first_error.get_or_insert_with(|| error.to_string());
+                continue;
+            }
+        };
+
+        let belongs_to_live_process = file_type.is_dir()
+            && quick_look_preview_pid(&entry.file_name()).is_some_and(&is_process_running);
+        if belongs_to_live_process {
+            continue;
+        }
+
+        // Invalid/legacy names, regular files and symlinks are never active
+        // preview directories. Remove symlinks themselves rather than following
+        // them outside the private temp root.
+        let result = if file_type.is_dir() && !file_type.is_symlink() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(error) = result {
+            first_error.get_or_insert_with(|| format!("{}: {error}", path.display()));
+        }
+    }
+
+    // Remove the root only when cleanup left it empty. DirectoryNotEmpty is
+    // expected when another process still owns a preview (or created one while
+    // this scan was running).
+    if let Err(error) = std::fs::remove_dir(root) {
+        if !matches!(
+            error.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+        ) {
+            first_error.get_or_insert_with(|| error.to_string());
+        }
+    }
+
+    first_error.map_or(Ok(()), Err)
 }
 
 /// RAII cleanup ensures every preview's private directory is removed on all
@@ -887,6 +962,66 @@ fn delete_biometric_password(id: &str) -> Result<(), String> {
     }
 }
 
+/// A service-only query matches every Kivarion account, including passwords
+/// whose absolute database path is no longer known to the application.
+#[cfg(target_os = "macos")]
+fn all_biometric_password_options(data_protection: bool) -> PasswordOptions {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+
+    let mut options = if data_protection {
+        data_protection_options("")
+    } else {
+        legacy_options("")
+    };
+    let account_key =
+        unsafe { CFString::wrap_under_get_rule(security_framework_sys::item::kSecAttrAccount) };
+    #[allow(deprecated)]
+    options.query.retain(|(key, _)| key != &account_key);
+    options
+}
+
+/// Remove every biometric secret owned by Kivarion, not merely the IDs still
+/// present in localStorage. This is what makes cleanup effective for databases
+/// that were moved or renamed before the cleanup feature existed.
+fn delete_all_biometric_passwords() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Debug builds cannot access the Data Protection keychain, and an empty
+        // store is normal, so this result is deliberately ignored just like in
+        // delete_biometric_password. The legacy/unified query below removes all
+        // remaining Kivarion items from both keychain stores.
+        let _ = delete_generic_password_options(all_biometric_password_options(true));
+        match delete_generic_password_options(all_biometric_password_options(false)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.code() == security_framework_sys::base::errSecItemNotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgottenDatabaseData {
+    key_file_associations: usize,
+}
+
+/// Clear persisted unlock data while leaving the currently open database and
+/// its in-memory filesystem grants intact. No vault or key file is deleted.
+#[tauri::command]
+fn forget_saved_database_data(
+    access: tauri::State<'_, PathAccess>,
+) -> Result<ForgottenDatabaseData, String> {
+    delete_all_biometric_passwords()?;
+    Ok(ForgottenDatabaseData {
+        key_file_associations: access.clear_key_file_associations(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -933,6 +1068,21 @@ mod tests {
         // caller is. In the app the caller is the main thread, and a save of a
         // large vault froze the UI for as long as the write and fsyncs took.
         assert_ne!(worker, caller);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn all_biometric_password_query_does_not_filter_by_database_path() {
+        use core_foundation::base::TCFType;
+        use core_foundation::string::CFString;
+
+        let options = all_biometric_password_options(false);
+        let account_key =
+            unsafe { CFString::wrap_under_get_rule(security_framework_sys::item::kSecAttrAccount) };
+        #[allow(deprecated)]
+        let has_account = options.query.iter().any(|(key, _)| key == &account_key);
+
+        assert!(!has_account);
     }
 
     #[cfg(unix)]
@@ -1105,16 +1255,42 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn quick_look_startup_cleanup_removes_stale_previews() {
+    fn quick_look_startup_cleanup_removes_stale_and_legacy_previews() {
         let temp = TempDir::new();
         let root = temp.path().join("Kivarion-quicklook");
-        let stale_dir = root.join("preview-from-crashed-process");
+        let stale_dir = root.join("preview-4343-0");
+        let legacy_dir = root.join("preview-from-crashed-process");
         std::fs::create_dir_all(&stale_dir).unwrap();
+        std::fs::create_dir_all(&legacy_dir).unwrap();
         std::fs::write(stale_dir.join("secret.txt"), b"decrypted").unwrap();
+        std::fs::write(legacy_dir.join("old.txt"), b"decrypted").unwrap();
 
-        clear_quick_look_temp_dir_at(&root).unwrap();
+        clear_quick_look_temp_dir_at_with(&root, |_| false).unwrap();
 
         assert!(!root.exists());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn quick_look_startup_cleanup_preserves_live_process_previews() {
+        let temp = TempDir::new();
+        let root = temp.path().join("Kivarion-quicklook");
+        let live_dir = root.join("preview-4242-7");
+        let stale_dir = root.join("preview-4343-8");
+        let malformed_dir = root.join("preview-4242-invalid");
+        std::fs::create_dir_all(&live_dir).unwrap();
+        std::fs::create_dir_all(&stale_dir).unwrap();
+        std::fs::create_dir_all(&malformed_dir).unwrap();
+        std::fs::write(live_dir.join("active.txt"), b"active preview").unwrap();
+        std::fs::write(stale_dir.join("stale.txt"), b"stale preview").unwrap();
+
+        clear_quick_look_temp_dir_at_with(&root, |pid| pid == 4242).unwrap();
+
+        assert!(live_dir.exists());
+        assert_eq!(read_bytes(&live_dir.join("active.txt")), b"active preview");
+        assert!(!stale_dir.exists());
+        assert!(!malformed_dir.exists());
+        assert!(root.exists());
     }
 
     #[cfg(target_os = "macos")]
@@ -1416,6 +1592,7 @@ pub fn run() {
             access::pick_database_file,
             access::pick_new_database_path,
             access::pick_key_file,
+            access::pick_attachment_file,
             access::pick_export_path,
             access::remembered_database,
             access::remember_database,
@@ -1426,6 +1603,7 @@ pub fn run() {
             save_biometric_password,
             load_biometric_password,
             delete_biometric_password,
+            forget_saved_database_data,
             quit_app
         ])
         .build(tauri::generate_context!())

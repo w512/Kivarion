@@ -16,11 +16,12 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 - **Structure management** — create, rename, and delete groups and entries.
 - **Recycle Bin** — deleted groups and entries go to the KeePass Recycle Bin and can be restored to where they came from; deleting them again (or emptying the bin) is permanent.
 - **Global search** — the search field in the top bar filters entries across the entire database, regardless of the selected group. It searches the **Title**, **UserName**, **URL**, **Notes**, and **custom fields** by both name and value. Matching is case-insensitive and substring-based. Protected fields, including passwords and hidden custom fields, are excluded from search.
-- **Attachment support** — view, preview (images and PDFs), and export files attached to entries.
+- **Attachment support** — add, preview, export, rename, and delete files attached to entries.
 - **Website favicons** — automatically fetch icons for entries through `icon.horse`. Off-switch in Settings for anyone who would rather not send entry domains to a third party.
 - **Password generator** — create strong passwords with configurable options.
 - **Auto-save** — every operation is written to the file (rapid edits are coalesced for a fraction of a second, and anything pending is flushed before locking or closing).
 - **Personalization** — supports light, dark, and system themes.
+- **Saved-data cleanup** — Settings can remove all Kivarion Touch ID passwords, remembered key-file associations, and path-keyed interface preferences without deleting vault files.
 - **Native experience** — integrates with the operating system through Tauri, including dialogs, filesystem access, and system paths.
 
 ## Platform support
@@ -29,13 +30,6 @@ Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. Some features 
 
 - **Touch ID unlock** — **macOS only**. On other platforms the biometric commands report "not supported" and the option is unavailable; unlock there is password-only.
 - **Quick Look attachment preview** — **macOS only** (uses `qlmanage`). In-app image/PDF preview and export work on all platforms.
-
-## Current limitations
-
-These are known gaps (tracked in `docs/ToDo.md`), called out here so expectations are honest:
-
-- **Attachments** are **view / preview / export only**; adding, renaming, or deleting attachments inside Kivarion is not yet implemented.
-- **Recycle Bin** — deleting an entry moves it to the KeePass Recycle Bin (when the database has one enabled), but **restoring** items from the bin inside the app is not yet implemented (you can empty it).
 
 ## Technology Stack
 

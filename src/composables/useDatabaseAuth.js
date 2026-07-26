@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
 import { saveDatabase } from '../dbHelper.js';
 import { toExactArrayBuffer } from '../utils.js';
+import { biometricPreferenceKey } from '../databasePreferences.js';
 import { withSystemInteraction } from './useSystemInteraction.js';
 
 // Per-database key-file association. KeePass remembers which key file unlocks a
@@ -196,7 +197,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
     function checkBiometricsPreference(path) {
         // Only surface the Touch ID button; never trigger the OS prompt without
         // an explicit user action. The user clicks the button to unlock.
-        const pref = localStorage.getItem(`kivarion-biometrics-${path}`);
+        const pref = localStorage.getItem(biometricPreferenceKey(path));
         useBiometrics.value = pref === 'true';
     }
 
@@ -220,6 +221,11 @@ export function useDatabaseAuth(router, passwordInputRef) {
             // Tauri rejects with the plain error string from the Rust command.
             const message = typeof err === 'string' ? err : err?.message || '';
             if (message.includes('BIOMETRIC_NOT_ENROLLED')) {
+                // The path-keyed preference can outlive a manually removed
+                // Keychain item. Drop the stale toggle immediately so the UI
+                // does not keep offering a dead Touch ID button.
+                localStorage.removeItem(biometricPreferenceKey(path));
+                useBiometrics.value = false;
                 errorMessage.value =
                     'No password is saved for Touch ID on this database. Unlock with your master password once to enable it again.';
             } else if (!/cancel/i.test(message)) {
@@ -322,14 +328,14 @@ export function useDatabaseAuth(router, passwordInputRef) {
                             pass: password.value,
                         }),
                     );
-                    localStorage.setItem(`kivarion-biometrics-${path}`, 'true');
+                    localStorage.setItem(biometricPreferenceKey(path), 'true');
                 } catch (e) {
                     console.error('Failed to save biometric password:', e);
                 }
             } else if (!useBiometrics.value) {
                 try {
                     await invoke('delete_biometric_password', { id: path });
-                    localStorage.removeItem(`kivarion-biometrics-${path}`);
+                    localStorage.removeItem(biometricPreferenceKey(path));
                 } catch {}
             }
 

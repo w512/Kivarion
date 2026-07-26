@@ -8,6 +8,8 @@ import { saveDatabase } from '../dbHelper.js';
 import { toExactArrayBuffer } from '../utils.js';
 import { getDefaultGroup, getObjectUuid } from '../kdbxView.js';
 import RestoreBackupModal from '../components/RestoreBackupModal.vue';
+import ConfirmModal from '../components/ConfirmModal.vue';
+import { clearDatabasePreferences } from '../databasePreferences.js';
 
 const router = useRouter();
 const store = useStore();
@@ -30,6 +32,10 @@ const showRestore = ref(false);
 const backups = ref([]);
 const restoreBusy = ref(false);
 const restoreError = ref('');
+const showForgetDatabaseData = ref(false);
+const forgetDatabaseDataBusy = ref(false);
+const forgetDatabaseDataError = ref('');
+const forgetDatabaseDataSuccess = ref('');
 
 async function openRestore() {
     if (!canRestore.value) return;
@@ -41,6 +47,32 @@ async function openRestore() {
         restoreError.value = 'Could not list backups: ' + (e?.message || e);
     }
     showRestore.value = true;
+}
+
+async function forgetSavedDatabaseData() {
+    if (forgetDatabaseDataBusy.value) return;
+
+    showForgetDatabaseData.value = false;
+    forgetDatabaseDataBusy.value = true;
+    forgetDatabaseDataError.value = '';
+    forgetDatabaseDataSuccess.value = '';
+    try {
+        const result = await invoke('forget_saved_database_data');
+        const localPreferences = clearDatabasePreferences();
+        const keyFiles = result?.keyFileAssociations || 0;
+        forgetDatabaseDataSuccess.value = `Removed all saved Touch ID passwords. Cleared ${keyFiles} key-file association${keyFiles === 1 ? '' : 's'} and ${localPreferences} local database preference${localPreferences === 1 ? '' : 's'}.`;
+        showForgetDatabaseData.value = false;
+    } catch (error) {
+        console.error('Could not forget saved database data:', error);
+        // Local path-keyed state is safe to clear even if the system keychain
+        // operation failed; a retry can still find secrets by Keychain service.
+        clearDatabasePreferences();
+        forgetDatabaseDataError.value =
+            'Could not remove all saved credentials from the system. Please try again.';
+        showForgetDatabaseData.value = false;
+    } finally {
+        forgetDatabaseDataBusy.value = false;
+    }
 }
 
 async function restoreBackup(backup) {
@@ -234,6 +266,40 @@ async function restoreBackup(backup) {
                     </button>
                 </div>
             </div>
+
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>Saved database data</h3>
+                    <p>
+                        Remove all Touch ID passwords, remembered key files and
+                        database-specific interface state. Vault and key files
+                        are not deleted.
+                    </p>
+                    <p
+                        v-if="forgetDatabaseDataSuccess"
+                        class="setting-status setting-status--success"
+                        role="status"
+                    >
+                        {{ forgetDatabaseDataSuccess }}
+                    </p>
+                    <p
+                        v-if="forgetDatabaseDataError"
+                        class="setting-status setting-status--error"
+                        role="alert"
+                    >
+                        {{ forgetDatabaseDataError }}
+                    </p>
+                </div>
+                <div class="setting-action">
+                    <button
+                        class="action-button danger-button"
+                        :disabled="forgetDatabaseDataBusy"
+                        @click="showForgetDatabaseData = true"
+                    >
+                        {{ forgetDatabaseDataBusy ? 'Forgetting…' : 'Forget…' }}
+                    </button>
+                </div>
+            </div>
         </div>
 
         <RestoreBackupModal
@@ -243,6 +309,16 @@ async function restoreBackup(backup) {
             :error="restoreError"
             @close="showRestore = false"
             @restore="restoreBackup"
+        />
+
+        <ConfirmModal
+            :show="showForgetDatabaseData"
+            title="Forget all saved database data?"
+            message="Kivarion will remove every saved Touch ID password, all database-to-key-file associations, and database-specific interface preferences. Your vault and key files will not be deleted."
+            confirm-text="Forget data"
+            confirm-variant="danger"
+            @confirm="forgetSavedDatabaseData"
+            @cancel="showForgetDatabaseData = false"
         />
     </div>
 </template>
@@ -372,6 +448,28 @@ async function restoreBackup(backup) {
 .action-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.danger-button {
+    background: var(--error-color);
+}
+
+.danger-button:hover:not(:disabled) {
+    background: var(--error-color);
+    filter: brightness(0.9);
+}
+
+.setting-status {
+    margin-top: 0.5rem !important;
+    font-size: 0.78rem !important;
+}
+
+.setting-status--success {
+    color: var(--accent-color) !important;
+}
+
+.setting-status--error {
+    color: var(--error-color) !important;
 }
 
 code {

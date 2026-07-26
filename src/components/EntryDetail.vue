@@ -155,9 +155,14 @@
             <EntryAttachments
                 :attachments="attachments"
                 :thumbnails="attachmentThumbnails"
+                :adding="isAddingAttachment"
+                :error="attachmentError"
+                @add="addAttachment"
                 @preview="openPreview"
                 @copy-name="copyAttachmentName"
                 @export="exportAttachment"
+                @rename="requestRenameAttachment"
+                @delete="requestDeleteAttachment"
             />
             <EntryHistory
                 :entry="entry"
@@ -184,11 +189,33 @@
             :name="previewName"
             @close="closePreview"
         />
+
+        <InputModal
+            v-model="attachmentRenameName"
+            :show="showRenameAttachment"
+            title="Rename Attachment"
+            placeholder="Attachment name"
+            confirm-text="Rename"
+            :error="attachmentRenameError"
+            :confirm-disabled="!attachmentRenameName.trim()"
+            @confirm="confirmRenameAttachment"
+            @cancel="closeAttachmentDialogs"
+        />
+
+        <ConfirmModal
+            :show="showDeleteAttachment"
+            title="Delete attachment?"
+            :message="`“${attachmentToDeleteName}” will be removed from this entry. You can restore it from entry history.`"
+            confirm-text="Delete"
+            confirm-variant="danger"
+            @confirm="confirmDeleteAttachment"
+            @cancel="closeAttachmentDialogs"
+        />
     </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, toRef } from 'vue';
+import { ref, computed, onMounted, onUnmounted, toRef, watch } from 'vue';
 import { type } from '@tauri-apps/plugin-os';
 import { useStore } from '../store';
 
@@ -200,6 +227,8 @@ import EntryAttachments from './entry-detail/EntryAttachments.vue';
 import EntryMetadata from './entry-detail/EntryMetadata.vue';
 import EntryHistory from './entry-detail/EntryHistory.vue';
 import AttachmentPreviewModal from './entry-detail/AttachmentPreviewModal.vue';
+import InputModal from './InputModal.vue';
+import ConfirmModal from './ConfirmModal.vue';
 
 // Composables
 import { useEntryAttachments } from '../composables/useEntryAttachments';
@@ -218,6 +247,12 @@ const store = useStore();
 
 const showMenu = ref(false);
 const isMac = ref(false);
+const showRenameAttachment = ref(false);
+const attachmentToRenameName = ref('');
+const attachmentRenameName = ref('');
+const attachmentRenameError = ref('');
+const showDeleteAttachment = ref(false);
+const attachmentToDeleteName = ref('');
 
 const displayTitle = computed(() => {
     store.dbVersion;
@@ -253,11 +288,62 @@ const {
     showPreview,
     previewUrl,
     previewName,
+    isAddingAttachment,
+    attachmentError,
+    addAttachment,
+    renameAttachment,
+    deleteAttachment,
+    clearAttachmentError,
     openPreview,
     closePreview,
     exportAttachment,
     copyAttachmentName,
-} = useEntryAttachments(toRef(props, 'entry'), isMac);
+} = useEntryAttachments(toRef(props, 'entry'), isMac, emit);
+
+function requestRenameAttachment(attachment) {
+    clearAttachmentError();
+    attachmentToRenameName.value = attachment.name;
+    attachmentRenameName.value = attachment.name;
+    attachmentRenameError.value = '';
+    showRenameAttachment.value = true;
+}
+
+function confirmRenameAttachment() {
+    const result = renameAttachment(
+        attachmentToRenameName.value,
+        attachmentRenameName.value,
+    );
+    if (!result.ok) {
+        attachmentRenameError.value = result.error;
+        return;
+    }
+    closeAttachmentDialogs();
+}
+
+function requestDeleteAttachment(attachment) {
+    clearAttachmentError();
+    attachmentToDeleteName.value = attachment.name;
+    showDeleteAttachment.value = true;
+}
+
+function confirmDeleteAttachment() {
+    deleteAttachment(attachmentToDeleteName.value);
+    closeAttachmentDialogs();
+}
+
+function closeAttachmentDialogs() {
+    showRenameAttachment.value = false;
+    attachmentToRenameName.value = '';
+    attachmentRenameName.value = '';
+    attachmentRenameError.value = '';
+    showDeleteAttachment.value = false;
+    attachmentToDeleteName.value = '';
+}
+
+watch(attachmentRenameName, () => {
+    attachmentRenameError.value = '';
+});
+watch(() => props.entry, closeAttachmentDialogs);
 
 function hasUnsavedChanges() {
     return isDirty.value;
@@ -269,6 +355,7 @@ function savePendingEdit() {
 
 function discardPendingEdit() {
     cancelEdit();
+    closeAttachmentDialogs();
 }
 
 function restoreHistoryVersion(index) {

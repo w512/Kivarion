@@ -7,7 +7,7 @@
             :file-path="displayPath"
             @lock="lockDatabaseFromHeader"
             @close="closeAndForgetDatabase"
-            @edit-db="showSettingsModal = true"
+            @edit-db="openDatabaseSettings"
         />
 
         <!-- Save failure banner — never let a failed save go unnoticed -->
@@ -289,8 +289,11 @@
             :show="showSettingsModal"
             :db-name="dbName"
             :key-file-path="currentKeyFilePath"
+            :busy="settingsBusy"
+            :error="settingsError"
             @confirm="confirmDatabaseSettings"
-            @cancel="showSettingsModal = false"
+            @clear-error="settingsError = ''"
+            @cancel="closeDatabaseSettings"
         />
     </div>
 </template>
@@ -305,6 +308,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { formatDate, getField, toExactArrayBuffer } from '../utils';
+import {
+    biometricPreferenceKey,
+    collapsedGroupsPreferenceKey,
+} from '../databasePreferences.js';
 import {
     ALL_ENTRIES_UUID,
     buildDatabaseView,
@@ -512,6 +519,8 @@ const groupDeleteMessage = computed(() =>
 const homeDirPath = ref('');
 
 const showSettingsModal = ref(false);
+const settingsBusy = ref(false);
+const settingsError = ref('');
 const showCloseAfterSaveErrorConfirm = ref(false);
 const showClosingSaveModal = ref(false);
 const showUnsavedEditConfirm = ref(false);
@@ -536,6 +545,8 @@ function prepareForForcedLock() {
     showDeleteGroupConfirm.value = false;
     showEmptyRecycleBinConfirm.value = false;
     showSettingsModal.value = false;
+    settingsBusy.value = false;
+    settingsError.value = '';
     selectedEntryUuid.value = null;
     customIconDataUrls.clear();
 }
@@ -622,7 +633,7 @@ watch(
 );
 
 function collapsedGroupsStorageKey(path = store.filePath) {
-    return path ? `kivarion-collapsed-groups-${path}` : null;
+    return path ? collapsedGroupsPreferenceKey(path) : null;
 }
 
 function loadCollapsedGroups() {
@@ -1157,6 +1168,17 @@ async function readKeyFileBuffer(path) {
     return toExactArrayBuffer(bytes);
 }
 
+function openDatabaseSettings() {
+    settingsError.value = '';
+    showSettingsModal.value = true;
+}
+
+function closeDatabaseSettings() {
+    if (settingsBusy.value) return;
+    settingsError.value = '';
+    showSettingsModal.value = false;
+}
+
 async function verifyCurrentCredentials(currentPassword, keyFilePath) {
     if (!store.filePath) return true;
     const passwordValue = currentPassword
@@ -1177,10 +1199,14 @@ async function confirmDatabaseSettings({
     keyFilePath,
     keyFileChanged,
 }) {
-    if (!store.db) return;
+    const db = store.db;
+    if (!db || settingsBusy.value) return;
 
     const normalizedName = (name || '').trim();
     if (!normalizedName) return;
+
+    settingsError.value = '';
+    settingsBusy.value = true;
 
     if (password || keyFileChanged) {
         try {
@@ -1190,25 +1216,46 @@ async function confirmDatabaseSettings({
             );
         } catch (error) {
             console.error('Current credentials verification failed:', error);
-            window.alert?.('Current password or key file is incorrect.');
+            settingsError.value = 'Current password or key file is incorrect.';
+            settingsBusy.value = false;
             return;
         }
     }
 
-    store.db.meta.name = normalizedName;
-    if (password) {
-        await store.db.credentials.setPassword(
-            kdbxweb.ProtectedValue.fromString(password),
-        );
+    // The database may have been locked while the asynchronous KDF was
+    // running. Never apply the submitted credentials to a different session.
+    if (store.db !== db || !showSettingsModal.value) {
+        settingsBusy.value = false;
+        return;
     }
-    if (keyFileChanged) {
-        await store.db.credentials.setKeyFile(
-            await readKeyFileBuffer(keyFilePath),
-        );
+
+    try {
+        const keyFileBuffer = keyFileChanged
+            ? await readKeyFileBuffer(keyFilePath)
+            : null;
+        if (store.db !== db || !showSettingsModal.value) {
+            settingsBusy.value = false;
+            return;
+        }
+        if (password) {
+            await db.credentials.setPassword(
+                kdbxweb.ProtectedValue.fromString(password),
+            );
+        }
+        if (keyFileChanged) {
+            await db.credentials.setKeyFile(keyFileBuffer);
+        }
+        db.meta.name = normalizedName;
+    } catch (error) {
+        console.error('Database settings update failed:', error);
+        settingsError.value = 'Could not update the database credentials.';
+        settingsBusy.value = false;
+        return;
     }
 
     store.touchDb();
     showSettingsModal.value = false;
+    settingsBusy.value = false;
     const saved = await saveDatabaseChanges();
 
     if (saved && keyFileChanged && store.filePath) {
@@ -1222,7 +1269,7 @@ async function confirmDatabaseSettings({
         saved &&
         password &&
         store.filePath &&
-        localStorage.getItem(`kivarion-biometrics-${store.filePath}`) === 'true'
+        localStorage.getItem(biometricPreferenceKey(store.filePath)) === 'true'
     ) {
         try {
             // Saving the secret triggers a Touch ID prompt, which blurs the
@@ -1243,7 +1290,7 @@ async function confirmDatabaseSettings({
                     id: store.filePath,
                 });
             } catch {}
-            localStorage.removeItem(`kivarion-biometrics-${store.filePath}`);
+            localStorage.removeItem(biometricPreferenceKey(store.filePath));
         }
     }
 }

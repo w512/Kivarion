@@ -3,9 +3,11 @@
         :show="show"
         width="380px"
         labelledby="db-settings-title"
-        @close="$emit('cancel')"
+        :close-on-backdrop="!busy"
+        :close-on-esc="!busy"
+        @close="cancel"
     >
-        <div class="db-settings">
+        <div class="db-settings" :aria-busy="busy">
             <h3 id="db-settings-title">Database Settings</h3>
 
             <div class="form-group">
@@ -14,6 +16,7 @@
                     v-model="localName"
                     placeholder="Database name"
                     class="modal-input"
+                    :disabled="busy"
                     autofocus
                 />
             </div>
@@ -26,6 +29,7 @@
                         :type="showPassword ? 'text' : 'password'"
                         placeholder="New password"
                         class="modal-input"
+                        :disabled="busy"
                     />
                     <button
                         type="button"
@@ -33,6 +37,7 @@
                         :title="
                             showPassword ? 'Hide password' : 'Show password'
                         "
+                        :disabled="busy"
                         @click="showPassword = !showPassword"
                     >
                         <svg
@@ -83,6 +88,7 @@
                     :type="showPassword ? 'text' : 'password'"
                     placeholder="Current password"
                     class="modal-input"
+                    :disabled="busy"
                 />
             </div>
 
@@ -93,6 +99,7 @@
                     :type="showPassword ? 'text' : 'password'"
                     placeholder="Repeat new password"
                     class="modal-input"
+                    :disabled="busy"
                 />
                 <p class="password-warning">
                     Make sure you remember this password. If it is lost, the
@@ -104,12 +111,17 @@
                 <label>Key File</label>
                 <div class="keyfile-row">
                     <span>{{ keyFileLabel }}</span>
-                    <button type="button" @click="selectKeyFile">
+                    <button
+                        type="button"
+                        :disabled="busy"
+                        @click="selectKeyFile"
+                    >
                         Choose…
                     </button>
                     <button
                         v-if="localKeyFilePath"
                         type="button"
+                        :disabled="busy"
                         @click="localKeyFilePath = null"
                     >
                         Remove
@@ -122,10 +134,15 @@
             </p>
 
             <div class="modal-actions">
-                <button class="confirm-btn" @click="handleConfirm">
-                    Save Changes
+                <button
+                    class="confirm-btn"
+                    :disabled="busy"
+                    @click="handleConfirm"
+                >
+                    <span v-if="busy" class="spinner" aria-hidden="true"></span>
+                    {{ busy ? 'Verifying…' : 'Save Changes' }}
                 </button>
-                <button class="cancel-btn" @click="$emit('cancel')">
+                <button class="cancel-btn" :disabled="busy" @click="cancel">
                     Cancel
                 </button>
             </div>
@@ -144,17 +161,20 @@ const props = defineProps({
     show: { type: Boolean, default: false },
     dbName: { type: String, default: '' },
     keyFilePath: { type: String, default: null },
+    busy: { type: Boolean, default: false },
+    error: { type: String, default: '' },
 });
 
-const emit = defineEmits(['confirm', 'cancel']);
+const emit = defineEmits(['confirm', 'cancel', 'clear-error']);
 
 const localName = ref('');
 const localPassword = ref('');
 const localPasswordConfirm = ref('');
 const currentPassword = ref('');
 const localKeyFilePath = ref(null);
-const settingsError = ref('');
+const validationError = ref('');
 const showPassword = ref(false);
+const settingsError = computed(() => validationError.value || props.error);
 
 const hasPasswordChange = computed(
     () =>
@@ -180,7 +200,7 @@ watch(
             localPasswordConfirm.value = '';
             currentPassword.value = '';
             localKeyFilePath.value = props.keyFilePath;
-            settingsError.value = '';
+            validationError.value = '';
             showPassword.value = false;
         }
     },
@@ -195,11 +215,13 @@ watch(
         localKeyFilePath,
     ],
     () => {
-        settingsError.value = '';
+        validationError.value = '';
+        emit('clear-error');
     },
 );
 
 async function selectKeyFile() {
+    if (props.busy) return;
     // The native dialog takes focus away from the window; without this the
     // "lock on focus loss" setting would close the database mid-edit.
     const selected = await withSystemInteraction(() => invoke('pick_key_file'));
@@ -207,28 +229,29 @@ async function selectKeyFile() {
 }
 
 function handleConfirm() {
+    if (props.busy) return;
     const name = localName.value.trim();
     const password = localPassword.value;
     const keyFileChanged = localKeyFilePath.value !== props.keyFilePath;
 
     if (!name) {
-        settingsError.value = 'Database name cannot be empty.';
+        validationError.value = 'Database name cannot be empty.';
         return;
     }
 
     if (hasPasswordChange.value) {
         if (!password) {
-            settingsError.value = 'Enter the new password first.';
+            validationError.value = 'Enter the new password first.';
             return;
         }
         if (password !== localPasswordConfirm.value) {
-            settingsError.value = 'New passwords do not match.';
+            validationError.value = 'New passwords do not match.';
             return;
         }
     }
 
     if ((hasPasswordChange.value || keyFileChanged) && !currentPassword.value) {
-        settingsError.value =
+        validationError.value =
             'Enter the current password to change credentials.';
         return;
     }
@@ -240,6 +263,10 @@ function handleConfirm() {
         keyFilePath: localKeyFilePath.value,
         keyFileChanged,
     });
+}
+
+function cancel() {
+    if (!props.busy) emit('cancel');
 }
 </script>
 
@@ -344,9 +371,14 @@ function handleConfirm() {
     cursor: pointer;
 }
 
-.keyfile-row button:hover {
+.keyfile-row button:hover:not(:disabled) {
     border-color: var(--accent-color);
     color: var(--accent-color);
+}
+
+.keyfile-row button:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 .password-warning {
@@ -373,6 +405,10 @@ function handleConfirm() {
 
 .confirm-btn {
     flex: 2;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
     padding: 0.65rem;
     border-radius: 8px;
     border: none;
@@ -384,9 +420,16 @@ function handleConfirm() {
     transition: all 0.15s;
 }
 
-.confirm-btn:hover {
+.confirm-btn:hover:not(:disabled) {
     background: var(--accent-hover);
     transform: translateY(-1px);
+}
+
+.confirm-btn:disabled,
+.cancel-btn:disabled,
+.toggle-password:disabled {
+    opacity: 0.6;
+    cursor: default;
 }
 
 .cancel-btn {
@@ -401,8 +444,25 @@ function handleConfirm() {
     transition: all 0.15s;
 }
 
-.cancel-btn:hover {
+.cancel-btn:hover:not(:disabled) {
     border-color: var(--text-secondary);
     color: var(--text-primary);
+}
+
+.spinner {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.45);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 </style>

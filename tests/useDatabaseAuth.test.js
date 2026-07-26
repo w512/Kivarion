@@ -263,6 +263,8 @@ describe('useDatabaseAuth.attemptBiometricUnlock', () => {
     test('explains a missing stored password instead of failing silently', async () => {
         const { auth } = makeAuth();
         currentStore.filePath = '/a.kdbx';
+        auth.useBiometrics.value = true;
+        localStorage.setItem('kivarion-biometrics-/a.kdbx', 'true');
         invokeHandlers.load_biometric_password = async () => {
             throw 'BIOMETRIC_NOT_ENROLLED';
         };
@@ -270,6 +272,8 @@ describe('useDatabaseAuth.attemptBiometricUnlock', () => {
         await auth.attemptBiometricUnlock('/a.kdbx');
 
         expect(auth.errorMessage.value).toContain('master password');
+        expect(auth.useBiometrics.value).toBe(false);
+        expect(localStorage.getItem('kivarion-biometrics-/a.kdbx')).toBe(null);
         expect(auth.isLoading.value).toBe(false);
     });
 
