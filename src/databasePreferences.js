@@ -15,6 +15,37 @@ export function collapsedGroupsPreferenceKey(path) {
 }
 
 /**
+ * Normalize the stored collapsed-group state, dropping everything that no
+ * longer means anything.
+ *
+ * Two things used to accumulate in `kivarion-collapsed-groups-<path>` forever:
+ * groups the user expanded again (written as `false` but never removed) and
+ * groups that have since been deleted. Neither is recoverable from the UI, so
+ * the record only ever grew.
+ *
+ * @param {unknown} stored - the parsed localStorage value; anything that is not
+ *   a plain object (`null`, an array, a string from a corrupted write) yields an
+ *   empty map rather than throwing on the first lookup.
+ * @param {Set<string>|null} [knownGroupUuids] - the groups that exist right now.
+ *   `null` means "no database to check against", in which case existence is not
+ *   judged — that must not be a reason to wipe the user's state.
+ * @returns {Record<string, true>} only the groups that are collapsed and exist.
+ */
+export function pruneCollapsedGroups(stored, knownGroupUuids = null) {
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
+        return {};
+    }
+
+    const pruned = {};
+    for (const [uuid, collapsed] of Object.entries(stored)) {
+        if (!collapsed) continue;
+        if (knownGroupUuids && !knownGroupUuids.has(uuid)) continue;
+        pruned[uuid] = true;
+    }
+    return pruned;
+}
+
+/**
  * Remove preferences keyed by an absolute database path while preserving
  * application-wide settings such as theme, backup policy and column widths.
  *

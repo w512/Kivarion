@@ -21,10 +21,14 @@
                         v-if="field.href"
                         :href="field.href"
                         target="_blank"
-                        rel="noopener"
+                        rel="noopener noreferrer"
+                        @click.prevent="openLink(field.href)"
                         >{{ field.value }}</a
                     >
                     <span v-else>{{ field.value }}</span>
+                    <p v-if="linkError" class="link-error" role="alert">
+                        {{ linkError }}
+                    </p>
                 </div>
                 <div
                     v-else
@@ -89,7 +93,7 @@
                         <button
                             class="copy-btn"
                             :title="'Copy ' + field.label.toLowerCase()"
-                            @click="copy(field.value, field.id)"
+                            @click="copy(field.value, field.id, field.secret)"
                         >
                             <svg
                                 width="14"
@@ -122,7 +126,8 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { getField, normalizeHttpUrl } from '../../utils';
 import { useClipboard } from '../../composables/useClipboard';
 
@@ -133,7 +138,13 @@ const props = defineProps({
 });
 
 const showPassword = ref(false);
+const linkError = ref('');
 const { activeCopyField, copy: copyToClipboard } = useClipboard();
+
+watch(
+    () => props.entry,
+    () => (linkError.value = ''),
+);
 
 const standardFields = computed(() => [
     { id: 'Title', label: 'Title', value: getField(props.entry, 'Title') },
@@ -152,10 +163,13 @@ const standardFields = computed(() => [
               },
           ]
         : []),
+    // The only secret among the main fields, and so the only one whose copy
+    // arms the clipboard auto-clear.
     {
         id: 'Password',
         label: 'Password',
         value: getField(props.entry, 'Password'),
+        secret: true,
     },
     {
         id: 'URL',
@@ -170,8 +184,44 @@ function maskedPassword(pw) {
     return pw ? '••••••••' : '';
 }
 
-function copy(text, fieldId) {
-    return copyToClipboard(text, fieldId, { autoClear: true });
+/**
+ * Open the entry's site in the user's browser.
+ *
+ * The anchor's own navigation is always prevented. Left to the webview,
+ * `target="_blank"` does nothing at all on macOS — wry only answers WKWebView's
+ * `createWebViewWithConfiguration:` when the app registered a new-window
+ * handler, and Kivarion does not — while on Windows and Linux it can instead
+ * navigate the app's own webview to the site, leaving an unlocked database in a
+ * page some remote origin controls. Handing the URL to the OS avoids both and
+ * behaves the same everywhere.
+ *
+ * `href` is `normalizeHttpUrl`'s output, so only `http:`/`https:` can ever get
+ * here — an entry whose URL is `file:` or `javascript:` renders as plain text
+ * with no link at all. The backend's `opener:default` scope allows the same
+ * schemes, so it is a second gate rather than the only one.
+ *
+ * Deliberately *not* wrapped in `withSystemInteraction`: unlike a file dialog,
+ * this is the user genuinely leaving for another app, and "lock on focus loss"
+ * should do exactly what it says.
+ */
+async function openLink(href) {
+    linkError.value = '';
+    try {
+        await openUrl(href);
+    } catch (error) {
+        console.error('Could not open the link:', error);
+        // A link that silently does nothing is the bug this replaced; say so
+        // rather than reintroducing it in a rarer form.
+        linkError.value = 'Could not open this link in your browser.';
+    }
+}
+
+// Only a secret is worth wiping from the clipboard on a timer. Doing it for the
+// title, username, e-mail, URL or notes as well emptied the clipboard under a
+// user who had copied one of them to paste somewhere later, and left an
+// ordinary field tracked as the managed secret.
+function copy(text, fieldId, secret = false) {
+    return copyToClipboard(text, fieldId, { autoClear: secret });
 }
 </script>
 
@@ -223,6 +273,12 @@ function copy(text, fieldId) {
 .field-value.notes {
     white-space: pre-wrap;
     line-height: 1.5;
+}
+
+.link-error {
+    margin-top: 0.35rem;
+    color: var(--error-color);
+    font-size: 0.78rem;
 }
 
 .field-actions {

@@ -11,13 +11,64 @@ import { toExactArrayBuffer } from './utils.js';
  * is on disk. Every unsaved in-memory change is dropped by design, so callers
  * must confirm with the user first.
  *
+ * `fallbackCredentials` covers the one case where the open database's
+ * credentials are expected not to fit the file: a master password or key file
+ * changed here but not yet written. The file is still encrypted with the
+ * previous credentials, and discarding local changes has to discard that rekey
+ * along with them. Only `InvalidKey` falls back — a corrupt file must still be
+ * reported as corrupt — and the bytes are read once for both attempts.
+ *
  * @param {string} path
  * @param {kdbxweb.Credentials} credentials - normally `store.db.credentials`
+ * @param {kdbxweb.Credentials} [fallbackCredentials]
  * @returns {Promise<kdbxweb.Kdbx>}
  */
-export async function loadDatabaseFromDisk(path, credentials) {
+export async function loadDatabaseFromDisk(
+    path,
+    credentials,
+    fallbackCredentials = null,
+) {
     const bytes = await invoke('read_database', { path });
-    return kdbxweb.Kdbx.load(toExactArrayBuffer(bytes), credentials);
+    const buffer = toExactArrayBuffer(bytes);
+
+    try {
+        return await kdbxweb.Kdbx.load(buffer, credentials);
+    } catch (error) {
+        if (!fallbackCredentials || error?.code !== 'InvalidKey') throw error;
+        return kdbxweb.Kdbx.load(buffer, fallbackCredentials);
+    }
+}
+
+/**
+ * Build the credentials that a master-password / key-file change results in.
+ *
+ * Both halves are prepared and validated here so the caller can swap the result
+ * in with a single assignment. Calling `setPassword` on the live credentials and
+ * then having `setKeyFile` reject — a key file of an unsupported version does
+ * that — used to leave the open database rekeyed halfway, encrypted under a
+ * password nobody had asked for. Rejects instead, leaving `current` untouched.
+ *
+ * Whichever half the user did not touch is carried over from `current`; its
+ * hashes are all we have (the plaintext password is not kept), which is exactly
+ * what the new credentials need.
+ *
+ * @param {kdbxweb.Credentials} current
+ * @param {{ password?: string, keyFileBuffer?: ArrayBuffer|null, keyFileChanged?: boolean }} change
+ * @returns {Promise<kdbxweb.Credentials>}
+ */
+export async function buildUpdatedCredentials(
+    current,
+    { password = '', keyFileBuffer = null, keyFileChanged = false } = {},
+) {
+    const updated = new kdbxweb.Credentials(
+        password ? kdbxweb.ProtectedValue.fromString(password) : null,
+        keyFileChanged ? keyFileBuffer : null,
+    );
+    await updated.ready;
+
+    if (!password) updated.passwordHash = current.passwordHash;
+    if (!keyFileChanged) updated.keyFileHash = current.keyFileHash;
+    return updated;
 }
 
 /**

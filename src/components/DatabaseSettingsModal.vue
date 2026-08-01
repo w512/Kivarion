@@ -196,13 +196,21 @@ watch(
     (isShowing) => {
         if (isShowing) {
             localName.value = props.dbName;
-            localPassword.value = '';
-            localPasswordConfirm.value = '';
-            currentPassword.value = '';
             localKeyFilePath.value = props.keyFilePath;
             validationError.value = '';
-            showPassword.value = false;
+            return;
         }
+
+        // Clear on the way *out*, not on the way in. This component stays
+        // mounted for as long as the database is open, so a password left here
+        // after Cancel stayed reachable for the whole session — and in any crash
+        // dump or swap written during it. Doing it here also means a reopened
+        // modal can never show a previous attempt's password, and the revealed
+        // plaintext does not persist either.
+        localPassword.value = '';
+        localPasswordConfirm.value = '';
+        currentPassword.value = '';
+        showPassword.value = false;
     },
 );
 

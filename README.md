@@ -9,7 +9,7 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 ## Key Features
 
 - **Full KDBX 4 support** — securely work with KeePass 2.x databases.
-- **Secure decryption** — uses **Argon2** (WASM) for key derivation.
+- **Secure decryption** — uses **Argon2** for key derivation, computed by the native Rust backend so the interface stays responsive while a large database is unlocked or saved.
 - **Flexible unlock** — open a database with a master password, a key file, or both. The key file is remembered per database.
 - **Create databases** — make a brand-new `.kdbx` from the app, protected by a master password.
 - **Three-column interface** — convenient navigation with a group tree, entry list, and resizable detail panel.
@@ -33,15 +33,15 @@ Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. Some features 
 
 ## Technology Stack
 
-| Component    | Technology                                                                 |
-| ------------ | -------------------------------------------------------------------------- |
-| **Core**     | [Tauri 2](https://v2.tauri.app/) (Rust)                                    |
-| **Frontend** | [Vue 3](https://vuejs.org/) (Composition API)                              |
-| **State**    | [Pinia](https://pinia.vuejs.org/)                                          |
-| **Routing**  | [Vue Router](https://router.vuejs.org/)                                    |
-| **KDBX**     | [kdbxweb](https://github.com/keeweb/kdbxweb)                               |
-| **Crypto**   | [argon2-browser](https://github.com/antelle/argon2-browser) (Bundled WASM) |
-| **Styling**  | Vanilla CSS (Variables & Glassmorphism)                                    |
+| Component    | Technology                                                                                  |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| **Core**     | [Tauri 2](https://v2.tauri.app/) (Rust)                                                     |
+| **Frontend** | [Vue 3](https://vuejs.org/) (Composition API)                                               |
+| **State**    | [Pinia](https://pinia.vuejs.org/)                                                           |
+| **Routing**  | [Vue Router](https://router.vuejs.org/)                                                     |
+| **KDBX**     | [kdbxweb](https://github.com/keeweb/kdbxweb)                                                |
+| **Crypto**   | [RustCrypto argon2](https://github.com/RustCrypto/password-hashes) (native, in the backend) |
+| **Styling**  | Vanilla CSS (Variables & Glassmorphism)                                                     |
 
 ## Development
 
@@ -100,7 +100,7 @@ src/
 ├── pages/               # Main screens: HomePage, DatabasePage, SettingsPage
 ├── components/          # Modular UI (modals, header, EntryDetail, GroupTree, etc.)
 ├── composables/         # Shared logic (auth, actions, resizing, icons, attachments)
-├── crypto-init.js       # kdbxweb configuration for Argon2
+├── crypto-init.js       # points kdbxweb's Argon2 at the Rust backend
 ├── dbHelper.js          # Low-level filesystem operations
 └── utils.js             # Formatting and password generation utilities
 

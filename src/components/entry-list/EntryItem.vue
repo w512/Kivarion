@@ -74,8 +74,11 @@ const props = defineProps({
     canRestore: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(['select', 'restore', 'drag-start']);
+defineEmits(['select', 'restore']);
 
+// The drop target (`GroupNode`) reads the dragged entry straight off the drag
+// event, so the payload below is the whole mechanism — there is no drag-start
+// event for a parent to listen to.
 function onDragStart(event) {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData(
@@ -83,7 +86,6 @@ function onDragStart(event) {
         props.entry.uuid,
     );
     event.dataTransfer.setData('text/plain', props.entry.uuid);
-    emit('drag-start', props.entry.uuid);
 }
 
 const formattedDate = computed(() => {

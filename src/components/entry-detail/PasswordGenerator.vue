@@ -206,10 +206,16 @@ const regenerate = () => {
 };
 
 const close = () => {
+    // Only the modal's contents unmount; this component stays alive for the
+    // whole edit session, so a generated password left here would outlive the
+    // dialog by a long way. `watch(props.show)` regenerates on the next open.
+    currentPassword.value = '';
     emit('close');
 };
 
 const apply = () => {
+    // Emit before clearing: `close()` drops `currentPassword`, and the order
+    // here is what keeps "Use Password" from handing back an empty string.
     emit('apply', currentPassword.value);
     close();
 };

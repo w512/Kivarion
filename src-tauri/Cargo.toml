@@ -34,6 +34,19 @@ percent-encoding = "2"
 tauri-plugin-dialog = "2.6.0"
 tauri-plugin-http = "2"
 tauri-plugin-os = "2"
+# KDBX 4 key derivation (see `crypto.rs`). It runs here rather than as WASM in
+# the webview so it stays off the renderer's main thread. Only the low-level
+# API is used, so the default `password-hash`/`rand` features are off;
+# `zeroize` wipes the algorithm's memory blocks after each derivation.
+# Pinned to the stable 0.5.x: multi-lane hashing (the `parallel` feature, on
+# rayon) only exists in 0.6.0-rc, and a release-candidate crypto crate has no
+# business on a password manager's critical path.
+argon2 = { version = "0.5.3", default-features = false, features = [
+    "alloc",
+    "zeroize",
+] }
+# Wipes this side's copy of the key material once the derivation is done.
+zeroize = { version = "1", default-features = false, features = ["alloc"] }
 
 [target.'cfg(unix)'.dependencies]
 # PID liveness checks for save lock files without spawning `kill -0`.

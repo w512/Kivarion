@@ -45,7 +45,14 @@ const props = defineProps({
     depth: { type: Number, default: 0 },
     allEntriesCount: { type: Number, default: 0 },
     refreshKey: { type: Number, default: 0 },
-    collapsedGroups: { type: Object, default: () => ({}) },
+});
+
+// A model rather than a prop this component writes into: the parent owns the
+// map (it persists it per database), and mutating its object in place only
+// worked because that parent happened to deep-watch a ref.
+const collapsedGroups = defineModel('collapsedGroups', {
+    type: Object,
+    default: () => ({}),
 });
 
 const emit = defineEmits([
@@ -110,21 +117,31 @@ const visibleRows = computed(() => {
 });
 
 function isCollapsed(uuid) {
-    return !!props.collapsedGroups[uuid];
+    return !!collapsedGroups.value[uuid];
+}
+
+// Only collapsed groups are recorded, and expanding one drops its key rather
+// than storing `false`. The map is persisted per database, so an entry for
+// every group the user ever touched would grow for the life of the vault.
+function setCollapsed(uuid, collapsed) {
+    const next = { ...collapsedGroups.value };
+    if (collapsed) next[uuid] = true;
+    else delete next[uuid];
+    collapsedGroups.value = next;
 }
 
 function toggleCollapse(uuid) {
-    props.collapsedGroups[uuid] = !props.collapsedGroups[uuid];
+    setCollapsed(uuid, !isCollapsed(uuid));
 }
 
 function handleAddGroup(uuid) {
-    props.collapsedGroups[uuid] = false;
+    setCollapsed(uuid, false);
     emit('add-group', uuid);
 }
 
 function handleMoveGroup(payload) {
     if (payload?.position === 'inside' && payload.targetUuid) {
-        props.collapsedGroups[payload.targetUuid] = false;
+        setCollapsed(payload.targetUuid, false);
     }
     emit('move-group', payload);
 }

@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 mod access;
+mod crypto;
 
 use access::{Access, PathAccess};
 
@@ -76,7 +77,7 @@ async fn read_database(
 const ARG_HEADER_PREFIX: &str = "x-kivarion-";
 
 /// Read one percent-encoded scalar argument from the request headers.
-fn arg(request: &tauri::ipc::Request<'_>, name: &str) -> Option<String> {
+pub(crate) fn arg(request: &tauri::ipc::Request<'_>, name: &str) -> Option<String> {
     let raw = request
         .headers()
         .get(format!("{ARG_HEADER_PREFIX}{name}"))?
@@ -94,7 +95,7 @@ fn arg(request: &tauri::ipc::Request<'_>, name: &str) -> Option<String> {
 /// (the custom protocol was blocked). Bulk commands cannot work in that mode,
 /// and neither can reading a database, so this is reported rather than silently
 /// handled with a slow path.
-fn raw_body<'a>(request: &'a tauri::ipc::Request<'_>) -> Result<&'a [u8], String> {
+pub(crate) fn raw_body<'a>(request: &'a tauri::ipc::Request<'_>) -> Result<&'a [u8], String> {
     match request.body() {
         tauri::ipc::InvokeBody::Raw(bytes) => Ok(bytes),
         tauri::ipc::InvokeBody::Json(_) => {
@@ -147,13 +148,77 @@ fn now_ms() -> u128 {
         .unwrap_or(0)
 }
 
-fn parse_lock_value(contents: &str, key: &str) -> Option<u128> {
+fn parse_lock_field<'a>(contents: &'a str, key: &str) -> Option<&'a str> {
     contents.split_whitespace().find_map(|part| {
         let (part_key, value) = part.split_once('=')?;
-        (part_key == key)
-            .then(|| value.parse::<u128>().ok())
-            .flatten()
+        (part_key == key).then_some(value)
     })
+}
+
+fn parse_lock_value(contents: &str, key: &str) -> Option<u128> {
+    parse_lock_field(contents, key).and_then(|value| value.parse::<u128>().ok())
+}
+
+/// Keeps a lock-file value on one whitespace-free token. The id is only ever
+/// compared against this machine's own, so mangling an exotic hostname is
+/// harmless — two machines whose ids collide simply fall back to the PID check.
+fn sanitize_lock_value(value: &str) -> String {
+    value
+        .trim()
+        .chars()
+        .take(64)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn read_machine_id() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
+            if let Some(id) = std::fs::read_to_string(path)
+                .ok()
+                .filter(|id| !id.trim().is_empty())
+            {
+                return Some(id);
+            }
+        }
+    }
+
+    let hostname = tauri_plugin_os::hostname();
+    (!hostname.trim().is_empty()).then_some(hostname)
+}
+
+/// Identifies the machine that wrote a lock file. On Linux the systemd/D-Bus
+/// machine id is preferred because it survives the hostname changing under us
+/// (a DHCP-derived hostname does that on its own); elsewhere the hostname is
+/// the best answer available without spawning anything. When neither can be
+/// read the id is `unknown`, which means two such machines see each other's
+/// locks as local and fall back to the plain PID check — the behaviour that
+/// predates this field.
+fn machine_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    ID.get_or_init(|| {
+        let id = sanitize_lock_value(&read_machine_id().unwrap_or_default());
+        if id.is_empty() {
+            "unknown".to_string()
+        } else {
+            id
+        }
+    })
+}
+
+/// A lock file written before this field existed is treated as local: an
+/// upgrade must not let one window take over the lock of another window that
+/// is genuinely writing.
+fn lock_was_written_here(contents: &str) -> bool {
+    parse_lock_field(contents, "host").is_none_or(|host| host == machine_id())
 }
 
 #[cfg(unix)]
@@ -219,6 +284,17 @@ fn lock_file_is_stale(path: &std::path::Path) -> bool {
         }
     }
 
+    // A vault in a synced folder (Syncthing/Dropbox/iCloud) carries its lock
+    // file to the other machines too, and a PID from another system means
+    // nothing here: PID numbers are small and reused, so a foreign writer's PID
+    // that happens to be taken locally reads as "still saving" for the whole
+    // stale window, and one that happens to be free reads as stale and gets
+    // taken over while that writer is mid-write. So the PID is only consulted
+    // for a lock this machine wrote; a foreign one is judged by age alone.
+    if !lock_was_written_here(&contents) {
+        return false;
+    }
+
     let pid = parse_lock_value(&contents, "pid").and_then(|pid| u32::try_from(pid).ok());
     matches!(pid, Some(pid) if !process_is_running(pid))
 }
@@ -241,7 +317,13 @@ impl SaveLockGuard {
                 .open(&path)
             {
                 Ok(mut file) => {
-                    let _ = writeln!(file, "pid={} created_ms={}", std::process::id(), now_ms());
+                    let _ = writeln!(
+                        file,
+                        "pid={} host={} created_ms={}",
+                        std::process::id(),
+                        machine_id(),
+                        now_ms()
+                    );
                     let _ = file.sync_all();
 
                     return Ok(Self {
@@ -305,6 +387,76 @@ async fn file_mtime(
         .flatten())
 }
 
+/// Owner-only permissions for a database file: read/write for the user who
+/// created it, nothing for anyone else.
+#[cfg(unix)]
+const OWNER_ONLY_MODE: u32 = 0o600;
+
+/// Create the temp file the save writes into.
+///
+/// On unix it is opened at [`OWNER_ONLY_MODE`] rather than at `0666 & !umask`,
+/// so the file never exists world-readable — not even in the window between the
+/// write and the rename. `apply_saved_file_permissions` below then settles the
+/// final mode; the flag only helps when the file is created, so a temp file left
+/// behind by a crashed save (reused here rather than refused, or the save would
+/// stay broken until someone deleted it by hand) still gets its mode fixed
+/// there.
+fn create_temp_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(OWNER_ONLY_MODE);
+    }
+    options.open(path)
+}
+
+/// Decide the permissions of the file the save is about to move into place.
+///
+/// The atomic save writes a brand-new file and renames it over the target, so
+/// the saved database carries the *temp* file's permissions rather than the
+/// target's. That leaves two cases:
+///
+/// * **Replacing an existing vault** — its permissions are preserved. Without
+///   this a `.kdbx` the user (or KeePassXC) had locked down to 0600 became
+///   readable by everyone on the machine on the very first auto-save, the temp
+///   file having been created at `0666 & !umask` — typically 0644. Only acts
+///   when the two actually differ: on a filesystem without real permission bits
+///   (exFAT/FAT on a removable volume) every file reports the same
+///   mount-derived mode, so there is nothing to carry over and `chmod` would
+///   only fail. When they do differ, a failure is reported rather than ignored —
+///   the alternative is writing a vault more exposed than the one it replaces,
+///   without telling anyone.
+/// * **Creating a new one** — there is nothing to preserve, so on unix it is
+///   pinned to owner-only instead of whatever the umask happened to allow. This
+///   repeats what `create_temp_file` already asked for, because that flag has no
+///   effect on a temp file left behind by an earlier crashed save. Best effort:
+///   a filesystem that cannot represent permissions at all must not be a reason
+///   to refuse to create a database on it.
+fn apply_saved_file_permissions(
+    tmp: &std::path::Path,
+    original: Option<&std::fs::Permissions>,
+) -> Result<(), String> {
+    let Some(original) = original else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(OWNER_ONLY_MODE));
+        }
+        return Ok(());
+    };
+
+    let current = std::fs::metadata(tmp)
+        .map_err(|e| e.to_string())?
+        .permissions();
+    if &current == original {
+        return Ok(());
+    }
+
+    std::fs::set_permissions(tmp, original.clone()).map_err(|e| e.to_string())
+}
+
 /// Rotate `<path>.bak` → `<path>.bak.1` → … keeping at most `depth` backups,
 /// then copy the current `target` into the freshly-vacated `<path>.bak` slot.
 fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
@@ -335,8 +487,9 @@ fn rotate_backups(target: &std::path::Path, depth: u32) -> std::io::Result<()> {
 ///
 /// First acquires a sibling lock file with atomic `create_new`, serializing all
 /// Kivarion writers for this target across processes. Then writes to a sibling
-/// temp file (fsync'd), optionally rotates `.bak` backups, renames the temp file
-/// over the original and fsyncs the directory. A crash mid-write leaves the
+/// temp file (fsync'd), gives it the permissions of the file it will replace,
+/// optionally rotates `.bak` backups, renames the temp file over the original
+/// and fsyncs the directory. A crash mid-write leaves the
 /// original `.kdbx` intact; `std::fs::rename` replaces an existing destination
 /// on every platform (including Windows via `MoveFileEx`), so the swap is
 /// atomic everywhere.
@@ -391,17 +544,30 @@ fn save_database_bytes(
         }
     }
 
+    // The rename in step 4 replaces the file wholesale, so the permissions of
+    // the vault being saved have to be read now and re-applied by hand.
+    let original_permissions = std::fs::metadata(target)
+        .ok()
+        .map(|metadata| metadata.permissions());
+
     // 1. Write the new contents to the temp file and flush to stable storage.
     {
         use std::io::Write;
-        let mut file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        let mut file = create_temp_file(&tmp).map_err(|e| e.to_string())?;
         if let Err(e) = file.write_all(data).and_then(|_| file.sync_all()) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
         }
     }
 
-    // 2. Back up the current good file (with rotation) before replacing it.
+    // 2. Preserve the original file's permissions, or keep a brand-new database
+    //    owner-only.
+    if let Err(e) = apply_saved_file_permissions(&tmp, original_permissions.as_ref()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    // 3. Back up the current good file (with rotation) before replacing it.
     if target.exists() && backup.unwrap_or(true) {
         if let Err(e) = rotate_backups(target, backup_depth.unwrap_or(3)) {
             let _ = std::fs::remove_file(&tmp);
@@ -409,13 +575,13 @@ fn save_database_bytes(
         }
     }
 
-    // 3. Atomically replace the original with the temp file.
+    // 4. Atomically replace the original with the temp file.
     if let Err(e) = std::fs::rename(&tmp, target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
     }
 
-    // 4. fsync the directory so the rename itself is durable.
+    // 5. fsync the directory so the rename itself is durable.
     if let Some(dir) = target.parent() {
         if let Ok(handle) = std::fs::File::open(dir) {
             let _ = handle.sync_all();
@@ -1057,6 +1223,12 @@ mod tests {
         std::fs::read(path).unwrap()
     }
 
+    #[cfg(unix)]
+    fn mode_of(path: &std::path::Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
     #[test]
     fn run_blocking_leaves_the_calling_thread() {
         let caller = std::thread::current().id();
@@ -1197,6 +1369,92 @@ mod tests {
         assert!(!with_suffix(&target, ".tmp").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn save_database_keeps_the_original_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        save_database_bytes(&target, b"new", None, Some(true), Some(2)).unwrap();
+
+        // The save renames a fresh temp file over the target, so without
+        // carrying the mode across, a vault locked to 0600 came back 0644
+        // (`File::create` uses 0666 & !umask).
+        assert_eq!(mode_of(&target), 0o600);
+        // The rotated backup is a copy of that file and holds the same secrets.
+        assert_eq!(mode_of(&backup_path(&target, 0)), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_database_restores_permissions_across_repeated_saves() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        for _ in 0..3 {
+            save_database_bytes(&target, b"new", None, Some(false), Some(1)).unwrap();
+        }
+
+        // Each save is a fresh file: the mode must not drift towards the umask
+        // default over a session's worth of auto-saves.
+        assert_eq!(mode_of(&target), 0o640);
+    }
+
+    #[test]
+    fn save_database_creates_a_file_that_did_not_exist_yet() {
+        let dir = TempDir::new();
+        let target = dir.path().join("fresh.kdbx");
+
+        // A database created from the app: there are no permissions to carry
+        // over and nothing to back up, and the save must still go through.
+        save_database_bytes(&target, b"new", None, Some(true), Some(2)).unwrap();
+
+        assert_eq!(read_bytes(&target), b"new");
+        assert!(!backup_path(&target, 0).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_database_creates_a_new_database_owner_only() {
+        let dir = TempDir::new();
+        let target = dir.path().join("fresh.kdbx");
+
+        save_database_bytes(&target, b"new", None, Some(true), Some(2)).unwrap();
+
+        // Nothing to preserve, so the new vault keeps owner-only permissions
+        // rather than whatever the umask allows — 0644 under the usual 022,
+        // i.e. readable by every account on the machine.
+        assert_eq!(mode_of(&target), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_database_fixes_the_mode_of_a_leftover_temp_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let target = dir.path().join("fresh.kdbx");
+        // A temp file left behind by a save that crashed. It is reused (the
+        // alternative is a save that stays broken until someone deletes it by
+        // hand), so its mode must not survive into the database.
+        let tmp = with_suffix(&target, ".tmp");
+        std::fs::write(&tmp, b"partial").unwrap();
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+        save_database_bytes(&target, b"new", None, Some(true), Some(2)).unwrap();
+
+        assert_eq!(read_bytes(&target), b"new");
+        assert_eq!(mode_of(&target), 0o600);
+    }
+
     #[test]
     fn save_database_rejects_stale_mtime_without_overwriting() {
         let dir = TempDir::new();
@@ -1211,6 +1469,120 @@ mod tests {
         assert_eq!(read_bytes(&target), b"current");
         assert!(!backup_path(&target, 0).exists());
         assert!(!with_suffix(&target, ".tmp").exists());
+        assert!(!lock_path(&target).exists());
+    }
+
+    /// Reads as dead everywhere: it exceeds `pid_t`, so the unix conversion
+    /// fails, and no `tasklist` row matches it on Windows.
+    const DEAD_PID: u32 = u32::MAX;
+
+    fn write_lock_file(target: &std::path::Path, contents: &str) {
+        std::fs::write(lock_path(target), contents).unwrap();
+    }
+
+    #[test]
+    fn machine_id_is_a_single_sanitized_token() {
+        let id = machine_id();
+
+        assert!(!id.is_empty());
+        assert_eq!(id, sanitize_lock_value(id));
+        assert!(!id.chars().any(char::is_whitespace));
+    }
+
+    #[test]
+    fn sanitize_lock_value_replaces_separators_and_truncates() {
+        assert_eq!(sanitize_lock_value(" my host.local\n"), "my_host.local");
+        assert_eq!(sanitize_lock_value(&"x".repeat(200)).len(), 64);
+    }
+
+    #[test]
+    fn a_lock_file_from_another_machine_ignores_the_pid() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+
+        // Fresh: locked, even though the PID it names is dead here. The writer
+        // is on the other machine and its PID says nothing about that.
+        write_lock_file(
+            &target,
+            &format!(
+                "pid={DEAD_PID} host=another-machine created_ms={}",
+                now_ms()
+            ),
+        );
+        assert!(!lock_file_is_stale(&lock_path(&target)));
+
+        // Old: stale by age alone, even though the PID it names is alive here.
+        write_lock_file(
+            &target,
+            &format!(
+                "pid={} host=another-machine created_ms=0",
+                std::process::id()
+            ),
+        );
+        assert!(lock_file_is_stale(&lock_path(&target)));
+    }
+
+    #[test]
+    fn a_lock_file_from_this_machine_still_follows_the_pid() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+
+        write_lock_file(
+            &target,
+            &format!(
+                "pid={DEAD_PID} host={} created_ms={}",
+                machine_id(),
+                now_ms()
+            ),
+        );
+        assert!(lock_file_is_stale(&lock_path(&target)));
+
+        write_lock_file(
+            &target,
+            &format!(
+                "pid={} host={} created_ms={}",
+                std::process::id(),
+                machine_id(),
+                now_ms()
+            ),
+        );
+        assert!(!lock_file_is_stale(&lock_path(&target)));
+    }
+
+    #[test]
+    fn save_database_refuses_a_fresh_lock_file_from_another_machine() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        std::fs::write(&target, b"old").unwrap();
+        write_lock_file(
+            &target,
+            &format!(
+                "pid={DEAD_PID} host=another-machine created_ms={}",
+                now_ms()
+            ),
+        );
+
+        let err = save_database_bytes(&target, b"new", None, Some(false), Some(1)).unwrap_err();
+
+        assert!(err.starts_with("SAVE_LOCKED"));
+        assert_eq!(read_bytes(&target), b"old");
+    }
+
+    #[test]
+    fn a_taken_lock_file_records_this_machine() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+        let guard = SaveLockGuard::acquire(&target).unwrap();
+
+        let contents = std::fs::read_to_string(lock_path(&target)).unwrap();
+        assert_eq!(parse_lock_field(&contents, "host"), Some(machine_id()));
+        assert_eq!(
+            parse_lock_value(&contents, "pid"),
+            Some(u128::from(std::process::id()))
+        );
+        assert!(lock_was_written_here(&contents));
+
+        drop(guard);
         assert!(!lock_path(&target).exists());
     }
 
@@ -1232,6 +1604,8 @@ mod tests {
         let dir = TempDir::new();
         let target = dir.path().join("vault.kdbx");
         std::fs::write(&target, b"old").unwrap();
+        // No `host=`: a lock file written by a version that predates the field
+        // counts as local, so its PID still decides.
         std::fs::write(
             lock_path(&target),
             format!("pid={} created_ms={}", std::process::id(), now_ms()),
@@ -1583,6 +1957,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crypto::argon2_hash,
             read_database,
             file_mtime,
             save_database,

@@ -197,6 +197,49 @@ describe('useDatabaseAuth.decrypt', () => {
         expect(currentStore.db).toBeUndefined();
     });
 
+    test('records the mtime of the bytes it read, not of the file afterwards', async () => {
+        const { auth } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        auth.password.value = 'pw';
+        const order = [];
+        let diskMtime = 1000;
+        invokeHandlers.file_mtime = async () => {
+            order.push('mtime');
+            return diskMtime;
+        };
+        invokeHandlers.read_database = async () => {
+            order.push('read');
+            // Someone else writes to the file while this open is in flight (a
+            // synced folder does this on its own). Its timestamp must not be
+            // recorded as known, or the next save's concurrency check passes
+            // and overwrites those changes with no conflict modal.
+            diskMtime = 5000;
+            return new Uint8Array([1, 2, 3]);
+        };
+
+        await auth.decrypt();
+
+        expect(order).toEqual(['mtime', 'read']);
+        expect(currentStore.knownMtime).toBe(1000);
+    });
+
+    test('still opens the database when the mtime cannot be read', async () => {
+        const { auth, router } = makeAuth();
+        currentStore.filePath = '/a.kdbx';
+        auth.password.value = 'pw';
+        invokeHandlers.file_mtime = async () => {
+            throw new Error('nope');
+        };
+
+        await auth.decrypt();
+
+        expect(currentStore.db).toBeDefined();
+        expect(router.push).toHaveBeenCalledTimes(1);
+        // Unknown rather than wrong: `saveDatabase` sends no expected mtime, so
+        // the first save skips the check instead of asserting a stale value.
+        expect(currentStore.knownMtime).toBe(null);
+    });
+
     test('reports an incorrect password on an InvalidKey error', async () => {
         const { auth } = makeAuth();
         currentStore.filePath = '/a.kdbx';
@@ -530,5 +573,18 @@ describe('useDatabaseAuth.createDatabase', () => {
 
         expect(saveSpy).not.toHaveBeenCalled();
         expect(router.push).not.toHaveBeenCalled();
+    });
+
+    test('drops the typed master password when creation is cancelled', async () => {
+        const { auth } = makeAuth();
+        fillForm(auth, 'Vault', 'abandoned-master-password');
+
+        auth.cancelCreate();
+
+        // A JS string cannot be wiped, but keeping the reference alive for the
+        // rest of the session — and in anything dumped during it — buys nothing.
+        expect(auth.newPassword.value).toBe('');
+        expect(auth.newPasswordConfirm.value).toBe('');
+        expect(auth.step.value).toBe(1);
     });
 });

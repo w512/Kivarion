@@ -52,7 +52,6 @@
                         :can-restore="canRestore"
                         @select="emit('select', row.entry.uuid)"
                         @restore="emit('restore', row.entry.uuid)"
-                        @drag-start="emit('entry-drag-start', row.entry.uuid)"
                     />
                 </div>
             </div>
@@ -72,13 +71,11 @@ const props = defineProps({
     canRestore: { type: Boolean, default: false },
 });
 
-const emit = defineEmits([
-    'select',
-    'add',
-    'delete',
-    'restore',
-    'entry-drag-start',
-]);
+// Deleting an entry is offered by `EntryDetail`, not by a list row: there is no
+// per-row delete button to emit from. Dragging an entry onto a group travels
+// through the drag event's own `application/x-kivarion-entry` payload (set in
+// `EntryItem`, read in `GroupNode`), so it needs no emit either.
+const emit = defineEmits(['select', 'add', 'restore']);
 
 // Normalize persisted value (legacy 'date' meant last-modified -> 'created' here).
 function normalizeSortBy(v) {

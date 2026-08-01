@@ -2,7 +2,7 @@ import { ref, nextTick } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
-import { saveDatabase } from '../dbHelper.js';
+import { readFileMtime, saveDatabase } from '../dbHelper.js';
 import { toExactArrayBuffer } from '../utils.js';
 import { biometricPreferenceKey } from '../databasePreferences.js';
 import { withSystemInteraction } from './useSystemInteraction.js';
@@ -290,6 +290,15 @@ export function useDatabaseAuth(router, passwordInputRef) {
         errorMessage.value = '';
 
         try {
+            // Read the mtime *before* the bytes. Reading it afterwards pairs a
+            // timestamp taken after the KDF (seconds on a large vault) with the
+            // copy that was read before it: an external write landing in that
+            // window would be recorded as "already known", the next save's
+            // concurrency check would pass, and those changes would be
+            // overwritten with no conflict modal. Taken first, the worst case is
+            // a false conflict the user gets to resolve.
+            const mtimeBeforeRead = await readFileMtime(path);
+
             const fileContents = await invoke('read_database', { path });
             const arrayBuffer = toExactArrayBuffer(fileContents);
 
@@ -305,12 +314,9 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
             store.db = db;
             store.fileName = fileName.value;
-            // Track the file's mtime so later saves can detect external changes.
-            try {
-                store.knownMtime = await invoke('file_mtime', { path });
-            } catch {
-                store.knownMtime = null;
-            }
+            // The timestamp of the bytes now in memory, so later saves can
+            // detect external changes.
+            store.knownMtime = mtimeBeforeRead;
 
             // Remember (or forget) the key file association for this database.
             await writeKeyFilePreference(path, keyPath);
@@ -368,6 +374,12 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
     function cancelCreate() {
         errorMessage.value = '';
+        // A JS string cannot be wiped, but the reference can go: leaving the
+        // abandoned master password reachable for the rest of the session (and
+        // in any crash dump or swap taken during it) buys nothing. `startCreate`
+        // would overwrite these anyway, so nothing is lost by dropping them now.
+        newPassword.value = '';
+        newPasswordConfirm.value = '';
         step.value = 1;
     }
 

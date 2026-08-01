@@ -74,11 +74,11 @@
             <aside class="sidebar">
                 <div class="sidebar-title">Groups</div>
                 <GroupTree
+                    v-model:collapsed-groups="collapsedGroups"
                     :groups="groupTree"
                     :selected-group-uuid="store.selectedGroupUuid"
                     :all-entries-count="totalEntriesCount"
                     :refresh-key="store.dbVersion"
-                    :collapsed-groups="collapsedGroups"
                     @select="selectGroup"
                     @add-group="addGroup"
                     @rename-group="requestRenameGroup"
@@ -104,7 +104,6 @@
                     :can-restore="selectedGroupIsInRecycleBin"
                     @select="selectEntry"
                     @add="addEntry"
-                    @delete="requestDelete"
                     @restore="restoreEntry"
                 />
             </main>
@@ -308,13 +307,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { formatDate, getField, toExactArrayBuffer } from '../utils';
+import { buildUpdatedCredentials } from '../dbHelper.js';
 import {
     biometricPreferenceKey,
     collapsedGroupsPreferenceKey,
+    pruneCollapsedGroups,
 } from '../databasePreferences.js';
 import {
     ALL_ENTRIES_UUID,
     buildDatabaseView,
+    collectGroupUuids,
     deleteMovesToRecycleBin,
     findEntryByUuid,
     findGroupByUuid,
@@ -642,22 +644,32 @@ function loadCollapsedGroups() {
         collapsedGroups.value = {};
         return;
     }
+
+    let stored;
     try {
-        collapsedGroups.value = JSON.parse(localStorage.getItem(key) || '{}');
+        stored = JSON.parse(localStorage.getItem(key) || '{}');
     } catch {
-        collapsedGroups.value = {};
+        stored = null;
     }
+
+    // Groups deleted since the last session would otherwise keep their entry
+    // forever. Only prune against the tree when there is one to check: this
+    // also runs while a database is being closed, and an empty tree must not
+    // be read as "every group is gone". The pruned map is written straight
+    // back by the watcher below.
+    collapsedGroups.value = pruneCollapsedGroups(
+        stored,
+        store.db ? collectGroupUuids(store.db) : null,
+    );
 }
 
 watch(() => store.filePath, loadCollapsedGroups, { immediate: true });
-watch(
-    collapsedGroups,
-    (value) => {
-        const key = collapsedGroupsStorageKey();
-        if (key) localStorage.setItem(key, JSON.stringify(value));
-    },
-    { deep: true },
-);
+// Not `deep`: GroupTree replaces the map instead of mutating it, so the ref
+// itself changes on every toggle.
+watch(collapsedGroups, (value) => {
+    const key = collapsedGroupsStorageKey();
+    if (key) localStorage.setItem(key, JSON.stringify(value));
+});
 
 // Column widths logic.
 //
@@ -696,6 +708,7 @@ const {
     saveDatabaseChanges,
     flushPendingSave,
     reloadDatabaseFromDisk,
+    rememberCredentialsOnDisk,
     addEntry: performAddEntry,
     addGroup: performAddGroup,
     isSaving,
@@ -885,11 +898,8 @@ function addGroup(parentGroupUuid) {
     });
 }
 
-function requestDelete(entryOrUuid) {
-    const uuid =
-        typeof entryOrUuid === 'string'
-            ? entryOrUuid
-            : getObjectUuid(entryOrUuid);
+function requestDelete(entry) {
+    const uuid = getObjectUuid(entry);
     if (!uuid) return;
     entryToDeleteUuid.value = uuid;
     showDeleteConfirm.value = true;
@@ -1237,13 +1247,25 @@ async function confirmDatabaseSettings({
             settingsBusy.value = false;
             return;
         }
-        if (password) {
-            await db.credentials.setPassword(
-                kdbxweb.ProtectedValue.fromString(password),
-            );
-        }
-        if (keyFileChanged) {
-            await db.credentials.setKeyFile(keyFileBuffer);
+        if (password || keyFileChanged) {
+            // Prepare the complete new credentials before touching the database,
+            // then swap them in with a single assignment (see
+            // `buildUpdatedCredentials`).
+            const updated = await buildUpdatedCredentials(db.credentials, {
+                password,
+                keyFileBuffer,
+                keyFileChanged,
+            });
+            if (store.db !== db || !showSettingsModal.value) {
+                settingsBusy.value = false;
+                return;
+            }
+
+            // The file on disk keeps the old credentials until the save below
+            // succeeds; remember them so "keep the file" can still read it if
+            // that save fails.
+            rememberCredentialsOnDisk(db.credentials);
+            db.credentials = updated;
         }
         db.meta.name = normalizedName;
     } catch (error) {

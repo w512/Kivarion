@@ -42,6 +42,7 @@ mock.module('@tauri-apps/api/core', () => ({
 
 const { useDatabaseActions } =
     await import('../src/composables/useDatabaseActions.js');
+const { buildUpdatedCredentials } = await import('../src/dbHelper.js');
 
 function makeStore() {
     const dbSaveMock = mock(async () => new Uint8Array([1, 2, 3]).buffer);
@@ -340,6 +341,36 @@ describe('useDatabaseActions reload from disk', () => {
         expect(actions.hasUnsavedChanges.value).toBe(false);
     });
 
+    test('records the mtime of the bytes it read, not of the file afterwards', async () => {
+        const store = await makeReloadStore();
+        const onDisk = await makeRealDatabase('From disk');
+        const diskBytes = new Uint8Array(await onDisk.save());
+        const order = [];
+        let diskMtime = 4242;
+
+        mtimeInvokeMock = mock(async () => {
+            order.push('mtime');
+            return diskMtime;
+        });
+        readInvokeMock = mock(async () => {
+            order.push('read');
+            // Another writer lands while this read (and the KDF that follows it)
+            // is in flight; the version now on disk is not the one in memory.
+            diskMtime = 9999;
+            return diskBytes;
+        });
+
+        const actions = useDatabaseActions(store);
+        store.dbVersion = 5;
+        actions.saveConflict.value = true;
+
+        await expect(actions.reloadDatabaseFromDisk()).resolves.toBe(true);
+
+        expect(order).toEqual(['mtime', 'read']);
+        // The next save must conflict on this rather than silently overwrite.
+        expect(store.knownMtime).toBe(4242);
+    });
+
     test('a failed reload keeps the conflict open and leaves the database untouched', async () => {
         const store = await makeReloadStore();
         const openDb = store.db;
@@ -394,5 +425,173 @@ describe('useDatabaseActions reload from disk', () => {
 
         write.resolve();
         await saving;
+    });
+
+    // A master password / key file change is applied to the open database before
+    // anything can be written with it, so a failed save leaves memory keyed
+    // differently from the file. Taking the disk version then hit `InvalidKey`
+    // under a generic message, and only retrying the save got out of it.
+    describe('with a rekey that has not been saved', () => {
+        async function rekeyInMemory(store, password) {
+            const credentialsOnDisk = store.db.credentials;
+            const updated = new kdbxweb.Credentials(
+                kdbxweb.ProtectedValue.fromString(password),
+            );
+            await updated.ready;
+            store.db.credentials = updated;
+            return credentialsOnDisk;
+        }
+
+        test('reloads the file with the credentials it still has', async () => {
+            const store = await makeReloadStore();
+            const onDisk = await makeRealDatabase('From disk');
+            const diskBytes = new Uint8Array(await onDisk.save());
+            readInvokeMock = mock(async () => diskBytes);
+            mtimeInvokeMock = mock(async () => 4242);
+
+            const actions = useDatabaseActions(store);
+            const credentialsOnDisk = await rekeyInMemory(store, 'brand new');
+            actions.rememberCredentialsOnDisk(credentialsOnDisk);
+            actions.saveConflict.value = true;
+
+            await expect(actions.reloadDatabaseFromDisk()).resolves.toBe(true);
+
+            expect(store.db.meta.name).toBe('From disk');
+            // Discarding local changes discards the unsaved rekey with them, so
+            // the reloaded database is keyed like the file.
+            expect(store.db.credentials).toBe(credentialsOnDisk);
+            expect(actions.saveConflict.value).toBe(false);
+            expect(actions.saveError.value).toBe(null);
+        });
+
+        test('keeps only the credentials the file actually has', async () => {
+            const store = await makeReloadStore();
+            const onDisk = await makeRealDatabase('From disk');
+            const diskBytes = new Uint8Array(await onDisk.save());
+            readInvokeMock = mock(async () => diskBytes);
+
+            const actions = useDatabaseActions(store);
+            const credentialsOnDisk = await rekeyInMemory(store, 'first try');
+            actions.rememberCredentialsOnDisk(credentialsOnDisk);
+            // A second change while the first one is still unsaved must not
+            // replace the record: the file is keyed with neither of them.
+            const afterFirstRekey = await rekeyInMemory(store, 'second try');
+            actions.rememberCredentialsOnDisk(afterFirstRekey);
+
+            await expect(actions.reloadDatabaseFromDisk()).resolves.toBe(true);
+            expect(store.db.credentials).toBe(credentialsOnDisk);
+        });
+
+        test('forgets them once a save has made the rekey real', async () => {
+            const store = await makeReloadStore();
+            const onDisk = await makeRealDatabase('From disk');
+            const diskBytes = new Uint8Array(await onDisk.save());
+            readInvokeMock = mock(async () => diskBytes);
+            saveInvokeMock = mock(async () => 5000);
+
+            const actions = useDatabaseActions(store);
+            const credentialsOnDisk = await rekeyInMemory(store, 'brand new');
+            actions.rememberCredentialsOnDisk(credentialsOnDisk);
+
+            store.dbVersion = 1;
+            await expect(actions.saveDatabaseChanges()).resolves.toBe(true);
+
+            // The file is keyed with the new credentials now; the old ones must
+            // not be able to resurrect a version that no longer exists.
+            await expect(actions.reloadDatabaseFromDisk()).resolves.toBe(false);
+            expect(actions.saveError.value).toContain('does not open with');
+        });
+
+        test('explains an InvalidKey reload instead of reporting a raw error', async () => {
+            const store = await makeReloadStore();
+            const onDisk = await makeRealDatabase('From disk');
+            const diskBytes = new Uint8Array(await onDisk.save());
+            readInvokeMock = mock(async () => diskBytes);
+
+            const actions = useDatabaseActions(store);
+            // Nothing remembered: the file was rekeyed by another program.
+            await rekeyInMemory(store, 'brand new');
+
+            await expect(actions.reloadDatabaseFromDisk()).resolves.toBe(false);
+
+            expect(actions.saveError.value).toContain(
+                'does not open with this database',
+            );
+            expect(actions.saveError.value).not.toContain('InvalidKey');
+        });
+    });
+});
+
+describe('buildUpdatedCredentials', () => {
+    async function makeCredentials(password, keyFile = null) {
+        const credentials = new kdbxweb.Credentials(
+            kdbxweb.ProtectedValue.fromString(password),
+            keyFile,
+        );
+        await credentials.ready;
+        return credentials;
+    }
+
+    // A 32-byte key file is taken as raw key material, so no XML parsing here.
+    const keyFile = new Uint8Array(32).fill(7);
+
+    test('carries over the key file when only the password changes', async () => {
+        const current = await makeCredentials('old', keyFile);
+
+        const updated = await buildUpdatedCredentials(current, {
+            password: 'new',
+        });
+
+        expect(updated.passwordHash.getText()).not.toBe(
+            current.passwordHash.getText(),
+        );
+        expect(updated.keyFileHash).toBe(current.keyFileHash);
+    });
+
+    test('carries over the password when only the key file changes', async () => {
+        const current = await makeCredentials('old');
+
+        const updated = await buildUpdatedCredentials(current, {
+            keyFileBuffer: keyFile,
+            keyFileChanged: true,
+        });
+
+        expect(updated.passwordHash).toBe(current.passwordHash);
+        expect(updated.keyFileHash).toBeDefined();
+    });
+
+    test('drops the key file when it is removed', async () => {
+        const current = await makeCredentials('old', keyFile);
+
+        const updated = await buildUpdatedCredentials(current, {
+            keyFileBuffer: null,
+            keyFileChanged: true,
+        });
+
+        expect(updated.passwordHash).toBe(current.passwordHash);
+        expect(updated.keyFileHash).toBeUndefined();
+    });
+
+    test('leaves the current credentials untouched when the key file is rejected', async () => {
+        const current = await makeCredentials('old', keyFile);
+        const previousPasswordHash = current.passwordHash;
+        const previousKeyFileHash = current.keyFileHash;
+        // A key file of an unsupported version: `setKeyFile` rejects on this,
+        // and applying the password first would have rekeyed the database
+        // halfway — to a password the user never got to confirm.
+        const badKeyFile = new TextEncoder().encode(
+            '<?xml version="1.0" encoding="utf-8"?><KeyFile><Meta><Version>9.0</Version></Meta><Key><Data>AAAA</Data></Key></KeyFile>',
+        );
+
+        await expect(
+            buildUpdatedCredentials(current, {
+                password: 'new',
+                keyFileBuffer: badKeyFile,
+                keyFileChanged: true,
+            }),
+        ).rejects.toThrow();
+
+        expect(current.passwordHash).toBe(previousPasswordHash);
+        expect(current.keyFileHash).toBe(previousKeyFileHash);
     });
 });

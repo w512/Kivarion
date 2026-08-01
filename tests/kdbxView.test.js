@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import * as kdbxweb from 'kdbxweb';
 import {
     buildDatabaseView,
+    collectGroupUuids,
     deleteMovesToRecycleBin,
     findEntryByUuid,
     findGroupByUuid,
@@ -93,6 +94,20 @@ describe('kdbx view helpers', () => {
         expect(findEntryByUuid(db, 'entry-child')).toBe(db.childEntry);
         expect(findGroupByUuid(db, 'missing')).toBe(null);
         expect(findEntryByUuid(db, 'missing')).toBe(null);
+    });
+
+    test('collects every group uuid, recycle bin included', () => {
+        const db = makeDb();
+
+        // Used to drop collapsed-branch state for groups that no longer exist,
+        // so a group missing here would silently lose its stored state.
+        expect(collectGroupUuids(db)).toEqual(
+            new Set(['root', 'child', 'recycle', 'duplicate']),
+        );
+    });
+
+    test('collects no group uuids without a database', () => {
+        expect(collectGroupUuids(null)).toEqual(new Set());
     });
 
     test('checks subtree containment by uuid', () => {

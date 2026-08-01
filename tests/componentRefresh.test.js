@@ -116,6 +116,10 @@ const renderer = createRenderer({
             props: {},
             children: [],
             listeners: {},
+            // `v-show` is a runtime-dom directive: it reads and writes
+            // `el.style.display` directly, so a node without a style object
+            // makes any component that uses it fail to mount here.
+            style: {},
             addEventListener(event, handler) {
                 this.listeners[event] = handler;
             },
@@ -180,6 +184,10 @@ function findFirst(node, predicate) {
 function allText(root) {
     return textContent(root).replace(/\s+/g, ' ').trim();
 }
+
+// `generatePassword` reads `window.crypto`; Bun exposes Web Crypto on globalThis
+// but has no `window`.
+globalThis.window = globalThis.window || { crypto: globalThis.crypto };
 
 beforeEach(() => {
     currentStore = reactive({ dbVersion: 0 });
@@ -430,6 +438,497 @@ describe('component refresh behaviour', () => {
             findFirst(root, (node) => node.props?.class === 'confirm-btn')
                 ?.props.disabled,
         ).toBe(false);
+    });
+
+    // Not a refresh test, but it needs the same lightweight renderer: the bug it
+    // pins lived in which options the parent passed down, not in the composable.
+    test('EntryViewFields only auto-clears the clipboard for the password', async () => {
+        const copies = [];
+        const EntryViewFields = await loadVueComponent(
+            'src/components/entry-detail/EntryViewFields.vue',
+            {
+                '@tauri-apps/plugin-opener': { openUrl: async () => {} },
+                '../../composables/useClipboard': {
+                    useClipboard: () => ({
+                        activeCopyField: ref(null),
+                        copy: (_text, fieldId, options) => {
+                            copies.push({
+                                fieldId,
+                                autoClear: options.autoClear,
+                            });
+                            return true;
+                        },
+                    }),
+                },
+            },
+        );
+
+        const entry = markRaw({
+            fields: new Map([
+                ['Title', 'Mailbox'],
+                ['UserName', 'user'],
+                ['Password', 'secret'],
+                ['URL', 'https://example.com'],
+                ['Notes', 'a note'],
+            ]),
+        });
+        const { root } = mount(EntryViewFields, () => ({
+            entry,
+            emailField: {
+                key: 'E-mail',
+                value: 'user@example.com',
+                protected: false,
+            },
+        }));
+        await nextTick();
+
+        for (const label of [
+            'title',
+            'username',
+            'e-mail',
+            'password',
+            'url',
+            'notes',
+        ]) {
+            findFirst(
+                root,
+                (node) => node.props?.title === `Copy ${label}`,
+            ).props.onClick();
+        }
+
+        // Only the password is a secret. Arming the auto-clear for the others
+        // emptied the clipboard under a user who had copied a URL or a login to
+        // paste later on.
+        expect(copies).toEqual([
+            { fieldId: 'Title', autoClear: false },
+            { fieldId: 'UserName', autoClear: false },
+            { fieldId: 'E-mail', autoClear: false },
+            { fieldId: 'Password', autoClear: true },
+            { fieldId: 'URL', autoClear: false },
+            { fieldId: 'Notes', autoClear: false },
+        ]);
+    });
+
+    // The entry's URL is handed to the operating system, so what reaches
+    // `openUrl` — and what never gets a link at all — is a security boundary,
+    // not only a UX detail.
+    async function mountUrlField(url, { openUrl } = {}) {
+        const opened = [];
+        const EntryViewFields = await loadVueComponent(
+            'src/components/entry-detail/EntryViewFields.vue',
+            {
+                '@tauri-apps/plugin-opener': {
+                    openUrl:
+                        openUrl ??
+                        (async (href) => {
+                            opened.push(href);
+                        }),
+                },
+                '../../composables/useClipboard': {
+                    useClipboard: () => ({
+                        activeCopyField: ref(null),
+                        copy: () => true,
+                    }),
+                },
+            },
+        );
+
+        const entry = markRaw({
+            fields: new Map([
+                ['Title', 'Site'],
+                ['URL', url],
+            ]),
+        });
+        const { root } = mount(EntryViewFields, () => ({ entry }));
+        await nextTick();
+
+        const link = findFirst(root, (node) => node.type === 'a');
+        return { root, link, opened };
+    }
+
+    test('EntryViewFields opens the entry URL through the OS instead of navigating', async () => {
+        const { link, opened } = await mountUrlField('example.com');
+
+        expect(link).not.toBeNull();
+        // Left to the webview this does nothing at all on macOS, and on
+        // Windows/Linux can navigate the app's own page to the site.
+        expect(typeof link.props.onClick).toBe('function');
+
+        let defaultPrevented = false;
+        link.props.onClick({
+            // Must return undefined, like the real one: Vue's `.prevent`
+            // modifier treats a truthy guard result as "stop here" and would
+            // never reach the handler.
+            preventDefault: () => {
+                defaultPrevented = true;
+            },
+        });
+        await nextTick();
+
+        expect(defaultPrevented).toBe(true);
+        // The normalized URL, not the raw field text.
+        expect(opened).toEqual(['https://example.com/']);
+    });
+
+    test('EntryViewFields keeps the link reachable without opener-window access', async () => {
+        const { link } = await mountUrlField('https://example.com/login');
+
+        // `href` stays for accessibility and the context menu even though the
+        // click is intercepted; `noreferrer` goes with `noopener`.
+        expect(link.props.href).toBe('https://example.com/login');
+        expect(link.props.rel).toBe('noopener noreferrer');
+    });
+
+    test('EntryViewFields never hands a non-http scheme to the OS', async () => {
+        for (const url of [
+            'javascript:alert(1)',
+            'file:///etc/passwd',
+            'smb://server/share',
+            'data:text/html,<script>x</script>',
+        ]) {
+            const { root, link, opened } = await mountUrlField(url);
+
+            // `normalizeHttpUrl` rejects these, so there is no anchor to click
+            // and nothing can reach `openUrl` — the value is shown as text.
+            expect(link).toBeNull();
+            expect(opened).toEqual([]);
+            expect(allText(root)).toContain(url);
+        }
+    });
+
+    test('EntryViewFields reports a link it could not open', async () => {
+        const { root, link } = await mountUrlField('example.com', {
+            openUrl: async () => {
+                throw new Error('no handler for https');
+            },
+        });
+
+        link.props.onClick({ preventDefault: () => {} });
+        await nextTick();
+        await nextTick();
+
+        // Replacing a silently dead link with a silently failing one would be
+        // no improvement.
+        expect(allText(root)).toContain('Could not open this link');
+    });
+
+    // GroupTree used to write straight into the object it was handed, which
+    // only worked because the parent happened to deep-watch a ref holding it.
+    async function mountTree(collapsedGroups = {}, extraProps = {}) {
+        const GroupTree = await loadVueComponent(
+            'src/components/GroupTree.vue',
+        );
+        const state = reactive({ collapsed: collapsedGroups });
+        const updates = [];
+        const { root } = mount(GroupTree, () => ({
+            ...extraProps,
+            groups: [
+                {
+                    uuid: 'group-1',
+                    name: 'Parent',
+                    entryCount: 0,
+                    children: [
+                        {
+                            uuid: 'group-2',
+                            name: 'Child',
+                            entryCount: 1,
+                            children: [],
+                        },
+                    ],
+                },
+            ],
+            selectedGroupUuid: 'group-1',
+            allEntriesCount: 1,
+            refreshKey: 0,
+            collapsedGroups: state.collapsed,
+            'onUpdate:collapsedGroups': (value) => {
+                updates.push(value);
+                state.collapsed = value;
+            },
+        }));
+        await nextTick();
+
+        // The collapse chevron of that row, not the row itself (clicking the
+        // row selects the group) and not the first chevron in the tree (that
+        // one belongs to the "All Entries" pseudo-group, which has no children
+        // and so ignores the click).
+        const row = findFirst(
+            root,
+            (n) => n.props?.['data-group-uuid'] === 'group-1',
+        );
+        const chevron = findFirst(row, (n) =>
+            String(n.props?.class || '').includes('collapse-toggle'),
+        );
+        const toggle = () =>
+            chevron.props.onClick({
+                // Both must return undefined like the real DOM methods: Vue's
+                // `.stop` modifier treats a truthy guard result as "stop here"
+                // and would never reach the handler.
+                stopPropagation: () => {},
+                target: {},
+            });
+        return { root, state, updates, toggle };
+    }
+
+    test('GroupTree reports collapse changes instead of mutating the map it was given', async () => {
+        const original = {};
+        const { state, updates, toggle } = await mountTree(original);
+
+        toggle();
+        await nextTick();
+
+        expect(updates).toHaveLength(1);
+        expect(state.collapsed).toEqual({ 'group-1': true });
+        // The parent's object is untouched: it owns it and persists it.
+        expect(original).toEqual({});
+        expect(updates[0]).not.toBe(original);
+    });
+
+    test('GroupTree drops a uuid on expand rather than storing it as false', async () => {
+        const { state, toggle } = await mountTree({ 'group-1': true });
+
+        toggle();
+        await nextTick();
+
+        // Storing `false` is what made the per-database record grow for every
+        // group the user ever touched.
+        expect(state.collapsed).toEqual({});
+    });
+
+    // --- Dropping an entry on a group -------------------------------------
+    //
+    // The drag data store is in *protected mode* for the whole drag: only
+    // `dataTransfer.types` is readable, and `getData` returns an empty string
+    // until the drop. `GroupNode` used to decide with `getData`, so it never
+    // recognised an entry drag, never called `preventDefault()` in `dragover`,
+    // and the browser therefore refused the drop — `drop` never fired and an
+    // entry could not be moved into a group by dragging at all.
+    const ENTRY_DRAG_TYPE = 'application/x-kivarion-entry';
+
+    function dragEvent({ types = [], data = {} } = {}) {
+        const event = {
+            prevented: false,
+            preventDefault() {
+                this.prevented = true;
+            },
+            currentTarget: {
+                getBoundingClientRect: () => ({ top: 0, height: 37 }),
+            },
+            clientY: 18,
+            dataTransfer: {
+                dropEffect: 'none',
+                types,
+                getData: (type) => data[type] ?? '',
+            },
+        };
+        return event;
+    }
+
+    async function mountTreeForDrag() {
+        const moves = [];
+        const { root } = await mountTree(
+            {},
+            { onMoveEntry: (payload) => moves.push(payload) },
+        );
+        const row = findByProp(root, 'data-group-uuid', 'group-1');
+        return { root, row, moves };
+    }
+
+    test('GroupNode allows a drop while only the drag types are readable', async () => {
+        const { row } = await mountTreeForDrag();
+
+        // Exactly what a real `dragover` offers: the type is listed, the value
+        // is not there yet.
+        const event = dragEvent({ types: [ENTRY_DRAG_TYPE, 'text/plain'] });
+        row.props.onDragover(event);
+        await nextTick();
+
+        // Without `preventDefault()` the drop is refused and no `drop` event is
+        // ever dispatched.
+        expect(event.prevented).toBe(true);
+        expect(event.dataTransfer.dropEffect).toBe('move');
+        expect(String(row.props.class)).toContain('drag-over-inside');
+    });
+
+    test('GroupNode moves the entry the drop actually carries', async () => {
+        const { row, moves } = await mountTreeForDrag();
+
+        const over = dragEvent({ types: [ENTRY_DRAG_TYPE, 'text/plain'] });
+        row.props.onDragover(over);
+        // `drop` is only dispatched on a target that allowed it, so the two
+        // handlers have to agree about what counts as an entry drag.
+        expect(over.prevented).toBe(true);
+
+        // On drop the store becomes readable, so the uuid arrives here.
+        row.props.onDrop(
+            dragEvent({
+                types: [ENTRY_DRAG_TYPE, 'text/plain'],
+                data: { [ENTRY_DRAG_TYPE]: 'entry-7' },
+            }),
+        );
+        await nextTick();
+
+        expect(moves).toEqual([
+            { entryUuid: 'entry-7', targetGroupUuid: 'group-1' },
+        ]);
+        expect(String(row.props.class)).not.toContain('drag-over-inside');
+    });
+
+    test('GroupNode refuses an entry drop on "All Entries"', async () => {
+        const { root, moves } = await mountTreeForDrag();
+        // The pseudo-group is not a real group and holds no entries of its own.
+        const row = findFirst(
+            root,
+            (node) =>
+                String(node.props?.class || '').includes('group-node') &&
+                allText(node).includes('All Entries'),
+        );
+
+        const event = dragEvent({ types: [ENTRY_DRAG_TYPE] });
+        row.props.onDragover(event);
+        row.props.onDrop(
+            dragEvent({
+                types: [ENTRY_DRAG_TYPE],
+                data: { [ENTRY_DRAG_TYPE]: 'entry-7' },
+            }),
+        );
+        await nextTick();
+
+        expect(event.prevented).toBe(false);
+        expect(moves).toEqual([]);
+    });
+
+    test('GroupNode ignores a drag that carries no entry', async () => {
+        const { row } = await mountTreeForDrag();
+
+        // A file dragged in from the Finder, say. No group drag is in progress
+        // either, so nothing should accept it.
+        const event = dragEvent({ types: ['Files'] });
+        row.props.onDragover(event);
+        await nextTick();
+
+        expect(event.prevented).toBe(false);
+        expect(String(row.props.class)).not.toContain('drag-over-inside');
+    });
+
+    // --- Secrets must not outlive the dialog that collected them ----------
+    //
+    // Both of these components stay mounted for as long as the database is
+    // open — only the modal's contents come and go — so a password left in a
+    // ref after Cancel stayed reachable for the whole session. The `BaseModal`
+    // stub renders its slot unconditionally, which is what makes the closed
+    // state observable here at all.
+
+    // `v-model` on a native input goes through the `vModelText` directive: it
+    // writes `el.value` (not a prop) and listens for `input`, reading `el.value`
+    // back off the element. So typing means setting the value and firing that.
+    function typeInto(input, text) {
+        input.value = text;
+        input.listeners.input({ target: input });
+    }
+
+    function findByProp(root, prop, value) {
+        return findFirst(root, (node) => node.props?.[prop] === value);
+    }
+
+    test('DatabaseSettingsModal drops the typed passwords when it closes', async () => {
+        const DatabaseSettingsModal = await loadVueComponent(
+            'src/components/DatabaseSettingsModal.vue',
+            {
+                './BaseModal.vue': {
+                    default: makeStubComponent('BaseModal', {
+                        renderSlot: true,
+                    }),
+                },
+                './PasswordStrength.vue': {
+                    default: makeStubComponent('PasswordStrength'),
+                },
+                '@tauri-apps/api/core': { invoke: async () => null },
+                '../composables/useSystemInteraction.js': {
+                    withSystemInteraction: (action) => action(),
+                },
+            },
+        );
+        const state = reactive({ show: false });
+        const { root } = mount(DatabaseSettingsModal, () => ({
+            show: state.show,
+            dbName: 'Vault',
+            keyFilePath: null,
+            busy: false,
+            error: '',
+        }));
+
+        state.show = true;
+        await nextTick();
+        const newPassword = findByProp(root, 'placeholder', 'New password');
+        typeInto(newPassword, 'new-master-password');
+        await nextTick();
+        // The current-password field only appears once a change is pending.
+        typeInto(
+            findByProp(root, 'placeholder', 'Current password'),
+            'old-master-password',
+        );
+        await nextTick();
+
+        expect(newPassword.value).toBe('new-master-password');
+
+        // Cancel.
+        state.show = false;
+        await nextTick();
+
+        // This input is unconditional, so the same element is still there.
+        expect(newPassword.value).toBe('');
+
+        // The current-password field is conditional and unmounted itself once
+        // the new password was cleared, so ask for it again the way a user
+        // would: reopen and start another change.
+        state.show = true;
+        await nextTick();
+        typeInto(
+            findByProp(root, 'placeholder', 'New password'),
+            'another-password',
+        );
+        await nextTick();
+
+        expect(findByProp(root, 'placeholder', 'Current password').value).toBe(
+            '',
+        );
+    });
+
+    test('PasswordGenerator hands over the password it generated, then forgets it', async () => {
+        const PasswordGenerator = await loadVueComponent(
+            'src/components/entry-detail/PasswordGenerator.vue',
+            {
+                '../BaseModal.vue': {
+                    default: makeStubComponent('BaseModal', {
+                        renderSlot: true,
+                    }),
+                },
+            },
+        );
+        const state = reactive({ show: false });
+        const applied = [];
+        const { root } = mount(PasswordGenerator, () => ({
+            show: state.show,
+            onApply: (password) => applied.push(password),
+            onClose: () => (state.show = false),
+        }));
+
+        state.show = true;
+        await nextTick();
+        const preview = findFirst(root, (node) =>
+            String(node.props?.class || '').includes('generated-password'),
+        );
+        const generated = allText(preview);
+        expect(generated).toMatch(/^\S{20}$/);
+
+        findByProp(root, 'class', 'apply-btn').props.onClick();
+        await nextTick();
+
+        // Clearing on close must not turn "Use Password" into an empty string.
+        expect(applied).toEqual([generated]);
+        // …and the generated value is gone from the still-mounted component.
+        expect(allText(preview)).toBe('');
     });
 
     test('GroupTree refreshes raw group labels and counts when refreshKey changes', async () => {

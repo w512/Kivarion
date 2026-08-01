@@ -3,6 +3,7 @@ import {
     biometricPreferenceKey,
     clearDatabasePreferences,
     collapsedGroupsPreferenceKey,
+    pruneCollapsedGroups,
 } from '../src/databasePreferences.js';
 
 function makeStorage(initial) {
@@ -60,5 +61,44 @@ describe('database-specific preference cleanup', () => {
 
         expect(clearDatabasePreferences(storage)).toBe(3);
         expect(storage.length).toBe(0);
+    });
+});
+
+describe('pruneCollapsedGroups', () => {
+    test('keeps only the groups that are collapsed and still exist', () => {
+        const stored = {
+            'still-collapsed': true,
+            'expanded-again': false,
+            deleted: true,
+        };
+
+        expect(
+            pruneCollapsedGroups(
+                stored,
+                new Set(['still-collapsed', 'expanded-again', 'root']),
+            ),
+        ).toEqual({ 'still-collapsed': true });
+    });
+
+    test('drops expanded groups instead of remembering them as false', () => {
+        // The record is per database and lives in localStorage forever; an
+        // entry for every group the user ever toggled only ever grew.
+        expect(pruneCollapsedGroups({ a: false, b: false })).toEqual({});
+    });
+
+    test('does not judge existence when there is no database to check', () => {
+        // Called while a database is being closed, an empty tree must not read
+        // as "every group is gone" and wipe the user's state.
+        expect(pruneCollapsedGroups({ a: true, b: true }, null)).toEqual({
+            a: true,
+            b: true,
+        });
+    });
+
+    test('survives a stored value that is not a map of groups', () => {
+        // A corrupted or hand-edited key used to blow up on the first lookup.
+        for (const stored of [null, undefined, 'nope', 42, ['a', 'b']]) {
+            expect(pruneCollapsedGroups(stored, new Set(['a']))).toEqual({});
+        }
     });
 });

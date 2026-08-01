@@ -299,8 +299,27 @@ const dropClass = computed(() => {
         : null;
 });
 
+const ENTRY_DRAG_TYPE = 'application/x-kivarion-entry';
+
+/**
+ * Is an entry being dragged over this row?
+ *
+ * Only the *types* may be read while a drag is in progress — the drag data
+ * store is in protected mode until the drop, and `getData` returns an empty
+ * string there. Asking for the value in `dragover` meant the entry branch never
+ * ran, so the handler returned without `preventDefault()`, the browser refused
+ * the drop, and `onDrop` (with the `move-entry` it emits) never fired at all.
+ * Which entry it is does not matter here; that is read on drop.
+ */
+function isEntryDrag(event) {
+    const types = event.dataTransfer?.types;
+    // A frozen array per the spec, but a `DOMStringList` in older WebKit, so
+    // don't assume it has `includes` of its own.
+    return types ? Array.from(types).includes(ENTRY_DRAG_TYPE) : false;
+}
+
 function draggedEntryUuid(event) {
-    return event.dataTransfer?.getData('application/x-kivarion-entry') || '';
+    return event.dataTransfer?.getData(ENTRY_DRAG_TYPE) || '';
 }
 
 function onDragStart(event) {
@@ -315,8 +334,7 @@ function onDragStart(event) {
 }
 
 function onDragOver(event) {
-    const entryUuid = draggedEntryUuid(event);
-    if (entryUuid && !isAllEntries.value) {
+    if (isEntryDrag(event) && !isAllEntries.value) {
         event.preventDefault();
         event.dataTransfer.dropEffect = 'move';
         entryDropTarget.value = true;
@@ -349,10 +367,17 @@ function onDragLeave() {
 }
 
 function onDrop(event) {
-    const entryUuid = draggedEntryUuid(event);
-    if (entryUuid && !isAllEntries.value) {
+    // Decided the same way as in `onDragOver`, so a drop that was allowed for
+    // an entry can never be handled as a group move; the uuid is readable now.
+    if (isEntryDrag(event) && !isAllEntries.value) {
         entryDropTarget.value = false;
-        emit('move-entry', { entryUuid, targetGroupUuid: props.group.uuid });
+        const entryUuid = draggedEntryUuid(event);
+        if (entryUuid) {
+            emit('move-entry', {
+                entryUuid,
+                targetGroupUuid: props.group.uuid,
+            });
+        }
         return;
     }
 

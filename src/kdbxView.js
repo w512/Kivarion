@@ -58,6 +58,25 @@ function findEntryInGroup(group, uuid) {
     return null;
 }
 
+/**
+ * Every group UUID in the database, the Recycle Bin and its contents included.
+ *
+ * Used to drop per-group UI state (collapsed branches) for groups that no
+ * longer exist. Deliberately independent of `buildDatabaseView`: this runs once
+ * when a database is opened, before that computed exists.
+ */
+export function collectGroupUuids(db) {
+    const uuids = new Set();
+    addGroupUuids(getDefaultGroup(db), uuids);
+    return uuids;
+}
+
+function addGroupUuids(group, uuids) {
+    if (!group) return;
+    uuids.add(getObjectUuid(group));
+    for (const child of group.groups || []) addGroupUuids(child, uuids);
+}
+
 export function groupContainsGroupUuid(group, uuid) {
     if (!group || !uuid) return false;
     if (getObjectUuid(group) === uuid) return true;
