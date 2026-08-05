@@ -1606,6 +1606,53 @@ mod tests {
         assert!(!lock_path(&target).exists());
     }
 
+    fn navigable(url: &str) -> bool {
+        is_internal_navigation(&url.parse().expect("test url parses"))
+    }
+
+    #[test]
+    fn navigation_guard_allows_the_apps_own_pages() {
+        // How the bundle is served on macOS and Linux, including the routes of
+        // the hash router — which is why the decision is scheme-and-host and
+        // not a full-URL match.
+        assert!(navigable("tauri://localhost"));
+        assert!(navigable("tauri://localhost/index.html"));
+        assert!(navigable("tauri://localhost/#/database"));
+        assert!(navigable("tauri://localhost/#/settings"));
+
+        // Windows and Android, with and without `useHttpsScheme`.
+        assert!(navigable("http://tauri.localhost/"));
+        assert!(navigable("https://tauri.localhost/#/database"));
+    }
+
+    #[test]
+    fn navigation_guard_blocks_the_open_web() {
+        // The case this exists for: an unlocked database in memory and the
+        // window on a page someone else controls.
+        assert!(!navigable("https://example.com/"));
+        assert!(!navigable("http://example.com/"));
+
+        // A host that merely ends in the trusted one, which a naive suffix
+        // check would wave through.
+        assert!(!navigable("https://evil-tauri.localhost/"));
+        assert!(!navigable("https://tauri.localhost.example.com/"));
+
+        // Non-http schemes that can reach the local machine or run script.
+        assert!(!navigable("file:///etc/passwd"));
+        assert!(!navigable("data:text/html,<script>alert(1)</script>"));
+        assert!(!navigable("about:blank"));
+    }
+
+    #[test]
+    fn navigation_guard_trusts_the_dev_server_only_in_a_dev_build() {
+        // `tauri dev` serves the frontend over http://localhost:1420, so a dev
+        // build has to accept it. A release build never loads over plain http
+        // and must not, or the guard would have a hole on any machine running
+        // something on that port.
+        assert_eq!(navigable("http://localhost:1420/"), cfg!(dev));
+        assert_eq!(navigable("http://127.0.0.1:1420/"), cfg!(dev));
+    }
+
     #[test]
     fn save_database_takes_over_stale_lock_file() {
         let dir = TempDir::new();
@@ -1941,9 +1988,66 @@ fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+// --- Navigation guard ----------------------------------------------------
+//
+// Nothing in the app navigates the webview anywhere: an entry's URL is handed
+// to the OS through the opener plugin and the anchor's own navigation is always
+// prevented (`EntryViewFields`). This is the backstop for that. If some future
+// code — or script that has found its way into the webview — ever does
+// navigate, the window would leave `tauri://` for a page a remote origin
+// controls, while an unlocked database sits in memory behind the IPC bridge.
+//
+// The CSP does not cover this. `default-src` and `form-action` do not restrict
+// a top-level navigation driven by `window.location`, and the header that would
+// have (`navigate-to`) was never shipped by any engine.
+//
+// This is a plugin hook rather than `WebviewWindowBuilder::on_navigation`
+// because the window is declared in `tauri.conf.json`. The plugin hook is
+// installed on the navigation handler of *every* webview whatever created it,
+// so the window does not have to be built in Rust to be covered — which keeps
+// the window's declarative config, and the window-state plugin's restore, alone.
+
+/// Whether a navigation is to the app's own content.
+///
+/// Deliberately decided on scheme and host rather than a full-URL match: the
+/// frontend is a hash-router single-page app, so its own routes differ only in
+/// the fragment, and a path or query would be compared against a moving target.
+fn is_internal_navigation(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        // How the bundled assets are served on macOS and Linux.
+        "tauri" => true,
+        // Windows and Android serve the same assets over `tauri.localhost`
+        // (https when `useHttpsScheme` is on, http otherwise). `localhost` is
+        // the Vite dev server, and only a dev build has any business trusting
+        // it — in a release build nothing should be loading over plain http.
+        "http" | "https" => {
+            let host = url.host_str();
+            host == Some("tauri.localhost")
+                || (cfg!(dev) && matches!(host, Some("localhost") | Some("127.0.0.1")))
+        }
+        _ => false,
+    }
+}
+
+fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("kivarion-navigation-guard")
+        .on_navigation(|_webview, url| {
+            let allowed = is_internal_navigation(url);
+            if !allowed {
+                // Worth a line on stderr: reaching here means something tried
+                // to take the window off the app, which is not a thing that
+                // happens in normal use.
+                eprintln!("Blocked navigation away from the app: {url}");
+            }
+            allowed
+        })
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(navigation_guard())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
