@@ -17,6 +17,31 @@ let currentStore;
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
+/**
+ * A `vue` stub whose `<transition>` renders its slot and nothing else.
+ *
+ * The real one comes from runtime-dom and drives its enter/leave phases through
+ * `classList`, `requestAnimationFrame` and `ownerDocument` — none of which the
+ * fake elements below have. Animations are not what any of these tests are
+ * about, so the component under test gets a pass-through instead.
+ */
+async function vueWithoutTransitions() {
+    const vue = await import('vue');
+    return {
+        ...vue,
+        Transition: {
+            name: 'TransitionStub',
+            // The real one consumes `name`; without this it is reported as a
+            // stray attribute on every render.
+            inheritAttrs: false,
+            setup:
+                (_props, { slots }) =>
+                () =>
+                    slots.default?.(),
+        },
+    };
+}
+
 function importSpecToDestructure(spec) {
     return spec
         .split(',')
@@ -844,6 +869,13 @@ describe('component refresh behaviour', () => {
         return findFirst(root, (node) => node.props?.[prop] === value);
     }
 
+    // Event handlers land in `props` (the renderer's `patchProp` keeps every
+    // prop there); only directives such as `v-model` go through
+    // `addEventListener` and end up in `listeners`.
+    function clickConfirm(root) {
+        findByProp(root, 'class', 'confirm-btn')?.props?.onClick?.();
+    }
+
     test('DatabaseSettingsModal drops the typed passwords when it closes', async () => {
         const DatabaseSettingsModal = await loadVueComponent(
             'src/components/DatabaseSettingsModal.vue',
@@ -905,6 +937,75 @@ describe('component refresh behaviour', () => {
 
         expect(findByProp(root, 'placeholder', 'Current password').value).toBe(
             '',
+        );
+    });
+
+    test('DatabaseSettingsModal accepts a key-file-only database without a current password', async () => {
+        // A database can be unlocked with a key file alone, and then there is
+        // no current password to confirm with. Demanding one made the settings
+        // dialog impossible to submit for such a vault.
+        const DatabaseSettingsModal = await loadVueComponent(
+            'src/components/DatabaseSettingsModal.vue',
+            {
+                './BaseModal.vue': {
+                    default: makeStubComponent('BaseModal', {
+                        renderSlot: true,
+                    }),
+                },
+                './PasswordStrength.vue': {
+                    default: makeStubComponent('PasswordStrength'),
+                },
+                '@tauri-apps/api/core': { invoke: async () => null },
+                '../composables/useSystemInteraction.js': {
+                    withSystemInteraction: (action) => action(),
+                },
+            },
+        );
+
+        // Opening is what seeds the local form state, so `show` has to change.
+        async function openWith(keyFilePath) {
+            const confirmed = [];
+            const state = reactive({ show: false });
+            const { root } = mount(DatabaseSettingsModal, () => ({
+                show: state.show,
+                dbName: 'Vault',
+                keyFilePath,
+                busy: false,
+                error: '',
+                onConfirm: (payload) => confirmed.push(payload),
+            }));
+            state.show = true;
+            await nextTick();
+
+            typeInto(
+                findByProp(root, 'placeholder', 'New password'),
+                'new-secret',
+            );
+            await nextTick();
+            typeInto(
+                findByProp(root, 'placeholder', 'Repeat new password'),
+                'new-secret',
+            );
+            await nextTick();
+
+            clickConfirm(root);
+            await nextTick();
+            return { confirmed, root };
+        }
+
+        const keyed = await openWith('/Users/me/vault.key');
+        expect(keyed.confirmed).toHaveLength(1);
+        expect(keyed.confirmed[0]).toMatchObject({
+            password: 'new-secret',
+            currentPassword: '',
+        });
+
+        // With no key file either, nothing would identify the holder, so the
+        // current password stays required.
+        const unkeyed = await openWith(null);
+        expect(unkeyed.confirmed).toHaveLength(0);
+        expect(allText(unkeyed.root)).toContain(
+            'Enter the current password to change credentials.',
         );
     });
 
@@ -1023,6 +1124,40 @@ describe('BaseModal open-modal accounting', () => {
         await nextTick();
         expect(modalState.isAnyModalOpen()).toBe(true);
 
+        unmount();
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(false);
+    });
+
+    test('counts the attachment preview, which is not a BaseModal', async () => {
+        // The preview owns its own full-window frame instead of rendering
+        // through BaseModal, and so went uncounted: DatabasePage's global
+        // shortcuts kept firing behind it, and Cmd+C put the entry's password
+        // on the clipboard where the user could not see it happen.
+        const AttachmentPreviewModal = await loadVueComponent(
+            'src/components/entry-detail/AttachmentPreviewModal.vue',
+            { vue: await vueWithoutTransitions() },
+        );
+        const show = ref(false);
+        const { unmount } = mount(AttachmentPreviewModal, () => ({
+            show: show.value,
+            name: 'report.pdf',
+            url: 'blob:preview',
+        }));
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(false);
+
+        show.value = true;
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(true);
+
+        show.value = false;
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(false);
+
+        // Auto-lock unmounts the subtree with the preview still open.
+        show.value = true;
+        await nextTick();
         unmount();
         await nextTick();
         expect(modalState.isAnyModalOpen()).toBe(false);

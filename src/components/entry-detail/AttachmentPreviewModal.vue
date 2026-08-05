@@ -62,14 +62,22 @@ import {
     isUnsafeAttachmentPreview,
     isViewableInBrowser,
 } from '../../utils';
+import { useOpenModalCount } from '../../modalState.js';
 
-defineProps({
+const props = defineProps({
     show: { type: Boolean, required: true },
     url: { type: String, default: null },
     name: { type: String, default: '' },
 });
 
 defineEmits(['close']);
+
+// This is the one dialog that is not a `BaseModal` — the preview fills the
+// window and owns its own frame — so it registers itself. Without this it did
+// not count as an open modal, and `DatabasePage`'s global shortcuts kept firing
+// behind it: Cmd+C put the entry's password on the clipboard, and armed its
+// auto-clear, where the user could not see any of it happen.
+useOpenModalCount(() => props.show);
 </script>
 
 <style scoped>

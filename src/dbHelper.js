@@ -99,6 +99,16 @@ export async function readFileMtime(path) {
  * Passing `{ force: true }` skips the optimistic-concurrency check, used when
  * the user has chosen to overwrite an externally-modified file.
  *
+ * Everything that describes *this* save — the target path, the mtime the
+ * concurrency check compares against, the backup policy — is read **before**
+ * `db.save()`, not after. Serializing a large vault is a full KDF plus the
+ * encryption of every byte, i.e. seconds, and `store.filePath` can point at a
+ * different file by the time that finishes: auto-lock drops `store.db` without
+ * cancelling a save already in progress, and the user is then free to open
+ * another database. Read afterwards, the bytes of one vault would be written
+ * over another — and with the second vault's `knownMtime` already in the store,
+ * even the conflict check would wave it through.
+ *
  * @param {kdbxweb.Kdbx} db - The database instance
  * @param {string} fileName - Name of the open file; only checked for presence,
  *   as a database without one is not in a state that can be saved.
@@ -119,9 +129,17 @@ export async function saveDatabase(db, fileName, { force = false } = {}) {
     // webview writes nothing and yet returned as though the save had succeeded:
     // the caller cleared its unsaved-changes state over a file that was never
     // written. Refusing loudly is the only safe reading of "nowhere to save to".
-    if (!store.filePath) {
+    const path = store.filePath;
+    if (!path) {
         throw new Error('Cannot save: the database has no file path');
     }
+
+    const expectedMtime = force ? null : (store.knownMtime ?? null);
+    const backup = store.backupEnabled !== false;
+    const backupDepth = clampNumberSetting(
+        store.backupDepth,
+        SETTING_LIMITS.backupDepth,
+    );
 
     // Serialize only once there is somewhere to put the result.
     const arrayBuffer = await db.save();
@@ -132,15 +150,15 @@ export async function saveDatabase(db, fileName, { force = false } = {}) {
         // along in headers (see `invokeWithBytes`). Omitting `expected-mtime`
         // is what tells the backend to skip the concurrency check.
         const newMtime = await invokeWithBytes('save_database', bytes, {
-            path: store.filePath,
-            'expected-mtime': force ? null : (store.knownMtime ?? null),
-            backup: store.backupEnabled !== false,
-            'backup-depth': clampNumberSetting(
-                store.backupDepth,
-                SETTING_LIMITS.backupDepth,
-            ),
+            path,
+            'expected-mtime': expectedMtime,
+            backup,
+            'backup-depth': backupDepth,
         });
-        store.knownMtime = newMtime;
+        // Only the file the store is still tracking may have its timestamp
+        // updated: recording this one against a database opened meanwhile
+        // would make the next save of *that* file skip its conflict check.
+        if (store.filePath === path) store.knownMtime = newMtime;
     } catch (error) {
         const message = error?.message || String(error);
         if (message.includes('EXTERNAL_CONFLICT')) {

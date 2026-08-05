@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, effectScope, ref, watch } from 'vue';
 import {
     loadDatabaseFromDisk,
     readFileMtime,
@@ -14,7 +14,40 @@ import {
 
 const AUTO_SAVE_DEBOUNCE_MS = globalThis.__KIVARION_SAVE_DEBOUNCE_MS__ ?? 300;
 
+// One instance for the whole application.
+//
+// This used to be built per `DatabasePage`, so every field of it — the dirty
+// marker, the save error, the conflict, the record of an unsaved rekey — was
+// thrown away the moment that page unmounted. Opening Settings does exactly
+// that: `DatabaseHeader` links there without closing the database. A save that
+// had failed (`SAVE_LOCKED`, a conflict, an I/O error) therefore came back from
+// Settings looking like a database with nothing outstanding — no banner,
+// `hasUnsavedChanges` false — and the next Lock or Close dropped those changes
+// without asking. The state describes the database that is open, not the page
+// that happens to be showing it, so it lives here and is reset when a different
+// database takes its place.
+let scope = null;
+let instance = null;
+
 export function useDatabaseActions(store) {
+    if (!instance) {
+        // Detached on purpose. The first caller is a component's `setup()`, and
+        // an attached scope would be collected by that component and stopped on
+        // its unmount — the very thing this exists to outlive.
+        scope = effectScope(true);
+        instance = scope.run(() => createDatabaseActions(store));
+    }
+    return instance;
+}
+
+/** Test seam: drop the instance (and its watcher) a previous test left behind. */
+export function resetDatabaseActions() {
+    scope?.stop();
+    scope = null;
+    instance = null;
+}
+
+function createDatabaseActions(store) {
     // Surfaced to the UI so a failed save is never silent.
     const isSaving = ref(false);
     const saveError = ref(null);
@@ -42,6 +75,48 @@ export function useDatabaseActions(store) {
     // Credentials the file on disk is still encrypted with while a master
     // password / key file change waits to be written. See below.
     let credentialsOnDisk = null;
+    // Work that only becomes correct once the new credentials are on disk. See
+    // `runAfterSuccessfulSave`.
+    let afterSaveActions = [];
+
+    // Which database everything above is about, and a counter that marks the
+    // moment it was replaced. A save can still be in flight across that
+    // moment — it belongs to the previous database, and its result must not be
+    // written over the state of the new one.
+    let trackedDb = store.db;
+    let generation = 0;
+
+    /**
+     * Start tracking whatever database is open now, from a clean sheet.
+     *
+     * Called when `store.db` changes under us (a lock, a different file opened,
+     * a reload from disk). Everything outstanding referred to the previous
+     * database and is unreachable once it is gone.
+     */
+    function adoptOpenDatabase() {
+        trackedDb = store.db;
+        generation++;
+        pendingSaveVersion = null;
+        forceNextSave = false;
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+        credentialsOnDisk = null;
+        // These describe a rekey of the previous database. They also close over
+        // its new master password, so dropping them here is what keeps that
+        // string from outliving the database it belongs to.
+        afterSaveActions = [];
+        lastSavedDbVersion.value = store.dbVersion;
+        saveError.value = null;
+        saveConflict.value = false;
+        conflictDiskMtime.value = null;
+    }
+
+    watch(
+        () => store.db,
+        (db) => {
+            if (db !== trackedDb) adoptOpenDatabase();
+        },
+    );
 
     /**
      * Record the credentials the file on disk still uses.
@@ -61,6 +136,43 @@ export function useDatabaseActions(store) {
      */
     function rememberCredentialsOnDisk(credentials) {
         if (!credentialsOnDisk) credentialsOnDisk = credentials ?? null;
+    }
+
+    /**
+     * Queue work that is only correct once the write actually lands.
+     *
+     * A rekey brings two records with it that describe the *file*, not the
+     * open database: which key file unlocks it, and the master password kept
+     * for Touch ID. `confirmDatabaseSettings` used to update both itself, but
+     * only when the save it had just issued succeeded — so if that one failed
+     * (`SAVE_LOCKED`, a conflict, an I/O error) and the user then resolved it
+     * from the banner or the conflict modal, the file was rekeyed while the
+     * remembered key file and the Keychain entry still described the old
+     * credentials: the next launch offered the wrong key file, and Touch ID
+     * kept handing over a password the database no longer had.
+     *
+     * Queued here instead, these ride along with whichever write finally
+     * succeeds. They are dropped by `adoptOpenDatabase` when the database is
+     * locked or replaced, so nothing they close over outlives it.
+     *
+     * @param {() => Promise<void>|void} action
+     */
+    function runAfterSuccessfulSave(action) {
+        if (typeof action === 'function') afterSaveActions.push(action);
+    }
+
+    async function drainAfterSaveActions() {
+        const actions = afterSaveActions;
+        afterSaveActions = [];
+        for (const action of actions) {
+            try {
+                await action();
+            } catch (error) {
+                // The vault is written; this is bookkeeping beside it. Each
+                // action reports its own failure to the user where it matters.
+                console.error('A post-save step failed:', error);
+            }
+        }
     }
 
     // Rapid field edits used to rerun Argon2 and encrypt the entire vault for
@@ -128,6 +240,10 @@ export function useDatabaseActions(store) {
 
     async function flushSaveQueue() {
         isSaving.value = true;
+        // The database this flush is writing. If it is replaced mid-write, the
+        // outcome below describes a vault that is no longer open and has to be
+        // dropped rather than recorded against its successor.
+        const saveGeneration = generation;
         let ok = true;
 
         try {
@@ -149,6 +265,11 @@ export function useDatabaseActions(store) {
                     const force = forceNextSave;
                     forceNextSave = false;
                     await saveDatabase(store.db, store.fileName, { force });
+                    // A different database took the place of the one this
+                    // write belongs to. The write itself succeeded — which is
+                    // what the caller asked about — but none of the
+                    // bookkeeping below may be recorded against its successor.
+                    if (saveGeneration !== generation) break;
                     saveConflict.value = false;
                     lastSavedDbVersion.value = versionToSave;
                     // The file was just written with the database's current
@@ -156,6 +277,11 @@ export function useDatabaseActions(store) {
                     credentialsOnDisk = null;
                 } catch (error) {
                     console.error('Failed to save changes:', error);
+                    ok = false;
+                    // Same as above: a failure that belongs to a database
+                    // which is no longer open must not raise a banner or a
+                    // conflict modal over the one that replaced it.
+                    if (saveGeneration !== generation) break;
                     if (error?.code === 'EXTERNAL_CONFLICT') {
                         // Let the UI ask the user; don't treat it as a hard error.
                         saveConflict.value = true;
@@ -180,7 +306,14 @@ export function useDatabaseActions(store) {
             forceNextSave = false;
         }
 
-        return ok && !hasUnsavedChanges.value;
+        const saved = ok && !hasUnsavedChanges.value;
+        // Run the queued post-save work only once the database is genuinely
+        // clean, and with `isSaving` already false: one of these raises a Touch
+        // ID prompt, and the user answering it is not a write in progress.
+        // `activeSavePromise` is still pending, so the caller's `await` — and
+        // any save requested meanwhile — waits for these to finish.
+        if (saved) await drainAfterSaveActions();
+        return saved;
     }
 
     /**
@@ -219,16 +352,9 @@ export function useDatabaseActions(store) {
 
             // Memory now matches the file, so nothing is outstanding: drop the
             // dirty marker, the queued save, the conflict and the record of an
-            // unsaved rekey together.
-            pendingSaveVersion = null;
-            forceNextSave = false;
-            clearTimeout(autoSaveTimer);
-            autoSaveTimer = null;
-            credentialsOnDisk = null;
-            lastSavedDbVersion.value = store.dbVersion;
-            saveConflict.value = false;
-            conflictDiskMtime.value = null;
-            saveError.value = null;
+            // unsaved rekey together. Done here rather than left to the
+            // `store.db` watcher so it is in effect before this returns.
+            adoptOpenDatabase();
             return true;
         } catch (error) {
             console.error('Failed to reload the database from disk:', error);
@@ -288,6 +414,7 @@ export function useDatabaseActions(store) {
         flushPendingSave,
         reloadDatabaseFromDisk,
         rememberCredentialsOnDisk,
+        runAfterSuccessfulSave,
         addEntry,
         addGroup,
         isSaving,

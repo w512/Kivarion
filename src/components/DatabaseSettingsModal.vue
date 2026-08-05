@@ -86,7 +86,11 @@
                 <input
                     v-model="currentPassword"
                     :type="showPassword ? 'text' : 'password'"
-                    placeholder="Current password"
+                    :placeholder="
+                        keyFilePath
+                            ? 'Current password (leave empty if there is none)'
+                            : 'Current password'
+                    "
                     class="modal-input"
                     :disabled="busy"
                 />
@@ -258,7 +262,17 @@ function handleConfirm() {
         }
     }
 
-    if ((hasPasswordChange.value || keyFileChanged) && !currentPassword.value) {
+    // A database can be unlocked with a key file alone, in which case there is
+    // no current password to confirm with and demanding one locked the settings
+    // dialog for good. Something has to identify the holder, so require the
+    // password unless the database already has a key file — which is then what
+    // the verification checks instead (`verifyCurrentCredentials` builds the
+    // pair, so a database that has both still needs both).
+    if (
+        (hasPasswordChange.value || keyFileChanged) &&
+        !currentPassword.value &&
+        !props.keyFilePath
+    ) {
         validationError.value =
             'Enter the current password to change credentials.';
         return;

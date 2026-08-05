@@ -32,15 +32,29 @@ mock.module('../src/store.js', () => ({
 }));
 
 mock.module('@tauri-apps/api/core', () => ({
-    invoke: (cmd, args) => {
-        if (cmd === 'save_database') return saveInvokeMock(cmd, args);
+    // `invokeWithBytes` calls `invoke(cmd, bytes, { headers })`, so the third
+    // argument is where the scalar arguments (target path, expected mtime)
+    // actually travel — pass it through, or a test cannot see them.
+    invoke: (cmd, args, options) => {
+        if (cmd === 'save_database') return saveInvokeMock(cmd, args, options);
         if (cmd === 'read_database') return readInvokeMock(cmd, args);
         if (cmd === 'file_mtime') return mtimeInvokeMock(cmd, args);
         return Promise.resolve();
     },
 }));
 
-const { useDatabaseActions } =
+/** The scalar arguments of the n-th `save_database` invoke, header names undone. */
+function saveArgs(index = 0) {
+    const headers = saveInvokeMock.mock.calls[index]?.[2]?.headers ?? {};
+    return Object.fromEntries(
+        Object.entries(headers).map(([name, value]) => [
+            name.replace(/^x-kivarion-/, ''),
+            decodeURIComponent(value),
+        ]),
+    );
+}
+
+const { resetDatabaseActions, useDatabaseActions } =
     await import('../src/composables/useDatabaseActions.js');
 const { buildUpdatedCredentials, saveDatabase } =
     await import('../src/dbHelper.js');
@@ -87,6 +101,10 @@ async function waitFor(assertion, attempts = 20) {
 
 beforeEach(() => {
     currentStore = null;
+    // The composable is a singleton now (its state has to outlive
+    // DatabasePage), so a test must not inherit the instance — nor the
+    // `store.db` watcher — that the previous one left behind.
+    resetDatabaseActions();
     saveInvokeMock = mock(async () => {});
     readInvokeMock = mock(async () => new Uint8Array());
     mtimeInvokeMock = mock(async () => null);
@@ -280,6 +298,167 @@ describe('useDatabaseActions save queue', () => {
         expect(actions.saveError.value).toBe(null);
         expect(actions.hasUnsavedChanges.value).toBe(false);
         expect(actions.lastSavedDbVersion.value).toBe(1);
+    });
+});
+
+describe('useDatabaseActions across a page remount', () => {
+    // `DatabaseHeader` links to Settings without closing the database, which
+    // unmounts DatabasePage. While this composable was built per page, that
+    // threw away the dirty marker, the save error and the conflict along with
+    // it: a failed save came back from Settings looking like a clean database,
+    // and the next Lock or Close dropped the changes without asking.
+    test('keeps a failed save outstanding while the page is away', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        saveInvokeMock = mock(async () => {
+            throw new Error('disk on fire');
+        });
+
+        store.dbVersion = 1;
+        await expect(actions.saveDatabaseChanges()).resolves.toBe(false);
+        expect(actions.hasUnsavedChanges.value).toBe(true);
+
+        // Off to Settings and back: the page is rebuilt, the state is not.
+        const remounted = useDatabaseActions(store);
+
+        expect(remounted).toBe(actions);
+        expect(remounted.hasUnsavedChanges.value).toBe(true);
+        expect(remounted.saveError.value).toContain('disk on fire');
+    });
+
+    test('starts clean when a different database is opened', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        saveInvokeMock = mock(async () => {
+            throw new Error('disk on fire');
+        });
+
+        store.dbVersion = 1;
+        await actions.saveDatabaseChanges();
+        expect(actions.hasUnsavedChanges.value).toBe(true);
+
+        // Locked, then another vault unlocked. Whatever was outstanding
+        // belonged to a database that is now unreachable.
+        store.db = null;
+        await tick();
+        store.db = { save: mock(async () => new Uint8Array([9]).buffer) };
+        store.dbVersion = 7;
+        await tick();
+
+        expect(actions.hasUnsavedChanges.value).toBe(false);
+        expect(actions.saveError.value).toBe(null);
+        expect(actions.saveConflict.value).toBe(false);
+    });
+
+    test('a write that outlives its database does not mark the next one dirty', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        const write = deferred();
+        saveInvokeMock = mock(() => write.promise);
+
+        store.dbVersion = 1;
+        const saving = actions.saveDatabaseChanges();
+        await tick();
+
+        // The database is replaced while the write is still in flight.
+        store.db = { save: mock(async () => new Uint8Array([9]).buffer) };
+        store.dbVersion = 9;
+        await tick();
+        expect(actions.hasUnsavedChanges.value).toBe(false);
+
+        write.resolve(4242);
+        await saving;
+
+        // The old write must not report itself as "version 1 is saved" against
+        // a database whose current version is 9 — nor raise its errors here.
+        expect(actions.hasUnsavedChanges.value).toBe(false);
+        expect(actions.saveError.value).toBe(null);
+    });
+});
+
+describe('useDatabaseActions post-save work', () => {
+    // A rekey brings two records with it that describe the file rather than the
+    // open database: which key file unlocks it, and the master password kept
+    // for Touch ID. They used to be written only when the save issued alongside
+    // them succeeded, so a save that failed and was then retried from the
+    // banner left the file rekeyed while both still described the old
+    // credentials — the wrong key file offered next launch, Touch ID handing
+    // over a password the database no longer had.
+    test('runs queued work on the save that finally succeeds, not the one that failed', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        const done = [];
+        saveInvokeMock = mock(async () => {
+            throw new Error('SAVE_LOCKED: another window');
+        });
+
+        store.dbVersion = 1;
+        actions.runAfterSuccessfulSave(async () => done.push('key file'));
+        actions.runAfterSuccessfulSave(async () => done.push('touch id'));
+
+        await expect(actions.saveDatabaseChanges()).resolves.toBe(false);
+        expect(done).toEqual([]);
+
+        // The user hits Retry on the error banner.
+        saveInvokeMock = mock(async () => 4242);
+        await expect(actions.saveDatabaseChanges()).resolves.toBe(true);
+
+        expect(done).toEqual(['key file', 'touch id']);
+    });
+
+    test('runs each queued action once', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        const done = [];
+        saveInvokeMock = mock(async () => 4242);
+
+        store.dbVersion = 1;
+        actions.runAfterSuccessfulSave(() => done.push('once'));
+        await actions.saveDatabaseChanges();
+
+        store.dbVersion = 2;
+        await actions.saveDatabaseChanges();
+
+        expect(done).toEqual(['once']);
+    });
+
+    test('a failing action does not report the save as failed', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        saveInvokeMock = mock(async () => 4242);
+
+        store.dbVersion = 1;
+        actions.runAfterSuccessfulSave(() => {
+            throw new Error('Keychain refused');
+        });
+
+        // The vault is on disk; this is bookkeeping beside it.
+        await expect(actions.saveDatabaseChanges()).resolves.toBe(true);
+    });
+
+    test('drops queued work when the database is closed', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        const done = [];
+        saveInvokeMock = mock(async () => {
+            throw new Error('disk on fire');
+        });
+
+        store.dbVersion = 1;
+        actions.runAfterSuccessfulSave(() => done.push('stale'));
+        await actions.saveDatabaseChanges();
+
+        // Locked, then another vault opened and saved. The queued work is about
+        // a rekey of the first one — and closes over its master password.
+        store.db = null;
+        await tick();
+        store.db = { save: mock(async () => new Uint8Array([9]).buffer) };
+        await tick();
+        saveInvokeMock = mock(async () => 5555);
+        store.dbVersion = 9;
+        await actions.saveDatabaseChanges();
+
+        expect(done).toEqual([]);
     });
 });
 
@@ -626,5 +805,72 @@ describe('saveDatabase without a file path', () => {
 
         expect(dbSaveMock).toHaveBeenCalled();
         expect(saveInvokeMock).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('saveDatabase when another database is opened mid-write', () => {
+    // Serializing a large vault is a full KDF plus the encryption of every
+    // byte — seconds. Auto-lock drops `store.db` without cancelling a save
+    // already under way, and the user is then free to open a different file. If
+    // the target were read after `db.save()`, those bytes would land on the
+    // wrong vault, and with the new file's `knownMtime` already in the store
+    // even the concurrency check would let it through.
+    beforeEach(() => {
+        saveInvokeMock = mock(async () => 5555);
+    });
+
+    function serializingStore() {
+        const serialized = deferred();
+        const { store } = makeStore();
+        store.db = { save: mock(() => serialized.promise) };
+        store.knownMtime = 1000;
+        return { store, serialized };
+    }
+
+    test('writes to the file it started from, not the one opened meanwhile', async () => {
+        const { store, serialized } = serializingStore();
+
+        const saving = saveDatabase(store.db, 'vault.kdbx');
+        await tick();
+
+        // Auto-lock, then a different database picked and unlocked.
+        store.db = null;
+        store.filePath = '/Users/test/other.kdbx';
+        store.knownMtime = 2000;
+
+        serialized.resolve(new Uint8Array([1, 2, 3]).buffer);
+        await saving;
+
+        expect(saveArgs()).toMatchObject({
+            path: '/Users/test/vault.kdbx',
+            'expected-mtime': '1000',
+        });
+    });
+
+    test('leaves the timestamp of the database now open alone', async () => {
+        const { store, serialized } = serializingStore();
+
+        const saving = saveDatabase(store.db, 'vault.kdbx');
+        await tick();
+        store.filePath = '/Users/test/other.kdbx';
+        store.knownMtime = 2000;
+
+        serialized.resolve(new Uint8Array([1, 2, 3]).buffer);
+        await saving;
+
+        // 5555 is the mtime of the file that was just written — recording it
+        // against the other database would make its next save skip the
+        // external-change check.
+        expect(store.knownMtime).toBe(2000);
+    });
+
+    test('records the new timestamp when the same file is still open', async () => {
+        const { store, serialized } = serializingStore();
+
+        const saving = saveDatabase(store.db, 'vault.kdbx');
+        serialized.resolve(new Uint8Array([1, 2, 3]).buffer);
+        await saving;
+
+        expect(store.knownMtime).toBe(5555);
     });
 });

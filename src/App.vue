@@ -1,31 +1,108 @@
 <script setup>
-import { onMounted, onUnmounted } from 'vue';
-import { useRoute } from 'vue-router';
+import { nextTick, onMounted, onUnmounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useStore } from './store.js';
 import { useAutoLock } from './composables/useAutoLock.js';
+import { useDatabaseActions } from './composables/useDatabaseActions.js';
+import { teardownPageHandler } from './teardownGuard.js';
 
 useAutoLock();
 
-// The backend holds Cmd+Q / menu quits (`ExitRequested` → prevent_exit) so an
-// open database can flush its saves first. DatabasePage owns that flow; on
-// every other route there is nothing to flush, so quit immediately — without
-// this fallback a quit from HomePage or Settings would leave the app running.
-const route = useRoute();
+// --- Teardown guards -----------------------------------------------------
+//
+// A window close (red button / Cmd+W) and an app quit (Cmd+Q / the app menu —
+// the backend holds `ExitRequested` and re-emits it as
+// `kivarion:quit-requested`) would otherwise kill the process while an
+// auto-save is still in flight or an entry edit is pending.
+//
+// Both are registered here, once, rather than in `DatabasePage`. There can only
+// be one `onCloseRequested` listener — Tauri's wrapper finalizes an unprevented
+// close with `destroy()`, so a second one would destroy the window the first
+// had just prevented — and a listener that lives on a page disappears with it.
+// It used to live on `DatabasePage`, which is unmounted the moment the user
+// opens Settings with a database still open: from there Cmd+Q hit the "nothing
+// to flush" fallback below and the close button was not guarded at all, so
+// either one ended the process over a database with unsaved changes.
+//
+// While this listener exists the capability must grant
+// `core:window:allow-destroy`, or the title-bar close button silently stops
+// working.
+const store = useStore();
+const router = useRouter();
+const { isSaving, hasUnsavedChanges, saveDatabaseChanges } =
+    useDatabaseActions(store);
+
+let unlistenCloseRequested = null;
 let unlistenQuitRequested = null;
 
 onMounted(async () => {
-    unlistenQuitRequested = await listen('kivarion:quit-requested', () => {
-        if (route.name !== 'database') {
-            void invoke('quit_app');
-        }
-    });
+    unlistenCloseRequested = await getCurrentWindow().onCloseRequested(
+        async (event) => {
+            if (await guardTeardown(closeWindow)) event.preventDefault();
+        },
+    );
+    unlistenQuitRequested = await listen(
+        'kivarion:quit-requested',
+        async () => {
+            if (!(await guardTeardown(quitApp))) quitApp();
+        },
+    );
 });
 
 onUnmounted(() => {
+    unlistenCloseRequested?.();
+    unlistenCloseRequested = null;
     unlistenQuitRequested?.();
     unlistenQuitRequested = null;
 });
+
+/**
+ * @returns {Promise<boolean>} true when the teardown has been taken over and
+ *   the caller must not finish it.
+ */
+async function guardTeardown(finish) {
+    // DatabasePage owns the full flow — the entry-edit draft, the
+    // "Saving changes…" modal, the conflict modal — so it decides while it is
+    // on screen.
+    const handler = teardownPageHandler();
+    if (handler) return handler(finish);
+
+    // Nothing to lose: no database, or one whose every change is on disk. With
+    // the page unmounted there is no entry-edit draft either, so these two
+    // cover everything that could hold a teardown up.
+    if (!store.db) return false;
+    if (!isSaving.value && !hasUnsavedChanges.value) return false;
+
+    // A database with unsaved work while its page is not mounted — the user is
+    // in Settings. Every control that can resolve a stuck save is rendered
+    // there, so go back to it and hand the decision over instead of keeping a
+    // second copy of those dialogs here. A rejected navigation must not take
+    // the guard down with it: the flush below still protects the write.
+    await router.push({ name: 'database' }).catch(() => {});
+    await nextTick();
+    const pageHandler = teardownPageHandler();
+    if (pageHandler) return pageHandler(finish);
+
+    // The page did not take over (it always should). Flush anyway rather than
+    // drop a pending write on the floor.
+    void saveDatabaseChanges().then((saved) => {
+        if (saved) finish();
+    });
+    return true;
+}
+
+function closeWindow() {
+    // destroy() rather than close(): the flush already ran, and close() would
+    // re-enter the guard above.
+    void getCurrentWindow().destroy();
+}
+
+function quitApp() {
+    void invoke('quit_app');
+}
 </script>
 
 <template>

@@ -304,11 +304,13 @@ import * as kdbxweb from 'kdbxweb';
 import { useStore } from '../store.js';
 import { homeDir } from '@tauri-apps/api/path';
 import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { listen } from '@tauri-apps/api/event';
 import { formatDate, getField, toExactArrayBuffer } from '../utils';
 import { buildUpdatedCredentials } from '../dbHelper.js';
 import { isAnyModalOpen } from '../modalState.js';
+import {
+    clearTeardownPageHandler,
+    setTeardownPageHandler,
+} from '../teardownGuard.js';
 import {
     biometricPreferenceKey,
     collapsedGroupsPreferenceKey,
@@ -379,44 +381,24 @@ onMounted(() => {
 
     window.addEventListener('kivarion:before-lock', prepareForForcedLock);
     window.addEventListener('keydown', onGlobalShortcut);
-    void setupTeardownGuards();
+    setTeardownPageHandler(guardTeardown);
 });
 
 onUnmounted(() => {
     window.removeEventListener('kivarion:before-lock', prepareForForcedLock);
     window.removeEventListener('keydown', onGlobalShortcut);
-    unlistenCloseRequested?.();
-    unlistenCloseRequested = null;
-    unlistenQuitRequested?.();
-    unlistenQuitRequested = null;
+    clearTeardownPageHandler(guardTeardown);
     clearTimeout(searchDebounceTimer);
     customIconDataUrls.clear();
 });
 
-// Native teardown guards: a window close (red button / Cmd+W) or an app quit
-// (Cmd+Q — surfaced by the backend as `kivarion:quit-requested`, since it
-// bypasses close-requested) would otherwise kill the process while an
-// auto-save is still in flight or an entry edit is pending — the same data
-// the in-app Close button already guards against losing.
-//
-// While this listener exists, Tauri no longer closes the window itself: the
-// API wrapper finalizes an unprevented close by calling `destroy()`, so the
-// capability must grant `core:window:allow-destroy` or the close button
-// silently stops working.
+// Native teardown (a window close or an app quit) is registered once in
+// `App.vue`, because a listener that lives on this page disappears with it —
+// and Settings is reachable with the database still open. What *this* page
+// owns is the decision: the entry-edit draft, the "Saving changes…" modal and
+// the conflict modal are all here, so `App.vue` calls `guardTeardown` below
+// while the page is mounted, and routes back here when it is not.
 let pendingTeardownFinish = null;
-let unlistenCloseRequested = null;
-let unlistenQuitRequested = null;
-
-async function setupTeardownGuards() {
-    unlistenCloseRequested = await getCurrentWindow().onCloseRequested(
-        (event) => {
-            if (guardTeardown(closeGuardedWindow)) event.preventDefault();
-        },
-    );
-    unlistenQuitRequested = await listen('kivarion:quit-requested', () => {
-        if (!guardTeardown(quitApp)) quitApp();
-    });
-}
 
 // Flush pending work, then run `finish` (close the window or exit the app).
 // Returns false when nothing needed guarding and `finish` was not called.
@@ -479,16 +461,6 @@ function confirmCloseWithoutWaiting() {
 function cancelClosingSave() {
     pendingTeardownFinish = null;
     showClosingSaveModal.value = false;
-}
-
-function closeGuardedWindow() {
-    // destroy() rather than close(): the flush already ran, and close() would
-    // re-enter the close-requested guard above.
-    void getCurrentWindow().destroy();
-}
-
-function quitApp() {
-    void invoke('quit_app');
 }
 
 const selectedEntryUuid = ref(null);
@@ -576,9 +548,17 @@ function onGlobalShortcut(event) {
 
     // A dialog is a decision the user is in the middle of: firing a shortcut
     // now acts on the page behind it, where the result is not even visible.
-    // `isAnyModalOpen` covers `EntryDetail`'s attachment dialogs too, and the
-    // conflict overlay is its own check because it is not a `BaseModal`.
-    if (isAnyModalOpen() || saveConflict.value) return;
+    // `isAnyModalOpen` covers `EntryDetail`'s attachment dialogs too; this
+    // page's own two overlays are plain elements rather than `BaseModal`s and
+    // so are checked by hand — Cmd+L over the unsaved-changes one used to
+    // replace the navigation it was asking about and put the same modal back up.
+    if (
+        isAnyModalOpen() ||
+        saveConflict.value ||
+        showUnsavedEditConfirm.value
+    ) {
+        return;
+    }
 
     const mod = event.metaKey || event.ctrlKey;
     if (!mod && key !== 'escape') return;
@@ -721,6 +701,7 @@ const {
     flushPendingSave,
     reloadDatabaseFromDisk,
     rememberCredentialsOnDisk,
+    runAfterSuccessfulSave,
     addEntry: performAddEntry,
     addGroup: performAddGroup,
     isSaving,
@@ -895,9 +876,16 @@ function requestCloseEntryDetail() {
     });
 }
 
+// Guarded like every other change of selection: this swaps the detail column to
+// a new entry, and `EntryDetail` reloads its form whenever the entry changes.
+// Unguarded, the "+" button in the list header threw away a half-typed entry
+// without a word. (Cmd+N was only ever half-safe here — it is skipped while the
+// focus is in a form field, which the button never is.)
 function addEntry() {
-    const entryUuid = performAddEntry(store.selectedGroupUuid);
-    if (entryUuid) selectedEntryUuid.value = entryUuid;
+    requestNavigation(() => {
+        const entryUuid = performAddEntry(store.selectedGroupUuid);
+        if (entryUuid) selectedEntryUuid.value = entryUuid;
+    });
 }
 
 function addGroup(parentGroupUuid) {
@@ -938,15 +926,21 @@ function cancelDelete() {
 }
 
 function restoreEntry(entryUuid) {
-    const entry = findEntryByUuid(store.db, entryUuid);
-    if (!entry || !isObjectInRecycleBin(store.db, entry)) return;
+    // Closes the detail column when the restored entry is the open one, so it
+    // goes through the same draft guard as the other selection changes.
+    requestNavigation(() => {
+        const entry = findEntryByUuid(store.db, entryUuid);
+        if (!entry || !isObjectInRecycleBin(store.db, entry)) return;
 
-    const target = getRestoreTargetGroup(store.db, entry);
-    if (!target) return;
-    store.db.move(entry, target);
-    if (selectedEntryUuid.value === entryUuid) selectedEntryUuid.value = null;
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
+        const target = getRestoreTargetGroup(store.db, entry);
+        if (!target) return;
+        store.db.move(entry, target);
+        if (selectedEntryUuid.value === entryUuid) {
+            selectedEntryUuid.value = null;
+        }
+        store.touchDb();
+        saveDatabaseChanges({ debounce: true });
+    });
 }
 
 function onEntryUpdated() {
@@ -1127,15 +1121,21 @@ function moveGroup({ draggedUuid, targetUuid, position }) {
 }
 
 function moveEntry({ entryUuid, targetGroupUuid }) {
-    const entry = findEntryByUuid(store.db, entryUuid);
-    const targetGroup = findGroupByUuid(store.db, targetGroupUuid);
-    if (!entry || !targetGroup || entry.parentGroup === targetGroup) return;
+    // Dropping an entry on a group selects both that group and the entry, so
+    // an edit open on a *different* entry would be replaced without asking.
+    // The drop is carried out (or dropped) together with the selection, which
+    // is what the three answers of the unsaved-changes modal already mean.
+    requestNavigation(() => {
+        const entry = findEntryByUuid(store.db, entryUuid);
+        const targetGroup = findGroupByUuid(store.db, targetGroupUuid);
+        if (!entry || !targetGroup || entry.parentGroup === targetGroup) return;
 
-    store.db.move(entry, targetGroup);
-    store.selectedGroupUuid = targetGroupUuid;
-    selectedEntryUuid.value = entryUuid;
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
+        store.db.move(entry, targetGroup);
+        store.selectedGroupUuid = targetGroupUuid;
+        selectedEntryUuid.value = entryUuid;
+        store.touchDb();
+        saveDatabaseChanges({ debounce: true });
+    });
 }
 
 function requestEmptyRecycleBin() {
@@ -1287,45 +1287,50 @@ async function confirmDatabaseSettings({
         return;
     }
 
-    store.touchDb();
-    showSettingsModal.value = false;
-    settingsBusy.value = false;
-    const saved = await saveDatabaseChanges();
-
-    if (saved && keyFileChanged && store.filePath) {
-        await writeKeyFilePreference(store.filePath, keyFilePath);
-        currentKeyFilePath.value = keyFilePath || null;
+    // Both records below describe the *file*, so they are only true once the
+    // write lands — and the write that lands may not be this one: it can fail
+    // and be retried from the banner, or resolved through the conflict modal.
+    // Queueing them makes them ride along with whichever save finally succeeds
+    // instead of being tied to this single attempt.
+    const path = store.filePath;
+    if (keyFileChanged && path) {
+        runAfterSuccessfulSave(async () => {
+            await writeKeyFilePreference(path, keyFilePath);
+            if (store.filePath === path) {
+                currentKeyFilePath.value = keyFilePath || null;
+            }
+        });
     }
 
     // If the master password changed, the stored biometric secret is now stale.
     // Update it (or drop it) so Touch ID doesn't keep unlocking with the old password.
     if (
-        saved &&
         password &&
-        store.filePath &&
-        localStorage.getItem(biometricPreferenceKey(store.filePath)) === 'true'
+        path &&
+        localStorage.getItem(biometricPreferenceKey(path)) === 'true'
     ) {
+        runAfterSuccessfulSave(() => updateBiometricPassword(path, password));
+    }
+
+    store.touchDb();
+    showSettingsModal.value = false;
+    settingsBusy.value = false;
+    await saveDatabaseChanges();
+}
+
+async function updateBiometricPassword(path, password) {
+    try {
+        // Saving the secret triggers a Touch ID prompt, which blurs the
+        // window — that must not be mistaken for the user leaving the app.
+        await withSystemInteraction(() =>
+            invoke('save_biometric_password', { id: path, pass: password }),
+        );
+    } catch (e) {
+        console.error('Failed to update biometric password, removing it:', e);
         try {
-            // Saving the secret triggers a Touch ID prompt, which blurs the
-            // window — that must not be mistaken for the user leaving the app.
-            await withSystemInteraction(() =>
-                invoke('save_biometric_password', {
-                    id: store.filePath,
-                    pass: password,
-                }),
-            );
-        } catch (e) {
-            console.error(
-                'Failed to update biometric password, removing it:',
-                e,
-            );
-            try {
-                await invoke('delete_biometric_password', {
-                    id: store.filePath,
-                });
-            } catch {}
-            localStorage.removeItem(biometricPreferenceKey(store.filePath));
-        }
+            await invoke('delete_biometric_password', { id: path });
+        } catch {}
+        localStorage.removeItem(biometricPreferenceKey(path));
     }
 }
 </script>
