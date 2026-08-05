@@ -328,6 +328,48 @@ describe('generatePassword', () => {
         expect(mixedEntropy).toBeCloseTo(9 * Math.log2(26 + 26 + 10 + 33));
         expect(estimatePasswordEntropy({ password: '' })).toBe(0);
     });
+    test('always reports a finite entropy', () => {
+        // Anything non-finite travels straight to the strength bar as a
+        // negative or NaN width.
+        const inputs = [
+            { password: '' },
+            { password: ' ' },
+            { password: ' ' },
+            { password: '\u{1f512}' },
+            { length: 0 },
+            {
+                length: 12,
+                upper: false,
+                lower: false,
+                numbers: false,
+                symbols: false,
+            },
+        ];
+
+        for (const input of inputs) {
+            const entropy = estimatePasswordEntropy(input);
+            expect(Number.isFinite(entropy)).toBe(true);
+            expect(entropy).toBeGreaterThanOrEqual(0);
+        }
+    });
+
+    test('generates nothing rather than a biased password when no class is selected', () => {
+        // `secureRandomIndex` throws on an empty alphabet instead of returning
+        // NaN; these are the guards that keep it from ever being asked.
+        expect(
+            generatePassword({
+                length: 12,
+                upper: false,
+                lower: false,
+                numbers: false,
+                symbols: false,
+            }),
+        ).toBe('');
+        expect(generatePassword({ length: 0 })).toBe('');
+        // Fewer characters than selected classes cannot satisfy "one of each".
+        expect(generatePassword({ length: 2 })).toBe('');
+    });
+
     test('maps entropy to strength labels', () => {
         expect(passwordStrengthLabel(20)).toBe('Weak');
         expect(passwordStrengthLabel(45)).toBe('Fair');

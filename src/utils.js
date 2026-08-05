@@ -189,6 +189,10 @@ export function estimatePasswordEntropy(options = {}) {
         );
         charsetSize += otherCharacters.size;
 
+        // Every branch above adds at least one for a non-empty password, but
+        // `Math.log2(0)` is `-Infinity` and would travel all the way to the
+        // strength bar as a negative width.
+        if (!charsetSize) return 0;
         return characters.length * Math.log2(charsetSize);
     }
 
@@ -233,8 +237,19 @@ export function generatePassword(options = {}) {
  * Uniformly pick an index in [0, max) using rejection sampling so that no
  * character is statistically favoured (plain `random % max` is biased unless
  * max divides 2^32).
+ *
+ * Refuses a non-positive bound rather than working with it: `max = 0` makes the
+ * rejection limit `NaN`, which no comparison rejects, and the function then
+ * returns `NaN` as though it were an index. Every caller here guards against
+ * that already — this is so the next one does not have to know it must.
  */
 function secureRandomIndex(max) {
+    if (!Number.isInteger(max) || max < 1) {
+        throw new RangeError(
+            `secureRandomIndex needs a positive integer bound, got ${max}`,
+        );
+    }
+
     const range = 2 ** 32;
     const limit = Math.floor(range / max) * max;
     const buf = new Uint32Array(1);

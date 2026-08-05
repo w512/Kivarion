@@ -70,10 +70,15 @@
         <Teleport to="body">
             <div
                 v-if="contextMenu.visible"
+                ref="contextMenuRef"
                 class="context-menu"
                 :style="{
                     top: contextMenu.y + 'px',
                     left: contextMenu.x + 'px',
+                    // Hidden for the one frame it takes to measure the menu and
+                    // pull it back inside the window, so it is never seen in
+                    // the wrong place.
+                    visibility: contextMenu.placed ? 'visible' : 'hidden',
                 }"
                 @click.stop
             >
@@ -187,7 +192,7 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted } from 'vue';
+import { computed, nextTick, ref, onMounted, onUnmounted } from 'vue';
 import { useGroupDragDrop } from '../composables/useGroupDragDrop.js';
 
 const props = defineProps({
@@ -235,9 +240,15 @@ const entryCount = computed(() => {
 
 const contextMenu = ref({
     visible: false,
+    placed: false,
     x: 0,
     y: 0,
 });
+const contextMenuRef = ref(null);
+
+// Distance kept between the menu and the window edge when it has to be pulled
+// back in.
+const CONTEXT_MENU_MARGIN = 8;
 
 function toggleCollapse() {
     if (hasChildren.value) {
@@ -257,14 +268,48 @@ function collapse() {
     }
 }
 
-function onRightClick(event) {
+/**
+ * Keep the menu inside the window.
+ *
+ * Placed at the pointer alone, a right-click near the bottom or right edge of
+ * the window put part of the menu — including whole items — outside it, with
+ * nothing to scroll to reach them. The size is only known once it is rendered,
+ * so it is measured and then pulled back; `placed` keeps it invisible until it
+ * has been.
+ */
+async function onRightClick(event) {
     if (isAllEntries.value) return;
 
     contextMenu.value = {
         visible: true,
+        placed: false,
         x: event.clientX,
         y: event.clientY,
     };
+
+    await nextTick();
+    // The menu can be gone already — a click elsewhere closes it.
+    if (!contextMenu.value.visible) return;
+
+    // Without a measurement, show it where the pointer was: a menu that stays
+    // invisible is a worse outcome than one near the edge.
+    const rect = contextMenuRef.value?.getBoundingClientRect?.();
+    const { x, y } = contextMenu.value;
+    contextMenu.value = {
+        visible: true,
+        placed: true,
+        x: rect ? clampToViewport(x, rect.width, window.innerWidth) : x,
+        y: rect ? clampToViewport(y, rect.height, window.innerHeight) : y,
+    };
+}
+
+function clampToViewport(position, size, available) {
+    // The lower bound wins when the menu is larger than the window, which is
+    // the better half to show.
+    return Math.max(
+        CONTEXT_MENU_MARGIN,
+        Math.min(position, available - size - CONTEXT_MENU_MARGIN),
+    );
 }
 
 function handleAction(action) {

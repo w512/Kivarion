@@ -289,7 +289,16 @@ fn process_is_running(pid: u32) -> bool {
 }
 
 fn lock_file_is_stale(path: &std::path::Path) -> bool {
-    let contents = std::fs::read_to_string(path).unwrap_or_default();
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        // Gone between the failed `create_new` and this read: the writer that
+        // held it finished in that window. Without this the empty contents
+        // parse to no `created_ms` and no `pid`, which reads as a live local
+        // lock — and the save was refused with `SAVE_LOCKED` naming a file
+        // that no longer exists.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => String::new(),
+    };
     let created_ms = parse_lock_value(&contents, "created_ms").or_else(|| {
         std::fs::metadata(path)
             .ok()
@@ -669,7 +678,49 @@ async fn export_file(
     let path = access.check(&path, Access::Write)?;
     let data = raw_body(&request)?.to_vec();
 
-    run_blocking(move || std::fs::write(&path, &data).map_err(|e| e.to_string())).await?
+    run_blocking(move || export_file_bytes(&path, &data)).await?
+}
+
+/// Temp file → rename, the same shape as `save_database` minus the lock and the
+/// backups.
+///
+/// A plain `std::fs::write` truncates the destination before it writes, so an
+/// export that failed part way — a full disk, a volume pulled out — left a
+/// half-written file where the user's own file used to be. Exporting over an
+/// existing file must either replace it or leave it alone.
+///
+/// The temp file is owner-only while it is being written (`create_temp_file`),
+/// which matters here as much as it does for a vault: these are decrypted
+/// attachment bytes. `apply_saved_file_permissions` then settles the final mode
+/// the same way — the file being replaced keeps its permissions, a new one is
+/// created owner-only rather than at whatever the umask allows.
+fn export_file_bytes(target: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let tmp = with_suffix(target, ".tmp");
+    let original_permissions = std::fs::metadata(target)
+        .ok()
+        .map(|metadata| metadata.permissions());
+
+    {
+        let mut file = create_temp_file(&tmp).map_err(|e| e.to_string())?;
+        if let Err(e) = file.write_all(data).and_then(|_| file.sync_all()) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+    }
+
+    if let Err(e) = apply_saved_file_permissions(&tmp, original_permissions.as_ref()) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+
+    Ok(())
 }
 
 /// Strip any directory components from an attachment name so it can never
@@ -1651,6 +1702,72 @@ mod tests {
         // something on that port.
         assert_eq!(navigable("http://localhost:1420/"), cfg!(dev));
         assert_eq!(navigable("http://127.0.0.1:1420/"), cfg!(dev));
+    }
+
+    #[test]
+    fn a_lock_file_that_is_already_gone_counts_as_stale() {
+        let dir = TempDir::new();
+        let target = dir.path().join("vault.kdbx");
+
+        // The holder released it between our failed `create_new` and the read.
+        // Judged as live, the save came back `SAVE_LOCKED` over a lock file
+        // that no longer existed.
+        assert!(lock_file_is_stale(&lock_path(&target)));
+    }
+
+    #[test]
+    fn export_file_leaves_the_previous_file_intact_when_the_write_fails() {
+        let dir = TempDir::new();
+        let target = dir.path().join("attachment.bin");
+        std::fs::write(&target, b"previously exported").unwrap();
+
+        // A directory cannot be opened for writing, so the temp step fails the
+        // way a full disk or a removed volume would.
+        std::fs::create_dir(with_suffix(&target, ".tmp")).unwrap();
+
+        assert!(export_file_bytes(&target, b"new bytes").is_err());
+        // The old export used `std::fs::write`, which truncates first.
+        assert_eq!(read_bytes(&target), b"previously exported");
+    }
+
+    #[test]
+    fn export_file_replaces_an_existing_file_and_cleans_up() {
+        let dir = TempDir::new();
+        let target = dir.path().join("attachment.bin");
+        std::fs::write(&target, b"old").unwrap();
+
+        export_file_bytes(&target, b"new").unwrap();
+
+        assert_eq!(read_bytes(&target), b"new");
+        assert!(!with_suffix(&target, ".tmp").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_file_keeps_a_new_file_owner_only() {
+        let dir = TempDir::new();
+        let target = dir.path().join("attachment.bin");
+
+        export_file_bytes(&target, b"decrypted").unwrap();
+
+        // Decrypted vault content, so it does not land at 0644 because that is
+        // what the umask happened to allow.
+        assert_eq!(mode_of(&target), 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn export_file_preserves_the_permissions_of_the_file_it_replaces() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new();
+        let target = dir.path().join("attachment.bin");
+        std::fs::write(&target, b"old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        export_file_bytes(&target, b"new").unwrap();
+
+        assert_eq!(mode_of(&target), 0o640);
     }
 
     #[test]

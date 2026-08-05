@@ -7,7 +7,7 @@ import {
     spyOn,
     test,
 } from 'bun:test';
-import { reactive, shallowReactive } from 'vue';
+import { reactive, shallowReactive, watch } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 
 let currentStore;
@@ -273,6 +273,35 @@ describe('useDatabaseActions save queue', () => {
         expect(actions.saveConflict.value).toBe(false);
         expect(actions.hasUnsavedChanges.value).toBe(false);
         expect(actions.lastSavedDbVersion.value).toBe(1);
+        // Kept alongside the flag, or the next conflict would flash this
+        // timestamp before its own is read.
+        expect(actions.conflictDiskMtime.value).toBe(null);
+    });
+
+    test('has the on-disk time ready before it raises the conflict', async () => {
+        const { store } = makeStore();
+        const actions = useDatabaseActions(store);
+        saveInvokeMock = mock(async () => {
+            throw new Error('EXTERNAL_CONFLICT: the file was modified on disk');
+        });
+        mtimeInvokeMock = mock(async () => 777);
+        store.dbVersion = 1;
+
+        // The modal renders the moment `saveConflict` turns true, so it must
+        // not turn true while the timestamp still belongs to a previous one.
+        let mtimeWhenRaised;
+        const stop = watch(
+            () => actions.saveConflict.value,
+            (raised) => {
+                if (raised) mtimeWhenRaised = actions.conflictDiskMtime.value;
+            },
+            { flush: 'sync' },
+        );
+
+        await actions.saveDatabaseChanges();
+        stop();
+
+        expect(mtimeWhenRaised).toBe(777);
     });
 
     test('keeps database dirty after a failed save and allows retry', async () => {

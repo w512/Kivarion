@@ -271,6 +271,7 @@ function createDatabaseActions(store) {
                     // bookkeeping below may be recorded against its successor.
                     if (saveGeneration !== generation) break;
                     saveConflict.value = false;
+                    conflictDiskMtime.value = null;
                     lastSavedDbVersion.value = versionToSave;
                     // The file was just written with the database's current
                     // credentials, so any rekey that was pending is now real.
@@ -283,11 +284,16 @@ function createDatabaseActions(store) {
                     // conflict modal over the one that replaced it.
                     if (saveGeneration !== generation) break;
                     if (error?.code === 'EXTERNAL_CONFLICT') {
-                        // Let the UI ask the user; don't treat it as a hard error.
-                        saveConflict.value = true;
-                        conflictDiskMtime.value = store.filePath
+                        // Let the UI ask the user; don't treat it as a hard
+                        // error. Read the timestamp before raising the flag:
+                        // the modal renders as soon as `saveConflict` is set,
+                        // and setting it first showed the previous conflict's
+                        // date for as long as this await took.
+                        const diskMtime = store.filePath
                             ? await readFileMtime(store.filePath)
                             : null;
+                        conflictDiskMtime.value = diskMtime;
+                        saveConflict.value = true;
                     } else {
                         const message =
                             error?.message || String(error) || 'Unknown error';
