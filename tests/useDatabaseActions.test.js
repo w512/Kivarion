@@ -42,7 +42,8 @@ mock.module('@tauri-apps/api/core', () => ({
 
 const { useDatabaseActions } =
     await import('../src/composables/useDatabaseActions.js');
-const { buildUpdatedCredentials } = await import('../src/dbHelper.js');
+const { buildUpdatedCredentials, saveDatabase } =
+    await import('../src/dbHelper.js');
 
 function makeStore() {
     const dbSaveMock = mock(async () => new Uint8Array([1, 2, 3]).buffer);
@@ -593,5 +594,37 @@ describe('buildUpdatedCredentials', () => {
 
         expect(current.passwordHash).toBe(previousPasswordHash);
         expect(current.keyFileHash).toBe(previousKeyFileHash);
+    });
+});
+
+describe('saveDatabase without a file path', () => {
+    beforeEach(() => {
+        saveInvokeMock = mock(async () => 1000);
+    });
+
+    test('refuses instead of reporting a save that never happened', async () => {
+        // There used to be a browser-download fallback here. In a desktop
+        // webview it writes nothing, and it returned normally, so the caller
+        // cleared its unsaved-changes state over a file that was never written.
+        const { dbSaveMock } = makeStore();
+        currentStore.filePath = null;
+
+        await expect(
+            saveDatabase(currentStore.db, 'vault.kdbx'),
+        ).rejects.toThrow(/no file path/i);
+
+        expect(saveInvokeMock).not.toHaveBeenCalled();
+        // Nothing was serialized either: there is no point encrypting a vault
+        // that has nowhere to go.
+        expect(dbSaveMock).not.toHaveBeenCalled();
+    });
+
+    test('still saves normally once a path is present', async () => {
+        const { dbSaveMock } = makeStore();
+
+        await saveDatabase(currentStore.db, 'vault.kdbx');
+
+        expect(dbSaveMock).toHaveBeenCalled();
+        expect(saveInvokeMock).toHaveBeenCalledTimes(1);
     });
 });

@@ -100,7 +100,8 @@ export async function readFileMtime(path) {
  * the user has chosen to overwrite an externally-modified file.
  *
  * @param {kdbxweb.Kdbx} db - The database instance
- * @param {string} fileName - Name of the file (used for the download fallback)
+ * @param {string} fileName - Name of the open file; only checked for presence,
+ *   as a database without one is not in a state that can be saved.
  * @param {{ force?: boolean }} [options]
  * @returns {Promise<void>} Rejects if the database could not be saved. On an
  *   external-modification conflict the rejection has `.code === 'EXTERNAL_CONFLICT'`.
@@ -112,15 +113,19 @@ export async function saveDatabase(db, fileName, { force = false } = {}) {
         throw new Error('Cannot save: missing database or file name');
     }
 
-    // Serialize first. If this throws, nothing on disk has been touched yet.
+    // A path exists before any save can happen — it is what the user picked to
+    // open or create the database, and it is what grants access to the file.
+    // This used to fall back to a browser download instead, which in a desktop
+    // webview writes nothing and yet returned as though the save had succeeded:
+    // the caller cleared its unsaved-changes state over a file that was never
+    // written. Refusing loudly is the only safe reading of "nowhere to save to".
+    if (!store.filePath) {
+        throw new Error('Cannot save: the database has no file path');
+    }
+
+    // Serialize only once there is somewhere to put the result.
     const arrayBuffer = await db.save();
     const bytes = new Uint8Array(arrayBuffer);
-
-    if (!store.filePath) {
-        // Fallback: download the file (web mode or no filesystem access).
-        downloadFile(bytes, fileName);
-        return;
-    }
 
     try {
         // The vault bytes go over as the raw IPC body; everything else rides
@@ -145,22 +150,4 @@ export async function saveDatabase(db, fileName, { force = false } = {}) {
         }
         throw error;
     }
-}
-
-/**
- * Browser fallback: trigger a download of the serialized database.
- */
-function downloadFile(bytes, fileName) {
-    const blob = new Blob([bytes], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.style.display = 'none';
-
-    document.body.appendChild(a);
-    a.click();
-
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
 }
