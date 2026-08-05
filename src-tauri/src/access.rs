@@ -751,7 +751,7 @@ mod tests {
                     cmd: cmd.into(),
                     callback: tauri::ipc::CallbackFn(0),
                     error: tauri::ipc::CallbackFn(1),
-                    url: "http://tauri.localhost".parse().unwrap(),
+                    url: crate::mock_ipc_url(),
                     body: tauri::ipc::InvokeBody::Json(args),
                     headers: Default::default(),
                     invoke_key: tauri::test::INVOKE_KEY.to_string(),

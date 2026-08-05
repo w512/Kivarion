@@ -5,6 +5,26 @@ mod crypto;
 
 use access::{Access, PathAccess};
 
+/// The page origin a mock-runtime `InvokeRequest` has to carry.
+///
+/// Tauri resolves a command against the ACL by the calling window's origin, so
+/// a request built with the wrong one is rejected before the command runs —
+/// with `"<cmd> not allowed. Plugin not found"`, which reads like a missing
+/// command rather than a mismatched origin. It is `tauri://localhost`
+/// everywhere except Windows and Android, which serve the app over a custom
+/// `http` protocol instead. Kept in one place because the tests in three
+/// modules push raw requests through the invoke handler.
+#[cfg(test)]
+pub(crate) fn mock_ipc_url() -> tauri::Url {
+    if cfg!(any(windows, target_os = "android")) {
+        "http://tauri.localhost"
+    } else {
+        "tauri://localhost"
+    }
+    .parse()
+    .expect("mock ipc url is a valid url")
+}
+
 // --- Filesystem commands -------------------------------------------------
 //
 // All database/attachment file I/O lives in the backend so the webview never
@@ -1779,7 +1799,7 @@ mod tests {
                 cmd: cmd.into(),
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
-                url: "http://tauri.localhost".parse().unwrap(),
+                url: crate::mock_ipc_url(),
                 body: tauri::ipc::InvokeBody::Raw(data.to_vec()),
                 headers,
                 invoke_key: tauri::test::INVOKE_KEY.to_string(),
@@ -1874,7 +1894,7 @@ mod tests {
                 cmd: "save_database".into(),
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
-                url: "http://tauri.localhost".parse().unwrap(),
+                url: crate::mock_ipc_url(),
                 body: tauri::ipc::InvokeBody::Json(serde_json::json!([1, 2, 3])),
                 headers,
                 invoke_key: tauri::test::INVOKE_KEY.to_string(),
