@@ -36,6 +36,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "minimumSystemVersion": "13.0",
       "entitlements": "Entitlements.plist",
       "files": {
         "embedded.provisionprofile": "Kivarion.provisionprofile"

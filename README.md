@@ -26,7 +26,7 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 
 ## Platform support
 
-Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. Some features are platform-specific:
+Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. macOS builds require **macOS 13.0 (Ventura) or later** — the app renders in the system WebView, and the interface uses features that older versions do not support. Some features are platform-specific:
 
 - **Touch ID unlock** — **macOS only**. On other platforms the biometric commands report "not supported" and the option is unavailable; unlock there is password-only.
 - **Quick Look attachment preview** — **macOS only** (uses `qlmanage`). In-app image/PDF preview and export work on all platforms.
