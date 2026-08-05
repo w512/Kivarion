@@ -129,6 +129,19 @@ const renderer = createRenderer({
             getRootNode() {
                 return null;
             },
+            // Components that manage focus (BaseModal) call these on the real
+            // DOM nodes they hold refs to; without them mounting such a
+            // component throws inside a watcher rather than failing visibly.
+            querySelector() {
+                return null;
+            },
+            querySelectorAll() {
+                return [];
+            },
+            focus() {},
+            contains() {
+                return false;
+            },
         };
     },
     createText(text) {
@@ -960,5 +973,77 @@ describe('component refresh behaviour', () => {
 
         expect(allText(root)).toContain('New group');
         expect(allText(root)).toContain('2');
+    });
+});
+
+// `BaseModal` is what keeps the app-wide open-modal count honest, and that
+// count is what stops a global shortcut from acting on the page behind a
+// dialog. The component is mounted for real here rather than the count being
+// driven by hand, because the bug this guards against is the registration
+// going out of step with `show` — which only the component can get wrong.
+describe('BaseModal open-modal accounting', () => {
+    let modalState;
+
+    beforeEach(async () => {
+        modalState = await import('../src/modalState.js');
+        modalState.resetModalState();
+    });
+
+    async function mountModal() {
+        const BaseModal = await loadVueComponent(
+            'src/components/BaseModal.vue',
+        );
+        const show = ref(false);
+        const mounted = mount(BaseModal, () => ({ show: show.value }));
+        await nextTick();
+        return { ...mounted, show };
+    }
+
+    test('counts a dialog only while it is showing', async () => {
+        const { show, unmount } = await mountModal();
+        expect(modalState.isAnyModalOpen()).toBe(false);
+
+        show.value = true;
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(true);
+
+        show.value = false;
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(false);
+
+        unmount();
+    });
+
+    test('releases the count when auto-lock unmounts an open dialog', async () => {
+        // Locking tears down the whole page subtree, so `show` never turns
+        // false on the way out. Without the unmount hook the count would stay
+        // raised for the rest of the session and every shortcut would be dead.
+        const { show, unmount } = await mountModal();
+        show.value = true;
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(true);
+
+        unmount();
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(false);
+    });
+
+    test('does not double-count repeated truthy updates of show', async () => {
+        const BaseModal = await loadVueComponent(
+            'src/components/BaseModal.vue',
+        );
+        const props = ref({ show: true, ariaLabel: 'first' });
+        const { unmount } = mount(BaseModal, () => props.value);
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(true);
+
+        // A re-render that leaves `show` true must not register a second time,
+        // or closing the dialog would leave the count stuck above zero.
+        props.value = { show: true, ariaLabel: 'second' };
+        await nextTick();
+
+        unmount();
+        await nextTick();
+        expect(modalState.isAnyModalOpen()).toBe(false);
     });
 });

@@ -26,7 +26,8 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
+import { registerOpenModal, unregisterOpenModal } from '../modalState.js';
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -101,6 +102,24 @@ function trapTab(e) {
     }
 }
 
+// Counted against `show` rather than the component's lifetime: several of these
+// stay mounted for as long as the database is open and only their contents come
+// and go. Kept as its own `immediate` watcher so that a dialog rendered
+// already-open is counted from the start, and so the count never depends on the
+// focus handling below.
+let counted = false;
+
+watch(
+    () => props.show,
+    (isShowing) => {
+        if (!!isShowing === counted) return;
+        if (isShowing) registerOpenModal();
+        else unregisterOpenModal();
+        counted = !!isShowing;
+    },
+    { immediate: true },
+);
+
 watch(
     () => props.show,
     (isShowing) => {
@@ -117,6 +136,15 @@ watch(
         }
     },
 );
+
+// Auto-lock tears the whole page subtree down, so an open dialog can go away
+// without `show` ever turning false.
+onUnmounted(() => {
+    if (counted) {
+        unregisterOpenModal();
+        counted = false;
+    }
+});
 
 function restoreFocus() {
     if (previouslyFocused && typeof previouslyFocused.focus === 'function') {

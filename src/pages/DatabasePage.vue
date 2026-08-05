@@ -308,6 +308,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { listen } from '@tauri-apps/api/event';
 import { formatDate, getField, toExactArrayBuffer } from '../utils';
 import { buildUpdatedCredentials } from '../dbHelper.js';
+import { isAnyModalOpen } from '../modalState.js';
 import {
     biometricPreferenceKey,
     collapsedGroupsPreferenceKey,
@@ -567,10 +568,21 @@ function hasTextSelection() {
 }
 
 function onGlobalShortcut(event) {
-    const mod = event.metaKey || event.ctrlKey;
-    if (!mod && event.key !== 'Escape') return;
+    // `key` is absent on some IME and synthetic events, and `.toLowerCase()` on
+    // undefined throws — inside a `keydown` listener, which swallows nothing.
+    const key =
+        typeof event.key === 'string' ? event.key.toLowerCase() : undefined;
+    if (!key) return;
 
-    const key = event.key.toLowerCase();
+    // A dialog is a decision the user is in the middle of: firing a shortcut
+    // now acts on the page behind it, where the result is not even visible.
+    // `isAnyModalOpen` covers `EntryDetail`'s attachment dialogs too, and the
+    // conflict overlay is its own check because it is not a `BaseModal`.
+    if (isAnyModalOpen() || saveConflict.value) return;
+
+    const mod = event.metaKey || event.ctrlKey;
+    if (!mod && key !== 'escape') return;
+
     if (mod && key === 'f') {
         event.preventDefault();
         headerRef.value?.focusSearch?.();
@@ -606,7 +618,7 @@ function onGlobalShortcut(event) {
                 autoClear: true,
             },
         );
-    } else if (event.key === 'Escape') {
+    } else if (key === 'escape') {
         if (searchQuery.value) searchQuery.value = '';
         else if (selectedEntryUuid.value) requestCloseEntryDetail();
     }
