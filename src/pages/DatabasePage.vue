@@ -297,40 +297,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import * as kdbxweb from 'kdbxweb';
 import { useStore } from '../store.js';
 import { homeDir } from '@tauri-apps/api/path';
-import { invoke } from '@tauri-apps/api/core';
-import { formatDate, getField, toExactArrayBuffer } from '../utils';
-import { buildUpdatedCredentials } from '../dbHelper.js';
+import { getField } from '../utils';
 import { isAnyModalOpen } from '../modalState.js';
-import {
-    clearTeardownPageHandler,
-    setTeardownPageHandler,
-} from '../teardownGuard.js';
-import {
-    biometricPreferenceKey,
-    collapsedGroupsPreferenceKey,
-    pruneCollapsedGroups,
-} from '../databasePreferences.js';
-import {
-    ALL_ENTRIES_UUID,
-    buildDatabaseView,
-    deleteMovesToRecycleBin,
-    findEntryByUuid,
-    findGroupByUuid,
-    getObjectUuid,
-    getRestoreTargetGroup,
-    groupContainsEntryUuid,
-    groupContainsGroupUuid,
-    groupNameExistsInParent,
-    isObjectInRecycleBin,
-    isRecycleBinGroup,
-    normalizeGroupName,
-    resolveGroupMove,
-} from '../kdbxView.js';
+import { buildDatabaseView, getObjectUuid } from '../kdbxView.js';
 
 // Components
 import GroupTree from '../components/GroupTree.vue';
@@ -344,13 +317,13 @@ import DatabaseSettingsModal from '../components/DatabaseSettingsModal.vue';
 // Composables
 import { useResizable } from '../composables/useResizable.js';
 import { useDatabaseActions } from '../composables/useDatabaseActions.js';
-import { lockDatabase } from '../composables/useDatabaseLock.js';
-import {
-    readKeyFilePreference,
-    writeKeyFilePreference,
-} from '../composables/useDatabaseAuth.js';
 import { useClipboard } from '../composables/useClipboard.js';
-import { withSystemInteraction } from '../composables/useSystemInteraction.js';
+import { useEntrySelection } from '../composables/useEntrySelection.js';
+import { useCollapsedGroups } from '../composables/useCollapsedGroups.js';
+import { useGroupActions } from '../composables/useGroupActions.js';
+import { useEntryActions } from '../composables/useEntryActions.js';
+import { useDatabaseSettings } from '../composables/useDatabaseSettings.js';
+import { useDatabaseTeardown } from '../composables/useDatabaseTeardown.js';
 
 const router = useRouter();
 const store = useStore();
@@ -358,6 +331,112 @@ const store = useStore();
 // Data URLs are expensive to build for large custom icons. Keep one cache for
 // the lifetime of this open database and explicitly discard it on lock/reload.
 const customIconDataUrls = new Map();
+
+const databaseView = computed(() => {
+    // KDBX objects retain their identity across edits, so dbVersion is the
+    // explicit invalidation key for the whole lightweight view/search index.
+    store.dbVersion;
+    return buildDatabaseView(store.db, customIconDataUrls);
+});
+
+// The parts of the page, in dependency order. `databaseView` has to be declared
+// before them: several read it during setup. `selection` is the one they share —
+// nearly every action moves what the user is looking at, and each such move has
+// to pass the entry-edit draft guard that lives with it.
+const actions = useDatabaseActions(store);
+const {
+    saveDatabaseChanges,
+    flushPendingSave,
+    isSaving,
+    isReloading,
+    saveError,
+    saveConflict,
+} = actions;
+
+const selection = useEntrySelection(store, databaseView);
+const {
+    selectedEntryUuid,
+    entryDetailRef,
+    searchQuery,
+    selectedEntry,
+    selectedGroupIsInRecycleBin,
+    filteredEntries,
+    showUnsavedEditConfirm,
+    selectGroup,
+    selectEntry,
+    requestCloseEntryDetail,
+    saveUnsavedEditAndContinue,
+    discardUnsavedEditAndContinue,
+    continueEditing,
+} = selection;
+
+const collapsedGroups = useCollapsedGroups(store, () =>
+    store.db ? databaseView.value.groupsByUuid : null,
+);
+
+const {
+    showRenameModal,
+    newGroupName,
+    groupNameError,
+    showDeleteGroupConfirm,
+    showEmptyRecycleBinConfirm,
+    groupDeleteIsPermanent,
+    groupDeleteMessage,
+    addGroup,
+    requestRenameGroup,
+    confirmRenameGroup,
+    requestDeleteGroup,
+    confirmDeleteGroup,
+    restoreGroup,
+    moveGroup,
+    requestEmptyRecycleBin,
+    confirmEmptyRecycleBin,
+    cancelGroupAction,
+} = useGroupActions(store, { databaseView, selection, actions });
+
+const {
+    showDeleteConfirm,
+    entryDeleteIsPermanent,
+    entryDeleteMessage,
+    addEntry,
+    requestDelete,
+    confirmDelete,
+    cancelDelete,
+    restoreEntry,
+    moveEntry,
+    onEntryUpdated,
+} = useEntryActions(store, { databaseView, selection, actions });
+
+const {
+    showSettingsModal,
+    settingsBusy,
+    settingsError,
+    currentKeyFilePath,
+    openDatabaseSettings,
+    closeDatabaseSettings,
+    confirmDatabaseSettings,
+    reset: resetDatabaseSettings,
+} = useDatabaseSettings(store, { actions });
+
+const {
+    showClosingSaveModal,
+    showCloseAfterSaveErrorConfirm,
+    conflictDiskTime,
+    confirmCloseWithoutWaiting,
+    cancelClosingSave,
+    lockDatabaseFromHeader,
+    closeAndForgetDatabase,
+    forceCloseDatabase,
+    cancelCloseAfterSaveError,
+    overwriteOnConflict,
+    reloadFromConflict,
+    dismissConflict,
+    reset: resetTeardown,
+} = useDatabaseTeardown({ store, router, actions, selection });
+
+const headerRef = ref(null);
+const homeDirPath = ref('');
+const { copy: copyToClipboard } = useClipboard();
 
 onMounted(() => {
     if (!store.db) {
@@ -377,150 +456,76 @@ onMounted(() => {
 
     window.addEventListener('kivarion:before-lock', prepareForForcedLock);
     window.addEventListener('keydown', onGlobalShortcut);
-    setTeardownPageHandler(guardTeardown);
 });
 
 onUnmounted(() => {
     window.removeEventListener('kivarion:before-lock', prepareForForcedLock);
     window.removeEventListener('keydown', onGlobalShortcut);
-    clearTeardownPageHandler(guardTeardown);
-    clearTimeout(searchDebounceTimer);
     customIconDataUrls.clear();
 });
-
-// Native teardown (a window close or an app quit) is registered once in
-// `App.vue`, because a listener that lives on this page disappears with it —
-// and Settings is reachable with the database still open. What *this* page
-// owns is the decision: the entry-edit draft, the "Saving changes…" modal and
-// the conflict modal are all here, so `App.vue` calls `guardTeardown` below
-// while the page is mounted, and routes back here when it is not.
-let pendingTeardownFinish = null;
-
-// Flush pending work, then run `finish` (close the window or exit the app).
-// Returns false when nothing needed guarding and `finish` was not called.
-function guardTeardown(finish) {
-    const hasDraft = entryDetailRef.value?.hasUnsavedChanges?.() ?? false;
-    if (!hasDraft && !isSaving.value && !hasUnsavedChanges.value) {
-        return false;
-    }
-    requestNavigation(() => finishAfterFlush(finish));
-    return true;
-}
-
-// Wait for the save queue to drain behind a visible "Saving changes…" modal —
-// a silent wait looks like a frozen app (saving a large vault takes seconds).
-// Runs `finish` when the flush succeeds (or immediately if nothing is
-// pending); a failed flush falls through to the save-error confirmation.
-function finishAfterFlush(finish) {
-    if (!isSaving.value && !hasUnsavedChanges.value) {
-        finish();
-        return;
-    }
-    pendingTeardownFinish = finish;
-    showClosingSaveModal.value = true;
-    void saveDatabaseChanges().then((saved) => {
-        // The user may have clicked "Close anyway" / "Keep open" meanwhile.
-        if (pendingTeardownFinish !== finish || !showClosingSaveModal.value) {
-            return;
-        }
-        showClosingSaveModal.value = false;
-        if (saved) {
-            pendingTeardownFinish = null;
-            finish();
-        } else if (!saveConflict.value) {
-            // On a conflict the dedicated modal is already up and offers the
-            // real choices; stacking "Close without saving?" on top of it would
-            // hide the cause behind a message that never names it. That modal
-            // resumes the teardown through `resumePendingTeardown`.
-            showCloseAfterSaveErrorConfirm.value = true;
-        }
-    });
-}
-
-// Continue a close/quit that was parked while the user resolved a conflict.
-// Routed back through `finishAfterFlush` so a still-unsaved database gets the
-// same treatment it would have had, instead of closing with changes pending.
-function resumePendingTeardown() {
-    const finish = pendingTeardownFinish;
-    if (!finish) return;
-    pendingTeardownFinish = null;
-    finishAfterFlush(finish);
-}
-
-function confirmCloseWithoutWaiting() {
-    const finish = pendingTeardownFinish;
-    pendingTeardownFinish = null;
-    showClosingSaveModal.value = false;
-    finish?.();
-}
-
-function cancelClosingSave() {
-    pendingTeardownFinish = null;
-    showClosingSaveModal.value = false;
-}
-
-const selectedEntryUuid = ref(null);
-const entryDetailRef = ref(null);
-const headerRef = ref(null);
-const searchQuery = ref('');
-const debouncedSearchQuery = ref('');
-let searchDebounceTimer = null;
-const showDeleteConfirm = ref(false);
-const entryToDeleteUuid = ref(null);
-
-// Group management state
-const showRenameModal = ref(false);
-const groupToRenameUuid = ref(null);
-const newGroupName = ref('');
-const groupNameError = ref('');
-
-const showDeleteGroupConfirm = ref(false);
-const showEmptyRecycleBinConfirm = ref(false);
-const groupToDeleteUuid = ref(null);
-const groupToDeleteName = computed(() => getGroupName(groupToDeleteUuid.value));
-const groupDeleteIsPermanent = computed(() => {
-    const group = findGroupByUuid(databaseView.value, groupToDeleteUuid.value);
-    return !deleteMovesToRecycleBin(databaseView.value, group);
-});
-const groupDeleteMessage = computed(() =>
-    groupDeleteIsPermanent.value
-        ? `“${groupToDeleteName.value}” and all its contents will be permanently deleted. This action cannot be undone.`
-        : `“${groupToDeleteName.value}” and all its contents will be moved to the Recycle Bin. You can restore the group later.`,
-);
-const homeDirPath = ref('');
-
-const showSettingsModal = ref(false);
-const settingsBusy = ref(false);
-const settingsError = ref('');
-const showCloseAfterSaveErrorConfirm = ref(false);
-const showClosingSaveModal = ref(false);
-const showUnsavedEditConfirm = ref(false);
-const pendingNavigation = ref(null);
-const pendingForceCloseForgetFile = ref(false);
-const collapsedGroups = ref({});
-const { copy: copyToClipboard } = useClipboard();
 
 function prepareForForcedLock() {
     // Runs synchronously from the `kivarion:before-lock` dispatch, i.e. while
     // `store.db` is still set: a debounced auto-save must be started here or
     // auto-lock silently loses the mutation that was waiting for it.
     void flushPendingSave();
-    entryDetailRef.value?.discardPendingEdit?.();
-    pendingNavigation.value = null;
-    pendingTeardownFinish = null;
-    showUnsavedEditConfirm.value = false;
-    showCloseAfterSaveErrorConfirm.value = false;
-    showClosingSaveModal.value = false;
-    showDeleteConfirm.value = false;
-    showRenameModal.value = false;
-    showDeleteGroupConfirm.value = false;
-    showEmptyRecycleBinConfirm.value = false;
-    showSettingsModal.value = false;
-    settingsBusy.value = false;
-    settingsError.value = '';
-    selectedEntryUuid.value = null;
+    selection.reset();
+    resetTeardown();
+    cancelGroupAction();
+    cancelDelete();
+    resetDatabaseSettings();
     customIconDataUrls.clear();
 }
+
+const dbName = computed(() => {
+    store.dbVersion;
+    return store.db?.meta?.name || 'Unnamed';
+});
+
+const displayPath = computed(() => {
+    const fp = store.filePath;
+    if (!fp) return '';
+    const hd = homeDirPath.value;
+    if (hd && fp.startsWith(hd)) {
+        return '~' + fp.slice(hd.length);
+    }
+    return fp;
+});
+
+const groupTree = computed(() => databaseView.value.groupTree);
+const totalEntriesCount = computed(() => databaseView.value.entries.length);
+
+// Column widths logic.
+//
+// The `reserve` values are what the columns to the right of each divider need
+// at minimum (the CSS min-widths below, plus the 4px dividers), so dragging one
+// column wide in a narrow window cannot push the others off screen.
+const RESIZER_WIDTH = 4;
+const ENTRIES_MIN_WIDTH = 200;
+const DETAIL_MIN_WIDTH = 260;
+
+const {
+    width: sidebarWidth,
+    isResizing: isResizingSidebar,
+    startResize: startResizeSidebar,
+} = useResizable('kivarion-sidebar-width', 220, {
+    minWidth: 150,
+    maxWidth: 600,
+    legacyKeys: ['kivarion_sidebarWidth'],
+    reserve: ENTRIES_MIN_WIDTH + DETAIL_MIN_WIDTH + RESIZER_WIDTH * 2,
+});
+
+const {
+    width: entriesWidth,
+    isResizing: isResizingEntries,
+    startResize: startResizeEntries,
+} = useResizable('kivarion-entries-width', 300, {
+    minWidth: ENTRIES_MIN_WIDTH,
+    maxWidth: 800,
+    offsetSource: sidebarWidth,
+    legacyKeys: ['kivarion_entriesWidth'],
+    reserve: DETAIL_MIN_WIDTH + RESIZER_WIDTH,
+});
 
 function isEditableTarget(target) {
     const tag = target?.tagName?.toLowerCase();
@@ -597,753 +602,6 @@ function onGlobalShortcut(event) {
     } else if (key === 'escape') {
         if (searchQuery.value) searchQuery.value = '';
         else if (selectedEntryUuid.value) requestCloseEntryDetail();
-    }
-}
-
-watch(newGroupName, () => {
-    groupNameError.value = '';
-});
-
-// Keep typing responsive: the input updates immediately, while the full-vault
-// search runs only after a short pause. Clearing remains instant.
-watch(searchQuery, (value) => {
-    clearTimeout(searchDebounceTimer);
-    if (!value.trim()) {
-        debouncedSearchQuery.value = '';
-        return;
-    }
-    searchDebounceTimer = setTimeout(() => {
-        debouncedSearchQuery.value = value;
-    }, 150);
-});
-
-watch(
-    () => store.db,
-    () => customIconDataUrls.clear(),
-);
-
-const databaseView = computed(() => {
-    // KDBX objects retain their identity across edits, so dbVersion is the
-    // explicit invalidation key for the whole lightweight view/search index.
-    store.dbVersion;
-    return buildDatabaseView(store.db, customIconDataUrls);
-});
-
-function collapsedGroupsStorageKey(path = store.filePath) {
-    return path ? collapsedGroupsPreferenceKey(path) : null;
-}
-
-function loadCollapsedGroups() {
-    const key = collapsedGroupsStorageKey();
-    if (!key) {
-        collapsedGroups.value = {};
-        return;
-    }
-
-    let stored;
-    try {
-        stored = JSON.parse(localStorage.getItem(key) || '{}');
-    } catch {
-        stored = null;
-    }
-
-    // Groups deleted since the last session would otherwise keep their entry
-    // forever. Only prune against the tree when there is one to check: this
-    // also runs while a database is being closed, and an empty tree must not
-    // be read as "every group is gone". The pruned map is written straight
-    // back by the watcher below.
-    collapsedGroups.value = pruneCollapsedGroups(
-        stored,
-        store.db ? databaseView.value.groupsByUuid : null,
-    );
-}
-
-watch(() => store.filePath, loadCollapsedGroups, { immediate: true });
-// Not `deep`: GroupTree replaces the map instead of mutating it, so the ref
-// itself changes on every toggle.
-watch(collapsedGroups, (value) => {
-    const key = collapsedGroupsStorageKey();
-    if (key) localStorage.setItem(key, JSON.stringify(value));
-});
-
-// Column widths logic.
-//
-// The `reserve` values are what the columns to the right of each divider need
-// at minimum (the CSS min-widths below, plus the 4px dividers), so dragging one
-// column wide in a narrow window cannot push the others off screen.
-const RESIZER_WIDTH = 4;
-const ENTRIES_MIN_WIDTH = 200;
-const DETAIL_MIN_WIDTH = 260;
-
-const {
-    width: sidebarWidth,
-    isResizing: isResizingSidebar,
-    startResize: startResizeSidebar,
-} = useResizable('kivarion-sidebar-width', 220, {
-    minWidth: 150,
-    maxWidth: 600,
-    legacyKeys: ['kivarion_sidebarWidth'],
-    reserve: ENTRIES_MIN_WIDTH + DETAIL_MIN_WIDTH + RESIZER_WIDTH * 2,
-});
-
-const {
-    width: entriesWidth,
-    isResizing: isResizingEntries,
-    startResize: startResizeEntries,
-} = useResizable('kivarion-entries-width', 300, {
-    minWidth: ENTRIES_MIN_WIDTH,
-    maxWidth: 800,
-    offsetSource: sidebarWidth,
-    legacyKeys: ['kivarion_entriesWidth'],
-    reserve: DETAIL_MIN_WIDTH + RESIZER_WIDTH,
-});
-
-// Database Actions logic
-const {
-    saveDatabaseChanges,
-    flushPendingSave,
-    reloadDatabaseFromDisk,
-    rememberCredentialsOnDisk,
-    runAfterSuccessfulSave,
-    addEntry: performAddEntry,
-    addGroup: performAddGroup,
-    isSaving,
-    isReloading,
-    saveError,
-    saveConflict,
-    conflictDiskMtime,
-    hasUnsavedChanges,
-} = useDatabaseActions(store);
-
-const conflictDiskTime = computed(() =>
-    conflictDiskMtime.value
-        ? formatDate(new Date(conflictDiskMtime.value))
-        : '',
-);
-
-// The conflict modal is a decision point that a close/quit can be waiting on,
-// so each of its outcomes has to either resume that teardown or cancel it.
-async function overwriteOnConflict() {
-    saveConflict.value = false;
-    await saveDatabaseChanges({ force: true });
-    resumePendingTeardown();
-}
-
-async function reloadFromConflict() {
-    // The reload swaps the entire object graph; a half-typed entry draft would
-    // otherwise be written back onto the freshly loaded entry.
-    entryDetailRef.value?.discardPendingEdit?.();
-
-    if (!(await reloadDatabaseFromDisk())) {
-        // The reason is on the error banner — leave the choice on screen.
-        return;
-    }
-
-    restoreSelectionAfterReload();
-    resumePendingTeardown();
-}
-
-function dismissConflict() {
-    saveConflict.value = false;
-    // A close/quit that was waiting on this decision is cancelled with it.
-    pendingTeardownFinish = null;
-}
-
-// UUIDs survive a reload, but the selected group or entry may not exist in the
-// version that was on disk.
-function restoreSelectionAfterReload() {
-    if (
-        store.selectedGroupUuid !== ALL_ENTRIES_UUID &&
-        !findGroupByUuid(databaseView.value, store.selectedGroupUuid)
-    ) {
-        store.selectedGroupUuid = getObjectUuid(rootGroup.value);
-    }
-    if (!findEntryByUuid(databaseView.value, selectedEntryUuid.value)) {
-        selectedEntryUuid.value = null;
-    }
-}
-
-const dbName = computed(() => {
-    store.dbVersion;
-    return store.db?.meta?.name || 'Unnamed';
-});
-
-const displayPath = computed(() => {
-    const fp = store.filePath;
-    if (!fp) return '';
-    const hd = homeDirPath.value;
-    if (hd && fp.startsWith(hd)) {
-        return '~' + fp.slice(hd.length);
-    }
-    return fp;
-});
-
-// The key file associated with the open database. Lives in the backend (it is
-// tied to a filesystem grant), so it is loaded once per file instead of being
-// read synchronously in a computed.
-const currentKeyFilePath = ref(null);
-
-watch(
-    () => store.filePath,
-    async (path) => {
-        currentKeyFilePath.value = path
-            ? await readKeyFilePreference(path)
-            : null;
-    },
-    { immediate: true },
-);
-
-const rootGroup = computed(() => databaseView.value.rootGroup);
-
-const groupTree = computed(() => databaseView.value.groupTree);
-
-const selectedGroup = computed(() => {
-    if (!store.db || !store.selectedGroupUuid) return null;
-    if (store.selectedGroupUuid === ALL_ENTRIES_UUID)
-        return { uuid: ALL_ENTRIES_UUID };
-    return findGroupByUuid(databaseView.value, store.selectedGroupUuid);
-});
-
-const selectedEntry = computed(() =>
-    findEntryByUuid(databaseView.value, selectedEntryUuid.value),
-);
-
-const entryToDelete = computed(() =>
-    findEntryByUuid(databaseView.value, entryToDeleteUuid.value),
-);
-
-const entryDeleteIsPermanent = computed(
-    () => !deleteMovesToRecycleBin(databaseView.value, entryToDelete.value),
-);
-
-const entryDeleteMessage = computed(() => {
-    const title = getEntryTitle(entryToDelete.value);
-    return entryDeleteIsPermanent.value
-        ? `“${title}” will be permanently deleted. This action cannot be undone.`
-        : `“${title}” will be moved to the Recycle Bin. You can restore it later.`;
-});
-
-const totalEntriesCount = computed(() => databaseView.value.entries.length);
-
-const selectedGroupIsInRecycleBin = computed(() =>
-    isObjectInRecycleBin(databaseView.value, selectedGroup.value),
-);
-
-const filteredEntries = computed(() => {
-    const view = databaseView.value;
-    const q = debouncedSearchQuery.value.trim().toLocaleLowerCase();
-    if (q) {
-        return view.searchIndex
-            .filter((row) => row.text.includes(q))
-            .map((row) => view.entryItems.get(getObjectUuid(row.entry)));
-    }
-
-    const rawEntries =
-        store.selectedGroupUuid === ALL_ENTRIES_UUID
-            ? view.entries
-            : view.entriesByGroup.get(store.selectedGroupUuid) || [];
-    return rawEntries.map((entry) => view.entryItems.get(getObjectUuid(entry)));
-});
-
-function selectGroup(groupUuid) {
-    requestNavigation(() => {
-        store.selectedGroupUuid = groupUuid;
-        selectedEntryUuid.value = null;
-        searchQuery.value = '';
-    });
-}
-
-function selectEntry(entryUuid) {
-    if (entryUuid === selectedEntryUuid.value) return;
-    requestNavigation(() => {
-        selectedEntryUuid.value = entryUuid;
-    });
-}
-
-function requestCloseEntryDetail() {
-    requestNavigation(() => {
-        selectedEntryUuid.value = null;
-    });
-}
-
-// "All Entries" is a UI row, not a group: adding under it means the root.
-function resolveTargetGroup(groupUuid) {
-    return groupUuid === ALL_ENTRIES_UUID
-        ? databaseView.value.rootGroup
-        : findGroupByUuid(databaseView.value, groupUuid);
-}
-
-// Guarded like every other change of selection: this swaps the detail column to
-// a new entry, and `EntryDetail` reloads its form whenever the entry changes.
-// Unguarded, the "+" button in the list header threw away a half-typed entry
-// without a word. (Cmd+N was only ever half-safe here — it is skipped while the
-// focus is in a form field, which the button never is.)
-function addEntry() {
-    requestNavigation(() => {
-        const entryUuid = performAddEntry(
-            resolveTargetGroup(store.selectedGroupUuid),
-        );
-        if (entryUuid) selectedEntryUuid.value = entryUuid;
-    });
-}
-
-function addGroup(parentGroupUuid) {
-    requestNavigation(() => {
-        const groupUuid = performAddGroup(resolveTargetGroup(parentGroupUuid));
-        if (groupUuid) {
-            store.selectedGroupUuid = groupUuid;
-            selectedEntryUuid.value = null;
-        }
-    });
-}
-
-function requestDelete(entry) {
-    const uuid = getObjectUuid(entry);
-    if (!uuid) return;
-    entryToDeleteUuid.value = uuid;
-    showDeleteConfirm.value = true;
-}
-
-function confirmDelete() {
-    const entry = entryToDelete.value;
-    if (!store.db || !entry) return;
-
-    if (isObjectInRecycleBin(databaseView.value, entry)) {
-        store.db.move(entry, null);
-    } else {
-        store.db.remove(entry);
-    }
-    if (selectedEntryUuid.value === entryToDeleteUuid.value) {
-        selectedEntryUuid.value = null;
-    }
-    entryToDeleteUuid.value = null;
-    showDeleteConfirm.value = false;
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
-}
-
-function cancelDelete() {
-    entryToDeleteUuid.value = null;
-    showDeleteConfirm.value = false;
-}
-
-function restoreEntry(entryUuid) {
-    // Closes the detail column when the restored entry is the open one, so it
-    // goes through the same draft guard as the other selection changes.
-    requestNavigation(() => {
-        const entry = findEntryByUuid(databaseView.value, entryUuid);
-        if (!entry || !isObjectInRecycleBin(databaseView.value, entry)) return;
-
-        const target = getRestoreTargetGroup(databaseView.value, entry);
-        if (!target) return;
-        store.db.move(entry, target);
-        if (selectedEntryUuid.value === entryUuid) {
-            selectedEntryUuid.value = null;
-        }
-        store.touchDb();
-        saveDatabaseChanges({ debounce: true });
-    });
-}
-
-function onEntryUpdated() {
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
-}
-
-function closeDatabase({ forgetFile = false } = {}) {
-    requestNavigation(() =>
-        finishAfterFlush(() => forceCloseDatabase({ forgetFile })),
-    );
-}
-
-function lockDatabaseFromHeader() {
-    closeDatabase();
-}
-
-function closeAndForgetDatabase() {
-    closeDatabase({ forgetFile: true });
-}
-
-function requestNavigation(action) {
-    if (entryDetailRef.value?.hasUnsavedChanges?.()) {
-        pendingNavigation.value = action;
-        showUnsavedEditConfirm.value = true;
-        return false;
-    }
-
-    action();
-    return true;
-}
-
-async function saveUnsavedEditAndContinue() {
-    const action = pendingNavigation.value;
-    if (!entryDetailRef.value?.savePendingEdit?.()) {
-        // Validation failed; return to the edit form so its inline error is visible.
-        pendingNavigation.value = null;
-        showUnsavedEditConfirm.value = false;
-        return;
-    }
-
-    pendingNavigation.value = null;
-    showUnsavedEditConfirm.value = false;
-    await action?.();
-}
-
-async function discardUnsavedEditAndContinue() {
-    const action = pendingNavigation.value;
-    entryDetailRef.value?.discardPendingEdit?.();
-
-    pendingNavigation.value = null;
-    showUnsavedEditConfirm.value = false;
-    await action?.();
-}
-
-function continueEditing() {
-    pendingNavigation.value = null;
-    showUnsavedEditConfirm.value = false;
-}
-
-function forceCloseDatabase(options = null) {
-    const forgetFile = options?.forgetFile ?? pendingForceCloseForgetFile.value;
-    // Set when the confirmation was triggered by a native window close or an
-    // app quit: confirming must finish that teardown, not lock to HomePage.
-    const finishTeardown = pendingTeardownFinish;
-    pendingTeardownFinish = null;
-    pendingForceCloseForgetFile.value = false;
-    showCloseAfterSaveErrorConfirm.value = false;
-    if (finishTeardown) {
-        finishTeardown();
-        return;
-    }
-    void lockDatabase(router, { forgetFile });
-}
-
-function cancelCloseAfterSaveError() {
-    pendingTeardownFinish = null;
-    pendingForceCloseForgetFile.value = false;
-    showCloseAfterSaveErrorConfirm.value = false;
-}
-
-function getEntryTitle(entry) {
-    return getField(entry, 'Title') || 'No title';
-}
-
-// Group Actions
-function requestRenameGroup(groupUuid) {
-    const group = findGroupByUuid(databaseView.value, groupUuid);
-    if (!group) return;
-
-    groupToRenameUuid.value = groupUuid;
-    newGroupName.value = group.name || '';
-    groupNameError.value = '';
-    showRenameModal.value = true;
-}
-
-function confirmRenameGroup() {
-    const group = findGroupByUuid(databaseView.value, groupToRenameUuid.value);
-    if (!group) return;
-
-    const normalizedName = normalizeGroupName(newGroupName.value);
-    if (!normalizedName) {
-        groupNameError.value = 'Group name cannot be empty.';
-        return;
-    }
-    if (groupNameExistsInParent(group, normalizedName)) {
-        groupNameError.value = 'A group with this name already exists here.';
-        return;
-    }
-
-    group.name = normalizedName;
-    if (group.times) group.times.update();
-    store.touchDb();
-    groupToRenameUuid.value = null;
-    groupNameError.value = '';
-    showRenameModal.value = false;
-    saveDatabaseChanges({ debounce: true });
-}
-
-function requestDeleteGroup(groupUuid) {
-    const root = rootGroup.value;
-    const group = findGroupByUuid(databaseView.value, groupUuid);
-    if (
-        !store.db ||
-        !group ||
-        groupUuid === getObjectUuid(root) ||
-        isRecycleBinGroup(store.db, group)
-    ) {
-        return;
-    }
-
-    groupToDeleteUuid.value = groupUuid;
-    showDeleteGroupConfirm.value = true;
-}
-
-function confirmDeleteGroup() {
-    requestNavigation(deleteConfirmedGroup);
-}
-
-function deleteConfirmedGroup() {
-    const group = findGroupByUuid(databaseView.value, groupToDeleteUuid.value);
-    if (!store.db || !group) return;
-
-    if (groupContainsGroupUuid(group, store.selectedGroupUuid)) {
-        const root = rootGroup.value;
-        store.selectedGroupUuid = getObjectUuid(root);
-    }
-    if (groupContainsEntryUuid(group, selectedEntryUuid.value)) {
-        selectedEntryUuid.value = null;
-    }
-
-    if (isObjectInRecycleBin(databaseView.value, group)) {
-        store.db.move(group, null);
-    } else {
-        store.db.remove(group);
-    }
-    groupToDeleteUuid.value = null;
-    showDeleteGroupConfirm.value = false;
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
-}
-
-function restoreGroup(groupUuid) {
-    const group = findGroupByUuid(databaseView.value, groupUuid);
-    if (!group || !isObjectInRecycleBin(databaseView.value, group)) return;
-
-    const target = getRestoreTargetGroup(databaseView.value, group);
-    if (!target) return;
-    store.db.move(group, target);
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
-}
-
-function moveGroup({ draggedUuid, targetUuid, position }) {
-    const plan = resolveGroupMove(
-        databaseView.value,
-        draggedUuid,
-        targetUuid,
-        position,
-    );
-    if (!plan) return;
-
-    store.db.move(plan.group, plan.toGroup, plan.atIndex);
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
-}
-
-function moveEntry({ entryUuid, targetGroupUuid }) {
-    // Dropping an entry on a group selects both that group and the entry, so
-    // an edit open on a *different* entry would be replaced without asking.
-    // The drop is carried out (or dropped) together with the selection, which
-    // is what the three answers of the unsaved-changes modal already mean.
-    requestNavigation(() => {
-        const entry = findEntryByUuid(databaseView.value, entryUuid);
-        const targetGroup = findGroupByUuid(
-            databaseView.value,
-            targetGroupUuid,
-        );
-        if (!entry || !targetGroup || entry.parentGroup === targetGroup) return;
-
-        store.db.move(entry, targetGroup);
-        store.selectedGroupUuid = targetGroupUuid;
-        selectedEntryUuid.value = entryUuid;
-        store.touchDb();
-        saveDatabaseChanges({ debounce: true });
-    });
-}
-
-function requestEmptyRecycleBin() {
-    const bin = databaseView.value.recycleBinGroup;
-    if (!bin || (!bin.entries?.length && !bin.groups?.length)) return;
-    showEmptyRecycleBinConfirm.value = true;
-}
-
-function confirmEmptyRecycleBin() {
-    requestNavigation(emptyConfirmedRecycleBin);
-}
-
-function emptyConfirmedRecycleBin() {
-    const bin = databaseView.value.recycleBinGroup;
-    if (!store.db || !bin) return;
-
-    // If the current selection lives inside the bin, fall back to the root.
-    if (groupContainsGroupUuid(bin, store.selectedGroupUuid)) {
-        store.selectedGroupUuid = getObjectUuid(rootGroup.value);
-    }
-    if (groupContainsEntryUuid(bin, selectedEntryUuid.value)) {
-        selectedEntryUuid.value = null;
-    }
-
-    // Permanently delete everything in the bin (move to null records tombstones).
-    for (const entry of [...(bin.entries || [])]) store.db.move(entry, null);
-    for (const child of [...(bin.groups || [])]) store.db.move(child, null);
-
-    showEmptyRecycleBinConfirm.value = false;
-    store.touchDb();
-    saveDatabaseChanges({ debounce: true });
-}
-
-function cancelGroupAction() {
-    showRenameModal.value = false;
-    groupToRenameUuid.value = null;
-    groupNameError.value = '';
-    showDeleteGroupConfirm.value = false;
-    showEmptyRecycleBinConfirm.value = false;
-    groupToDeleteUuid.value = null;
-}
-
-function getGroupName(groupUuid) {
-    if (!groupUuid) return '';
-    if (groupUuid === ALL_ENTRIES_UUID) return 'All Entries';
-    return findGroupByUuid(databaseView.value, groupUuid)?.name || '';
-}
-
-async function readKeyFileBuffer(path) {
-    if (!path) return null;
-    const bytes = await invoke('read_database', { path });
-    return toExactArrayBuffer(bytes);
-}
-
-function openDatabaseSettings() {
-    settingsError.value = '';
-    showSettingsModal.value = true;
-}
-
-function closeDatabaseSettings() {
-    if (settingsBusy.value) return;
-    settingsError.value = '';
-    showSettingsModal.value = false;
-}
-
-async function verifyCurrentCredentials(currentPassword, keyFilePath) {
-    if (!store.filePath) return true;
-    const passwordValue = currentPassword
-        ? kdbxweb.ProtectedValue.fromString(currentPassword)
-        : null;
-    const keyFileBuffer = await readKeyFileBuffer(keyFilePath);
-    const credentials = new kdbxweb.Credentials(passwordValue, keyFileBuffer);
-    await credentials.ready;
-    const bytes = await invoke('read_database', { path: store.filePath });
-    await kdbxweb.Kdbx.load(toExactArrayBuffer(bytes), credentials);
-    return true;
-}
-
-async function confirmDatabaseSettings({
-    name,
-    password,
-    currentPassword,
-    keyFilePath,
-    keyFileChanged,
-}) {
-    const db = store.db;
-    if (!db || settingsBusy.value) return;
-
-    const normalizedName = (name || '').trim();
-    if (!normalizedName) return;
-
-    settingsError.value = '';
-    settingsBusy.value = true;
-
-    if (password || keyFileChanged) {
-        try {
-            await verifyCurrentCredentials(
-                currentPassword,
-                currentKeyFilePath.value,
-            );
-        } catch (error) {
-            console.error('Current credentials verification failed:', error);
-            settingsError.value = 'Current password or key file is incorrect.';
-            settingsBusy.value = false;
-            return;
-        }
-    }
-
-    // The database may have been locked while the asynchronous KDF was
-    // running. Never apply the submitted credentials to a different session.
-    if (store.db !== db || !showSettingsModal.value) {
-        settingsBusy.value = false;
-        return;
-    }
-
-    try {
-        const keyFileBuffer = keyFileChanged
-            ? await readKeyFileBuffer(keyFilePath)
-            : null;
-        if (store.db !== db || !showSettingsModal.value) {
-            settingsBusy.value = false;
-            return;
-        }
-        if (password || keyFileChanged) {
-            // Prepare the complete new credentials before touching the database,
-            // then swap them in with a single assignment (see
-            // `buildUpdatedCredentials`).
-            const updated = await buildUpdatedCredentials(db.credentials, {
-                password,
-                keyFileBuffer,
-                keyFileChanged,
-            });
-            if (store.db !== db || !showSettingsModal.value) {
-                settingsBusy.value = false;
-                return;
-            }
-
-            // The file on disk keeps the old credentials until the save below
-            // succeeds; remember them so "keep the file" can still read it if
-            // that save fails.
-            rememberCredentialsOnDisk(db.credentials);
-            db.credentials = updated;
-        }
-        db.meta.name = normalizedName;
-    } catch (error) {
-        console.error('Database settings update failed:', error);
-        settingsError.value = 'Could not update the database credentials.';
-        settingsBusy.value = false;
-        return;
-    }
-
-    // Both records below describe the *file*, so they are only true once the
-    // write lands — and the write that lands may not be this one: it can fail
-    // and be retried from the banner, or resolved through the conflict modal.
-    // Queueing them makes them ride along with whichever save finally succeeds
-    // instead of being tied to this single attempt.
-    const path = store.filePath;
-    if (keyFileChanged && path) {
-        runAfterSuccessfulSave(async () => {
-            await writeKeyFilePreference(path, keyFilePath);
-            if (store.filePath === path) {
-                currentKeyFilePath.value = keyFilePath || null;
-            }
-        });
-    }
-
-    // If the master password changed, the stored biometric secret is now stale.
-    // Update it (or drop it) so Touch ID doesn't keep unlocking with the old password.
-    if (
-        password &&
-        path &&
-        localStorage.getItem(biometricPreferenceKey(path)) === 'true'
-    ) {
-        runAfterSuccessfulSave(() => updateBiometricPassword(path, password));
-    }
-
-    store.touchDb();
-    showSettingsModal.value = false;
-    settingsBusy.value = false;
-    await saveDatabaseChanges();
-}
-
-async function updateBiometricPassword(path, password) {
-    try {
-        // Saving the secret triggers a Touch ID prompt, which blurs the
-        // window — that must not be mistaken for the user leaving the app.
-        await withSystemInteraction(() =>
-            invoke('save_biometric_password', { id: path, pass: password }),
-        );
-    } catch (e) {
-        console.error('Failed to update biometric password, removing it:', e);
-        try {
-            await invoke('delete_biometric_password', { id: path });
-        } catch {}
-        localStorage.removeItem(biometricPreferenceKey(path));
     }
 }
 </script>
