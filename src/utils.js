@@ -9,6 +9,18 @@ export function formatDate(date) {
     }).format(date);
 }
 
+/**
+ * The file name part of an absolute path, for display.
+ *
+ * Splits on both separators because the same frontend runs on Windows, and the
+ * paths it is handed come from the backend rather than from a browser. Only for
+ * showing: nothing derived from this reaches the filesystem, which is keyed by
+ * the whole path the user picked (`src-tauri/src/access.rs`).
+ */
+export function basename(path) {
+    return path ? String(path).split(/[\\/]/).pop() : '';
+}
+
 export function formatSize(bytes) {
     if (bytes === 0) return '0 B';
     const k = 1024;

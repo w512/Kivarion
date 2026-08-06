@@ -18,7 +18,6 @@
                     :selected-group-uuid="selectedGroupUuid"
                     :is-collapsed="isCollapsed(row.group.uuid)"
                     :all-entries-count="allEntriesCount"
-                    :refresh-key="refreshKey"
                     :depth="row.depth"
                     @select="emit('select', $event)"
                     @toggle-collapse="toggleCollapse"
@@ -44,7 +43,6 @@ const props = defineProps({
     selectedGroupUuid: { type: String, default: null },
     depth: { type: Number, default: 0 },
     allEntriesCount: { type: Number, default: 0 },
-    refreshKey: { type: Number, default: 0 },
 });
 
 // A model rather than a prop this component writes into: the parent owns the
@@ -84,7 +82,6 @@ const allEntriesGroup = computed(() => ({
 // Flatten only expanded branches. Besides making virtualization straightforward,
 // this removes one Vue component instance per recursion level/node.
 const flattenedGroups = computed(() => {
-    props.refreshKey;
     const rows = [];
     if (props.depth === 0) {
         rows.push({ group: allEntriesGroup.value, depth: 0 });

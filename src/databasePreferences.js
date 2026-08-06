@@ -26,12 +26,14 @@ export function collapsedGroupsPreferenceKey(path) {
  * @param {unknown} stored - the parsed localStorage value; anything that is not
  *   a plain object (`null`, an array, a string from a corrupted write) yields an
  *   empty map rather than throwing on the first lookup.
- * @param {Set<string>|null} [knownGroupUuids] - the groups that exist right now.
- *   `null` means "no database to check against", in which case existence is not
- *   judged — that must not be a reason to wipe the user's state.
+ * @param {{ has(uuid: string): boolean }|null} [knownGroups] - the groups that
+ *   exist right now, as anything answering `has` — callers pass the view's
+ *   `groupsByUuid` map. `null` means "no database to check against", in which
+ *   case existence is not judged: that must not be a reason to wipe the user's
+ *   state.
  * @returns {Record<string, true>} only the groups that are collapsed and exist.
  */
-export function pruneCollapsedGroups(stored, knownGroupUuids = null) {
+export function pruneCollapsedGroups(stored, knownGroups = null) {
     if (!stored || typeof stored !== 'object' || Array.isArray(stored)) {
         return {};
     }
@@ -39,7 +41,7 @@ export function pruneCollapsedGroups(stored, knownGroupUuids = null) {
     const pruned = {};
     for (const [uuid, collapsed] of Object.entries(stored)) {
         if (!collapsed) continue;
-        if (knownGroupUuids && !knownGroupUuids.has(uuid)) continue;
+        if (knownGroups && !knownGroups.has(uuid)) continue;
         pruned[uuid] = true;
     }
     return pruned;

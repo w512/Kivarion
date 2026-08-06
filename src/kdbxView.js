@@ -21,60 +21,28 @@ export function isRecycleBinGroup(db, group) {
         : getObjectUuid(group) === db.meta.recycleBinUuid?.id;
 }
 
-export function findGroupByUuid(db, uuid) {
-    if (!db || !uuid || uuid === ALL_ENTRIES_UUID) return null;
-    return findGroupInTree(getDefaultGroup(db), uuid);
-}
-
-function findGroupInTree(group, uuid) {
-    if (!group) return null;
-    if (getObjectUuid(group) === uuid) return group;
-
-    for (const child of group.groups || []) {
-        const found = findGroupInTree(child, uuid);
-        if (found) return found;
-    }
-
-    return null;
-}
-
-export function findEntryByUuid(db, uuid) {
-    if (!db || !uuid) return null;
-    return findEntryInGroup(getDefaultGroup(db), uuid);
-}
-
-function findEntryInGroup(group, uuid) {
-    if (!group) return null;
-
-    for (const entry of group.entries || []) {
-        if (getObjectUuid(entry) === uuid) return entry;
-    }
-
-    for (const child of group.groups || []) {
-        const found = findEntryInGroup(child, uuid);
-        if (found) return found;
-    }
-
-    return null;
+/** A kdbxweb group rather than an entry: only groups hold both collections. */
+function isGroupObject(object) {
+    return !!object?.entries && !!object?.groups;
 }
 
 /**
- * Every group UUID in the database, the Recycle Bin and its contents included.
+ * The live group with this uuid, or `null`.
  *
- * Used to drop per-group UI state (collapsed branches) for groups that no
- * longer exist. Deliberately independent of `buildDatabaseView`: this runs once
- * when a database is opened, before that computed exists.
+ * Served from the index `buildDatabaseView` builds during its single walk. This
+ * used to recurse through the whole vault on every call, and it is called from
+ * computeds — so a database of any size was walked several times over on each
+ * `dbVersion` change, on top of the walk the view itself had just done.
  */
-export function collectGroupUuids(db) {
-    const uuids = new Set();
-    addGroupUuids(getDefaultGroup(db), uuids);
-    return uuids;
+export function findGroupByUuid(view, uuid) {
+    if (!uuid || uuid === ALL_ENTRIES_UUID) return null;
+    return view?.groupsByUuid.get(uuid) ?? null;
 }
 
-function addGroupUuids(group, uuids) {
-    if (!group) return;
-    uuids.add(getObjectUuid(group));
-    for (const child of group.groups || []) addGroupUuids(child, uuids);
+/** The live entry with this uuid, or `null`. Recycle Bin included. */
+export function findEntryByUuid(view, uuid) {
+    if (!uuid) return null;
+    return view?.entriesByUuid.get(uuid) ?? null;
 }
 
 export function groupContainsGroupUuid(group, uuid) {
@@ -129,37 +97,20 @@ export function getUniqueGroupName(parentGroup, baseName = 'New group') {
     return `${base} ${i}`;
 }
 
-export function getAllEntries(db, group = getDefaultGroup(db)) {
-    const entries = [];
-    collectEntries(db, group, entries);
-    return entries;
-}
-
-function collectEntries(db, group, entries) {
-    if (!group) return;
-    if (isRecycleBinGroup(db, group)) return;
-
-    entries.push(...(group.entries || []));
-
-    for (const child of group.groups || []) {
-        collectEntries(db, child, entries);
-    }
-}
-
 // Resolves a drag-and-drop group move into the arguments for `Kdbx.move`, or
 // returns null when the move is invalid (self, descendant cycle, root, etc.).
 // `position` is 'before' | 'after' | 'inside'. Pure: only reads the tree, never
 // mutates — so the index math stays unit-testable.
-export function resolveGroupMove(db, draggedUuid, targetUuid, position) {
-    if (!db || !draggedUuid || !targetUuid || draggedUuid === targetUuid)
+export function resolveGroupMove(view, draggedUuid, targetUuid, position) {
+    if (!view || !draggedUuid || !targetUuid || draggedUuid === targetUuid)
         return null;
 
-    const dragged = findGroupByUuid(db, draggedUuid);
-    const target = findGroupByUuid(db, targetUuid);
+    const dragged = findGroupByUuid(view, draggedUuid);
+    const target = findGroupByUuid(view, targetUuid);
     if (!dragged || !target) return null;
 
     // The root group can't be moved.
-    if (dragged === getDefaultGroup(db)) return null;
+    if (dragged === view.rootGroup) return null;
 
     const toGroup = position === 'inside' ? target : target.parentGroup;
     // before/after the root has no valid parent to land in.
@@ -186,43 +137,45 @@ export function resolveGroupMove(db, draggedUuid, targetUuid, position) {
     return { group: dragged, toGroup, atIndex: idx };
 }
 
-export function getRecycleBinGroup(db) {
-    if (!db?.meta?.recycleBinUuid) return null;
-    return (
-        findGroupInTree(getDefaultGroup(db), db.meta.recycleBinUuid.id) || null
-    );
-}
+/**
+ * Whether an object sits inside the Recycle Bin, the bin group itself included.
+ *
+ * `view.recycleBinUuids` holds every group uuid in that subtree, collected on
+ * the same walk, so this is a set lookup rather than two nested searches.
+ */
+export function isObjectInRecycleBin(view, object) {
+    if (!object || !view?.recycleBinUuids.size) return false;
 
-export function isObjectInRecycleBin(db, object) {
-    const bin = getRecycleBinGroup(db);
-    if (!bin || !object) return false;
-
-    const group = object.entries && object.groups ? object : object.parentGroup;
-    return !!group && groupContainsGroupUuid(bin, getObjectUuid(group));
+    const group = isGroupObject(object) ? object : object.parentGroup;
+    return !!group && view.recycleBinUuids.has(getObjectUuid(group));
 }
 
 /**
  * Whether `Kdbx.remove` would move the object to the Recycle Bin instead of
- * deleting it for good. Mirrors kdbxweb's own condition exactly — it needs the
- * setting *and* a `recycleBinUuid` in the metadata — so the confirmation never
- * promises a restorable delete that the library then performs permanently.
+ * deleting it for good. `view.recycleBinEnabled` mirrors kdbxweb's own
+ * condition exactly — it needs the setting *and* a `recycleBinUuid` in the
+ * metadata — so the confirmation never promises a restorable delete that the
+ * library then performs permanently.
  */
-export function deleteMovesToRecycleBin(db, object) {
-    if (!db?.meta?.recycleBinEnabled || !db.meta.recycleBinUuid) return false;
-    return !isObjectInRecycleBin(db, object);
+export function deleteMovesToRecycleBin(view, object) {
+    if (!view?.recycleBinEnabled) return false;
+    return !isObjectInRecycleBin(view, object);
 }
 
-export function getRestoreTargetGroup(db, object) {
-    const root = getDefaultGroup(db);
+export function getRestoreTargetGroup(view, object) {
+    const root = view?.rootGroup;
     if (!root || !object) return null;
 
-    const previousUuid = getObjectUuid(object.previousParentGroup);
-    const previous = findGroupByUuid(db, previousUuid);
-    const bin = getRecycleBinGroup(db);
+    const previous = findGroupByUuid(
+        view,
+        getObjectUuid(object.previousParentGroup),
+    );
 
+    // Nowhere to go back to, back into the bin, or into the group being
+    // restored: the root is the only answer left.
     if (
         !previous ||
-        (bin && groupContainsGroupUuid(bin, getObjectUuid(previous))) ||
+        view.recycleBinUuids.has(getObjectUuid(previous)) ||
         (object.groups &&
             groupContainsGroupUuid(object, getObjectUuid(previous)))
     ) {
@@ -231,33 +184,7 @@ export function getRestoreTargetGroup(db, object) {
     return previous;
 }
 
-export function toGroupTreeNode(group, db, inRecycleBin = false) {
-    const isRecycleBin = isRecycleBinGroup(db, group);
-    const isInRecycleBin = inRecycleBin || isRecycleBin;
-    const children = (group?.groups || []).map((child) =>
-        toGroupTreeNode(child, db, isInRecycleBin),
-    );
-    const childEntryCount = children.reduce(
-        (count, child) =>
-            count +
-            (!isInRecycleBin && child.isRecycleBin
-                ? 0
-                : child.recursiveEntryCount),
-        0,
-    );
-
-    return {
-        uuid: getObjectUuid(group),
-        name: group?.name || '',
-        entryCount: group?.entries?.length || 0,
-        recursiveEntryCount: (group?.entries?.length || 0) + childEntryCount,
-        isRecycleBin,
-        isInRecycleBin,
-        children,
-    };
-}
-
-export function toEntryListItem(entry, db, iconDataUrls) {
+function toEntryListItem(entry, db, iconDataUrls) {
     return {
         uuid: getObjectUuid(entry),
         title: getField(entry, 'Title') || 'No title',
@@ -299,25 +226,41 @@ function entrySearchText(entry) {
 }
 
 /**
- * Build all immutable list/tree/search view data in one traversal. The caller
- * rebuilds this snapshot only when dbVersion changes, instead of recursively
- * walking the KDBX graph once for counts, again for the list, and once per
- * search keystroke.
+ * Build all immutable list/tree/search view data in one traversal, plus the
+ * lookup index every other helper here reads. The caller rebuilds this snapshot
+ * only when dbVersion changes, instead of recursively walking the KDBX graph
+ * once for counts, again for the list, once per search keystroke, and once more
+ * for every `findGroupByUuid` / `findEntryByUuid` / `isObjectInRecycleBin` a
+ * computed happens to call.
+ *
+ * The maps hold the **live** kdbxweb objects, not copies — mutating what comes
+ * out of them mutates the database, which is what the callers want. Only the
+ * tree nodes and list rows are plain snapshots.
  */
 export function buildDatabaseView(db, iconDataUrls = new Map()) {
     const entries = [];
     const entriesByGroup = new Map();
     const entryItems = new Map();
     const searchIndex = [];
+    const groupsByUuid = new Map();
+    const entriesByUuid = new Map();
+    const recycleBinUuids = new Set();
+    let recycleBinGroup = null;
 
     function visit(group, inRecycleBin = false) {
         const isRecycleBin = isRecycleBinGroup(db, group);
         const isInRecycleBin = inRecycleBin || isRecycleBin;
         const ownEntries = group?.entries || [];
-        entriesByGroup.set(getObjectUuid(group), ownEntries);
+        const groupUuid = getObjectUuid(group);
+
+        entriesByGroup.set(groupUuid, ownEntries);
+        if (group) groupsByUuid.set(groupUuid, group);
+        if (isRecycleBin) recycleBinGroup = group;
+        if (isInRecycleBin) recycleBinUuids.add(groupUuid);
 
         for (const entry of ownEntries) {
             const uuid = getObjectUuid(entry);
+            entriesByUuid.set(uuid, entry);
             entryItems.set(uuid, toEntryListItem(entry, db, iconDataUrls));
             if (!isInRecycleBin) {
                 entries.push(entry);
@@ -350,13 +293,25 @@ export function buildDatabaseView(db, iconDataUrls = new Map()) {
         };
     }
 
-    const root = getDefaultGroup(db);
-    const groupTree = root ? [visit(root)] : [];
+    const rootGroup = getDefaultGroup(db);
+    const groupTree = rootGroup ? [visit(rootGroup)] : [];
     return {
+        rootGroup,
         entries,
         entriesByGroup,
         entryItems,
         searchIndex,
         groupTree,
+        groupsByUuid,
+        entriesByUuid,
+        // The bin's own uuid is in here too, so "is this in the bin" is one
+        // question rather than "is it the bin, or under it".
+        recycleBinUuids,
+        recycleBinGroup,
+        // kdbxweb recycles only when both are set; kept as a flag so
+        // `deleteMovesToRecycleBin` does not need the database itself.
+        recycleBinEnabled: !!(
+            db?.meta?.recycleBinEnabled && db?.meta?.recycleBinUuid
+        ),
     };
 }

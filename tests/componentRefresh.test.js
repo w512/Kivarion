@@ -1045,31 +1045,30 @@ describe('component refresh behaviour', () => {
         expect(allText(preview)).toBe('');
     });
 
-    test('GroupTree refreshes raw group labels and counts when refreshKey changes', async () => {
+    test('GroupTree follows the tree it is handed when the view model is rebuilt', async () => {
+        // `buildDatabaseView` builds fresh nodes on every `dbVersion` change
+        // and never mutates the ones it already handed out, so replacing them
+        // is the only way this tree ever changes. GroupTree and GroupNode used
+        // to take a `refreshKey` prop and read it for its side effect, which
+        // suggested they were watching live kdbxweb objects — they are not, and
+        // the nodes below are `markRaw` for the same reason.
         const GroupTree = await loadVueComponent(
             'src/components/GroupTree.vue',
         );
-        const group = markRaw({
-            uuid: 'group-1',
-            name: 'Old group',
-            entryCount: 1,
-            children: [],
-        });
-        const state = reactive({ refreshKey: 0 });
+        const node = (name, entryCount) =>
+            markRaw({ uuid: 'group-1', name, entryCount, children: [] });
+        const state = reactive({ groups: [node('Old group', 1)] });
         const { root } = mount(GroupTree, () => ({
-            groups: [group],
+            groups: state.groups,
             selectedGroupUuid: 'group-1',
             allEntriesCount: 1,
-            refreshKey: state.refreshKey,
         }));
         await nextTick();
 
         expect(allText(root)).toContain('Old group');
         expect(allText(root)).toContain('1');
 
-        group.name = 'New group';
-        group.entryCount = 2;
-        state.refreshKey++;
+        state.groups = [node('New group', 2)];
         await nextTick();
 
         expect(allText(root)).toContain('New group');

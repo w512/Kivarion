@@ -3,7 +3,7 @@ import * as kdbxweb from 'kdbxweb';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
 import { readFileMtime, saveDatabase } from '../dbHelper.js';
-import { toExactArrayBuffer } from '../utils.js';
+import { basename, toExactArrayBuffer } from '../utils.js';
 import { biometricPreferenceKey } from '../databasePreferences.js';
 import { withSystemInteraction } from './useSystemInteraction.js';
 
@@ -94,7 +94,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
     checkBiometrics();
 
     function keyFileName() {
-        return keyFilePath.value ? keyFilePath.value.split(/[\\/]/).pop() : '';
+        return basename(keyFilePath.value);
     }
 
     async function restoreKeyFilePreference(path) {
@@ -110,7 +110,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
             if (!lastPath) return;
 
             store.filePath = lastPath;
-            fileName.value = lastPath.split(/[\\/]/).pop();
+            fileName.value = basename(lastPath);
             step.value = 2;
             checkBiometricsPreference(lastPath);
             await restoreKeyFilePreference(lastPath);
@@ -130,7 +130,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
             if (selected) {
                 store.filePath = selected;
-                fileName.value = selected.split(/[\\/]/).pop();
+                fileName.value = basename(selected);
                 errorMessage.value = '';
                 step.value = 2;
                 checkBiometricsPreference(selected);
@@ -421,7 +421,7 @@ export function useDatabaseAuth(router, passwordInputRef) {
             );
             const db = kdbxweb.Kdbx.create(credentials, name);
 
-            const newName = targetPath.split(/[\\/]/).pop();
+            const newName = basename(targetPath);
             // Set the target before saving; saveDatabase reads store.filePath.
             store.filePath = targetPath;
             store.knownMtime = null;

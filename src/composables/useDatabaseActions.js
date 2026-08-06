@@ -4,13 +4,7 @@ import {
     readFileMtime,
     saveDatabase,
 } from '../dbHelper.js';
-import {
-    ALL_ENTRIES_UUID,
-    findGroupByUuid,
-    getDefaultGroup,
-    getObjectUuid,
-    getUniqueGroupName,
-} from '../kdbxView.js';
+import { getObjectUuid, getUniqueGroupName } from '../kdbxView.js';
 
 const AUTO_SAVE_DEBOUNCE_MS = globalThis.__KIVARION_SAVE_DEBOUNCE_MS__ ?? 300;
 
@@ -378,15 +372,11 @@ function createDatabaseActions(store) {
         }
     }
 
-    function addEntry(targetGroupUuid) {
-        if (!store.db) return null;
-
-        const targetGroup =
-            targetGroupUuid === ALL_ENTRIES_UUID
-                ? getDefaultGroup(store.db)
-                : findGroupByUuid(store.db, targetGroupUuid);
-
-        if (!targetGroup) return null;
+    // Both take a resolved group rather than a uuid: looking one up means
+    // searching the vault, and the page that calls these already holds the
+    // index that answers it (`buildDatabaseView`).
+    function addEntry(targetGroup) {
+        if (!store.db || !targetGroup) return null;
 
         const entry = store.db.createEntry(targetGroup);
         entry.fields.set('Title', 'New entry');
@@ -396,15 +386,8 @@ function createDatabaseActions(store) {
         return getObjectUuid(entry);
     }
 
-    function addGroup(parentGroupUuid) {
-        if (!store.db || !parentGroupUuid) return null;
-
-        const parentGroup =
-            parentGroupUuid === ALL_ENTRIES_UUID
-                ? getDefaultGroup(store.db)
-                : findGroupByUuid(store.db, parentGroupUuid);
-
-        if (!parentGroup) return null;
+    function addGroup(parentGroup) {
+        if (!store.db || !parentGroup) return null;
 
         const group = store.db.createGroup(
             parentGroup,

@@ -159,6 +159,7 @@ import { computed, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import BaseModal from './BaseModal.vue';
 import PasswordStrength from './PasswordStrength.vue';
+import { basename } from '../utils.js';
 import { withSystemInteraction } from '../composables/useSystemInteraction.js';
 
 const props = defineProps({
@@ -192,7 +193,7 @@ const hasCredentialChange = computed(
 );
 const keyFileLabel = computed(() => {
     if (!localKeyFilePath.value) return 'No key file';
-    return localKeyFilePath.value.split(/[\\/]/).pop();
+    return basename(localKeyFilePath.value);
 });
 
 watch(

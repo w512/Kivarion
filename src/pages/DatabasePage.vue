@@ -78,7 +78,6 @@
                     :groups="groupTree"
                     :selected-group-uuid="store.selectedGroupUuid"
                     :all-entries-count="totalEntriesCount"
-                    :refresh-key="store.dbVersion"
                     @select="selectGroup"
                     @add-group="addGroup"
                     @rename-group="requestRenameGroup"
@@ -319,13 +318,10 @@ import {
 import {
     ALL_ENTRIES_UUID,
     buildDatabaseView,
-    collectGroupUuids,
     deleteMovesToRecycleBin,
     findEntryByUuid,
     findGroupByUuid,
-    getDefaultGroup,
     getObjectUuid,
-    getRecycleBinGroup,
     getRestoreTargetGroup,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
@@ -369,7 +365,7 @@ onMounted(() => {
         return;
     }
     // Select root group by default
-    const root = getDefaultGroup(store.db);
+    const root = databaseView.value.rootGroup;
     if (root) {
         store.selectedGroupUuid = getObjectUuid(root);
     }
@@ -483,8 +479,8 @@ const showEmptyRecycleBinConfirm = ref(false);
 const groupToDeleteUuid = ref(null);
 const groupToDeleteName = computed(() => getGroupName(groupToDeleteUuid.value));
 const groupDeleteIsPermanent = computed(() => {
-    const group = findGroupByUuid(store.db, groupToDeleteUuid.value);
-    return !deleteMovesToRecycleBin(store.db, group);
+    const group = findGroupByUuid(databaseView.value, groupToDeleteUuid.value);
+    return !deleteMovesToRecycleBin(databaseView.value, group);
 });
 const groupDeleteMessage = computed(() =>
     groupDeleteIsPermanent.value
@@ -626,6 +622,13 @@ watch(
     () => customIconDataUrls.clear(),
 );
 
+const databaseView = computed(() => {
+    // KDBX objects retain their identity across edits, so dbVersion is the
+    // explicit invalidation key for the whole lightweight view/search index.
+    store.dbVersion;
+    return buildDatabaseView(store.db, customIconDataUrls);
+});
+
 function collapsedGroupsStorageKey(path = store.filePath) {
     return path ? collapsedGroupsPreferenceKey(path) : null;
 }
@@ -651,7 +654,7 @@ function loadCollapsedGroups() {
     // back by the watcher below.
     collapsedGroups.value = pruneCollapsedGroups(
         stored,
-        store.db ? collectGroupUuids(store.db) : null,
+        store.db ? databaseView.value.groupsByUuid : null,
     );
 }
 
@@ -751,11 +754,11 @@ function dismissConflict() {
 function restoreSelectionAfterReload() {
     if (
         store.selectedGroupUuid !== ALL_ENTRIES_UUID &&
-        !findGroupByUuid(store.db, store.selectedGroupUuid)
+        !findGroupByUuid(databaseView.value, store.selectedGroupUuid)
     ) {
         store.selectedGroupUuid = getObjectUuid(rootGroup.value);
     }
-    if (!findEntryByUuid(store.db, selectedEntryUuid.value)) {
+    if (!findEntryByUuid(databaseView.value, selectedEntryUuid.value)) {
         selectedEntryUuid.value = null;
     }
 }
@@ -790,40 +793,27 @@ watch(
     { immediate: true },
 );
 
-const rootGroup = computed(() => {
-    store.dbVersion;
-    return getDefaultGroup(store.db);
-});
-
-const databaseView = computed(() => {
-    // KDBX objects retain their identity across edits, so dbVersion is the
-    // explicit invalidation key for the whole lightweight view/search index.
-    store.dbVersion;
-    return buildDatabaseView(store.db, customIconDataUrls);
-});
+const rootGroup = computed(() => databaseView.value.rootGroup);
 
 const groupTree = computed(() => databaseView.value.groupTree);
 
 const selectedGroup = computed(() => {
-    store.dbVersion;
     if (!store.db || !store.selectedGroupUuid) return null;
     if (store.selectedGroupUuid === ALL_ENTRIES_UUID)
         return { uuid: ALL_ENTRIES_UUID };
-    return findGroupByUuid(store.db, store.selectedGroupUuid);
+    return findGroupByUuid(databaseView.value, store.selectedGroupUuid);
 });
 
-const selectedEntry = computed(() => {
-    store.dbVersion;
-    return findEntryByUuid(store.db, selectedEntryUuid.value);
-});
+const selectedEntry = computed(() =>
+    findEntryByUuid(databaseView.value, selectedEntryUuid.value),
+);
 
-const entryToDelete = computed(() => {
-    store.dbVersion;
-    return findEntryByUuid(store.db, entryToDeleteUuid.value);
-});
+const entryToDelete = computed(() =>
+    findEntryByUuid(databaseView.value, entryToDeleteUuid.value),
+);
 
 const entryDeleteIsPermanent = computed(
-    () => !deleteMovesToRecycleBin(store.db, entryToDelete.value),
+    () => !deleteMovesToRecycleBin(databaseView.value, entryToDelete.value),
 );
 
 const entryDeleteMessage = computed(() => {
@@ -836,7 +826,7 @@ const entryDeleteMessage = computed(() => {
 const totalEntriesCount = computed(() => databaseView.value.entries.length);
 
 const selectedGroupIsInRecycleBin = computed(() =>
-    isObjectInRecycleBin(store.db, selectedGroup.value),
+    isObjectInRecycleBin(databaseView.value, selectedGroup.value),
 );
 
 const filteredEntries = computed(() => {
@@ -876,6 +866,13 @@ function requestCloseEntryDetail() {
     });
 }
 
+// "All Entries" is a UI row, not a group: adding under it means the root.
+function resolveTargetGroup(groupUuid) {
+    return groupUuid === ALL_ENTRIES_UUID
+        ? databaseView.value.rootGroup
+        : findGroupByUuid(databaseView.value, groupUuid);
+}
+
 // Guarded like every other change of selection: this swaps the detail column to
 // a new entry, and `EntryDetail` reloads its form whenever the entry changes.
 // Unguarded, the "+" button in the list header threw away a half-typed entry
@@ -883,14 +880,16 @@ function requestCloseEntryDetail() {
 // focus is in a form field, which the button never is.)
 function addEntry() {
     requestNavigation(() => {
-        const entryUuid = performAddEntry(store.selectedGroupUuid);
+        const entryUuid = performAddEntry(
+            resolveTargetGroup(store.selectedGroupUuid),
+        );
         if (entryUuid) selectedEntryUuid.value = entryUuid;
     });
 }
 
 function addGroup(parentGroupUuid) {
     requestNavigation(() => {
-        const groupUuid = performAddGroup(parentGroupUuid);
+        const groupUuid = performAddGroup(resolveTargetGroup(parentGroupUuid));
         if (groupUuid) {
             store.selectedGroupUuid = groupUuid;
             selectedEntryUuid.value = null;
@@ -909,8 +908,11 @@ function confirmDelete() {
     const entry = entryToDelete.value;
     if (!store.db || !entry) return;
 
-    if (isObjectInRecycleBin(store.db, entry)) store.db.move(entry, null);
-    else store.db.remove(entry);
+    if (isObjectInRecycleBin(databaseView.value, entry)) {
+        store.db.move(entry, null);
+    } else {
+        store.db.remove(entry);
+    }
     if (selectedEntryUuid.value === entryToDeleteUuid.value) {
         selectedEntryUuid.value = null;
     }
@@ -929,10 +931,10 @@ function restoreEntry(entryUuid) {
     // Closes the detail column when the restored entry is the open one, so it
     // goes through the same draft guard as the other selection changes.
     requestNavigation(() => {
-        const entry = findEntryByUuid(store.db, entryUuid);
-        if (!entry || !isObjectInRecycleBin(store.db, entry)) return;
+        const entry = findEntryByUuid(databaseView.value, entryUuid);
+        if (!entry || !isObjectInRecycleBin(databaseView.value, entry)) return;
 
-        const target = getRestoreTargetGroup(store.db, entry);
+        const target = getRestoreTargetGroup(databaseView.value, entry);
         if (!target) return;
         store.db.move(entry, target);
         if (selectedEntryUuid.value === entryUuid) {
@@ -1028,7 +1030,7 @@ function getEntryTitle(entry) {
 
 // Group Actions
 function requestRenameGroup(groupUuid) {
-    const group = findGroupByUuid(store.db, groupUuid);
+    const group = findGroupByUuid(databaseView.value, groupUuid);
     if (!group) return;
 
     groupToRenameUuid.value = groupUuid;
@@ -1038,7 +1040,7 @@ function requestRenameGroup(groupUuid) {
 }
 
 function confirmRenameGroup() {
-    const group = findGroupByUuid(store.db, groupToRenameUuid.value);
+    const group = findGroupByUuid(databaseView.value, groupToRenameUuid.value);
     if (!group) return;
 
     const normalizedName = normalizeGroupName(newGroupName.value);
@@ -1062,7 +1064,7 @@ function confirmRenameGroup() {
 
 function requestDeleteGroup(groupUuid) {
     const root = rootGroup.value;
-    const group = findGroupByUuid(store.db, groupUuid);
+    const group = findGroupByUuid(databaseView.value, groupUuid);
     if (
         !store.db ||
         !group ||
@@ -1081,7 +1083,7 @@ function confirmDeleteGroup() {
 }
 
 function deleteConfirmedGroup() {
-    const group = findGroupByUuid(store.db, groupToDeleteUuid.value);
+    const group = findGroupByUuid(databaseView.value, groupToDeleteUuid.value);
     if (!store.db || !group) return;
 
     if (groupContainsGroupUuid(group, store.selectedGroupUuid)) {
@@ -1092,8 +1094,11 @@ function deleteConfirmedGroup() {
         selectedEntryUuid.value = null;
     }
 
-    if (isObjectInRecycleBin(store.db, group)) store.db.move(group, null);
-    else store.db.remove(group);
+    if (isObjectInRecycleBin(databaseView.value, group)) {
+        store.db.move(group, null);
+    } else {
+        store.db.remove(group);
+    }
     groupToDeleteUuid.value = null;
     showDeleteGroupConfirm.value = false;
     store.touchDb();
@@ -1101,10 +1106,10 @@ function deleteConfirmedGroup() {
 }
 
 function restoreGroup(groupUuid) {
-    const group = findGroupByUuid(store.db, groupUuid);
-    if (!group || !isObjectInRecycleBin(store.db, group)) return;
+    const group = findGroupByUuid(databaseView.value, groupUuid);
+    if (!group || !isObjectInRecycleBin(databaseView.value, group)) return;
 
-    const target = getRestoreTargetGroup(store.db, group);
+    const target = getRestoreTargetGroup(databaseView.value, group);
     if (!target) return;
     store.db.move(group, target);
     store.touchDb();
@@ -1112,7 +1117,12 @@ function restoreGroup(groupUuid) {
 }
 
 function moveGroup({ draggedUuid, targetUuid, position }) {
-    const plan = resolveGroupMove(store.db, draggedUuid, targetUuid, position);
+    const plan = resolveGroupMove(
+        databaseView.value,
+        draggedUuid,
+        targetUuid,
+        position,
+    );
     if (!plan) return;
 
     store.db.move(plan.group, plan.toGroup, plan.atIndex);
@@ -1126,8 +1136,11 @@ function moveEntry({ entryUuid, targetGroupUuid }) {
     // The drop is carried out (or dropped) together with the selection, which
     // is what the three answers of the unsaved-changes modal already mean.
     requestNavigation(() => {
-        const entry = findEntryByUuid(store.db, entryUuid);
-        const targetGroup = findGroupByUuid(store.db, targetGroupUuid);
+        const entry = findEntryByUuid(databaseView.value, entryUuid);
+        const targetGroup = findGroupByUuid(
+            databaseView.value,
+            targetGroupUuid,
+        );
         if (!entry || !targetGroup || entry.parentGroup === targetGroup) return;
 
         store.db.move(entry, targetGroup);
@@ -1139,7 +1152,7 @@ function moveEntry({ entryUuid, targetGroupUuid }) {
 }
 
 function requestEmptyRecycleBin() {
-    const bin = getRecycleBinGroup(store.db);
+    const bin = databaseView.value.recycleBinGroup;
     if (!bin || (!bin.entries?.length && !bin.groups?.length)) return;
     showEmptyRecycleBinConfirm.value = true;
 }
@@ -1149,7 +1162,7 @@ function confirmEmptyRecycleBin() {
 }
 
 function emptyConfirmedRecycleBin() {
-    const bin = getRecycleBinGroup(store.db);
+    const bin = databaseView.value.recycleBinGroup;
     if (!store.db || !bin) return;
 
     // If the current selection lives inside the bin, fall back to the root.
@@ -1181,7 +1194,7 @@ function cancelGroupAction() {
 function getGroupName(groupUuid) {
     if (!groupUuid) return '';
     if (groupUuid === ALL_ENTRIES_UUID) return 'All Entries';
-    return findGroupByUuid(store.db, groupUuid)?.name || '';
+    return findGroupByUuid(databaseView.value, groupUuid)?.name || '';
 }
 
 async function readKeyFileBuffer(path) {

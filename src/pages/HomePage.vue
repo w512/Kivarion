@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDatabaseAuth } from '../composables/useDatabaseAuth.js';
 import PasswordStrength from '../components/PasswordStrength.vue';
+import { basename } from '../utils.js';
 
 const router = useRouter();
 const passwordInput = ref(null);
@@ -37,9 +38,7 @@ const {
     store,
 } = useDatabaseAuth(router, passwordInput);
 
-const newKeyFileName = computed(() =>
-    newKeyFilePath.value ? newKeyFilePath.value.split(/[\\/]/).pop() : '',
-);
+const newKeyFileName = computed(() => basename(newKeyFilePath.value));
 
 onMounted(() => {
     checkLastPath();

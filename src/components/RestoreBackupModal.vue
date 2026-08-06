@@ -22,9 +22,9 @@
             <ul v-else class="backup-list">
                 <li v-for="b in backups" :key="b.path" class="backup-row">
                     <div class="backup-info">
-                        <span class="backup-name">{{ fileName(b.path) }}</span>
+                        <span class="backup-name">{{ basename(b.path) }}</span>
                         <span class="backup-meta"
-                            >{{ formatDate(b.mtime) }} ·
+                            >{{ backupDate(b.mtime) }} ·
                             {{ formatSize(b.size) }}</span
                         >
                     </div>
@@ -53,6 +53,7 @@
 
 <script setup>
 import BaseModal from './BaseModal.vue';
+import { basename, formatDate, formatSize } from '../utils.js';
 
 defineProps({
     show: { type: Boolean, default: false },
@@ -63,19 +64,9 @@ defineProps({
 
 defineEmits(['close', 'restore']);
 
-function fileName(path) {
-    return path.split(/[\\/]/).pop();
-}
-
-function formatDate(mtime) {
-    if (!mtime) return 'unknown date';
-    return new Date(mtime).toLocaleString();
-}
-
-function formatSize(bytes) {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+// The backend reports the mtime in milliseconds; `formatDate` wants a Date.
+function backupDate(mtime) {
+    return mtime ? formatDate(new Date(mtime)) : 'unknown date';
 }
 </script>
 

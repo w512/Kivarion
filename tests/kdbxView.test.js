@@ -1,12 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import * as kdbxweb from 'kdbxweb';
 import {
+    ALL_ENTRIES_UUID,
     buildDatabaseView,
-    collectGroupUuids,
     deleteMovesToRecycleBin,
     findEntryByUuid,
     findGroupByUuid,
-    getAllEntries,
     getRestoreTargetGroup,
     groupContainsEntryUuid,
     groupContainsGroupUuid,
@@ -14,8 +13,6 @@ import {
     groupNameExistsInParent,
     isObjectInRecycleBin,
     resolveGroupMove,
-    toEntryListItem,
-    toGroupTreeNode,
 } from '../src/kdbxView.js';
 
 function uuid(id) {
@@ -89,25 +86,44 @@ function makeDb() {
 describe('kdbx view helpers', () => {
     test('finds groups and entries by uuid', () => {
         const db = makeDb();
+        const view = buildDatabaseView(db);
 
-        expect(findGroupByUuid(db, 'child')).toBe(db.childGroup);
-        expect(findEntryByUuid(db, 'entry-child')).toBe(db.childEntry);
-        expect(findGroupByUuid(db, 'missing')).toBe(null);
-        expect(findEntryByUuid(db, 'missing')).toBe(null);
+        // The live objects, not copies: callers mutate what comes back.
+        expect(findGroupByUuid(view, 'child')).toBe(db.childGroup);
+        expect(findEntryByUuid(view, 'entry-child')).toBe(db.childEntry);
+        // The bin is indexed too — restoring reaches into it.
+        expect(findEntryByUuid(view, 'entry-trash')).toBe(db.recycleEntry);
+        expect(findGroupByUuid(view, 'missing')).toBe(null);
+        expect(findEntryByUuid(view, 'missing')).toBe(null);
+        // "All Entries" is a UI row, not a group in the database.
+        expect(findGroupByUuid(view, ALL_ENTRIES_UUID)).toBe(null);
     });
 
-    test('collects every group uuid, recycle bin included', () => {
-        const db = makeDb();
+    test('indexes every group, recycle bin included', () => {
+        const view = buildDatabaseView(makeDb());
 
-        // Used to drop collapsed-branch state for groups that no longer exist,
-        // so a group missing here would silently lose its stored state.
-        expect(collectGroupUuids(db)).toEqual(
-            new Set(['root', 'child', 'recycle', 'duplicate']),
-        );
+        // Also what drops collapsed-branch state for groups that no longer
+        // exist, so a group missing here would silently lose its stored state.
+        expect([...view.groupsByUuid.keys()]).toEqual([
+            'root',
+            'child',
+            'recycle',
+            'duplicate',
+        ]);
+        // The bin's own uuid is in the set, so "is this in the bin" is one
+        // question rather than "is it the bin, or under it".
+        expect(view.recycleBinUuids).toEqual(new Set(['recycle']));
     });
 
-    test('collects no group uuids without a database', () => {
-        expect(collectGroupUuids(null)).toEqual(new Set());
+    test('indexes nothing without a database', () => {
+        const view = buildDatabaseView(null);
+
+        expect(view.rootGroup).toBe(null);
+        expect(view.groupsByUuid.size).toBe(0);
+        expect(view.entriesByUuid.size).toBe(0);
+        expect(view.recycleBinGroup).toBe(null);
+        expect(findGroupByUuid(view, 'root')).toBe(null);
+        expect(isObjectInRecycleBin(view, {})).toBe(false);
     });
 
     test('checks subtree containment by uuid', () => {
@@ -118,19 +134,11 @@ describe('kdbx view helpers', () => {
         expect(groupContainsEntryUuid(db.childGroup, 'entry-root')).toBe(false);
     });
 
-    test('collects all entries excluding recycle bin', () => {
-        const db = makeDb();
-
-        expect(getAllEntries(db).map((e) => e.uuid.id)).toEqual([
-            'entry-root',
-            'entry-child',
-        ]);
-    });
-
     test('maps groups and entries to plain view models', () => {
         const db = makeDb();
+        const view = buildDatabaseView(db);
 
-        expect(toGroupTreeNode(db.root, db)).toEqual({
+        expect(view.groupTree[0]).toEqual({
             uuid: 'root',
             name: 'Root',
             entryCount: 1,
@@ -168,7 +176,7 @@ describe('kdbx view helpers', () => {
             isInRecycleBin: false,
         });
 
-        expect(toEntryListItem(db.childEntry, db)).toMatchObject({
+        expect(view.entryItems.get('entry-child')).toMatchObject({
             uuid: 'entry-child',
             title: 'Child Entry',
             iconSrc: null,
@@ -203,9 +211,11 @@ describe('kdbx view helpers', () => {
         db.childEntry.customIcon = uuid('icon-1');
         const cache = new Map();
 
-        const first = toEntryListItem(db.childEntry, db, cache).iconSrc;
+        const iconOf = (view) => view.entryItems.get('entry-child').iconSrc;
+
+        const first = iconOf(buildDatabaseView(db, cache));
         db.meta.customIcons.get('icon-1').data = new Uint8Array([9]).buffer;
-        const second = toEntryListItem(db.childEntry, db, cache).iconSrc;
+        const second = iconOf(buildDatabaseView(db, cache));
 
         expect(first).toBe(second);
         expect(cache.size).toBe(1);
@@ -214,41 +224,47 @@ describe('kdbx view helpers', () => {
     test('detects recycled objects and resolves their restore targets', () => {
         const db = makeDb();
         db.recycleEntry.previousParentGroup = db.childGroup.uuid;
+        let view = buildDatabaseView(db);
 
-        expect(isObjectInRecycleBin(db, db.recycleGroup)).toBe(true);
-        expect(isObjectInRecycleBin(db, db.recycleEntry)).toBe(true);
-        expect(isObjectInRecycleBin(db, db.childEntry)).toBe(false);
-        expect(getRestoreTargetGroup(db, db.recycleEntry)).toBe(db.childGroup);
+        expect(isObjectInRecycleBin(view, db.recycleGroup)).toBe(true);
+        expect(isObjectInRecycleBin(view, db.recycleEntry)).toBe(true);
+        expect(isObjectInRecycleBin(view, db.childEntry)).toBe(false);
+        expect(getRestoreTargetGroup(view, db.recycleEntry)).toBe(
+            db.childGroup,
+        );
 
         // A missing previous parent falls back to the root.
         db.recycleEntry.previousParentGroup = uuid('missing');
-        expect(getRestoreTargetGroup(db, db.recycleEntry)).toBe(db.root);
+        view = buildDatabaseView(db);
+        expect(getRestoreTargetGroup(view, db.recycleEntry)).toBe(db.root);
     });
 
     test('only promises a restorable delete when kdbxweb would really recycle', () => {
         const db = makeDb();
         db.meta.recycleBinEnabled = true;
+        const view = () => buildDatabaseView(db);
 
-        expect(deleteMovesToRecycleBin(db, db.childEntry)).toBe(true);
-        expect(deleteMovesToRecycleBin(db, db.childGroup)).toBe(true);
+        expect(deleteMovesToRecycleBin(view(), db.childEntry)).toBe(true);
+        expect(deleteMovesToRecycleBin(view(), db.childGroup)).toBe(true);
         // Already in the bin: the next delete is the permanent one.
-        expect(deleteMovesToRecycleBin(db, db.recycleEntry)).toBe(false);
+        expect(deleteMovesToRecycleBin(view(), db.recycleEntry)).toBe(false);
 
         db.meta.recycleBinEnabled = false;
-        expect(deleteMovesToRecycleBin(db, db.childEntry)).toBe(false);
+        expect(deleteMovesToRecycleBin(view(), db.childEntry)).toBe(false);
 
         // `Kdbx.remove` needs the uuid too — with the setting alone it deletes
         // permanently, so the confirmation must not offer a restore.
         db.meta.recycleBinEnabled = true;
         db.meta.recycleBinUuid = undefined;
-        expect(deleteMovesToRecycleBin(db, db.childEntry)).toBe(false);
+        expect(deleteMovesToRecycleBin(view(), db.childEntry)).toBe(false);
     });
 
     test('resolves valid group moves into move() arguments', () => {
         const db = makeDb();
+        const view = buildDatabaseView(db);
 
         // Nest 'duplicate' inside sibling 'child' → append (no index).
-        expect(resolveGroupMove(db, 'duplicate', 'child', 'inside')).toEqual({
+        expect(resolveGroupMove(view, 'duplicate', 'child', 'inside')).toEqual({
             group: db.duplicateGroup,
             toGroup: db.childGroup,
             atIndex: undefined,
@@ -257,7 +273,7 @@ describe('kdbx view helpers', () => {
         // root.groups order: [child(0), recycle(1), duplicate(2)].
         // Reorder 'duplicate' before 'child' → lands at index 0.
         expect(
-            resolveGroupMove(db, 'duplicate', 'child', 'before'),
+            resolveGroupMove(view, 'duplicate', 'child', 'before'),
         ).toMatchObject({
             group: db.duplicateGroup,
             toGroup: db.root,
@@ -268,7 +284,7 @@ describe('kdbx view helpers', () => {
         // Raw insert index is 3, decremented to 2 because the splice removes
         // 'child' from an earlier position first.
         expect(
-            resolveGroupMove(db, 'child', 'duplicate', 'after'),
+            resolveGroupMove(view, 'child', 'duplicate', 'after'),
         ).toMatchObject({
             group: db.childGroup,
             toGroup: db.root,
@@ -288,12 +304,13 @@ describe('kdbx view helpers', () => {
         };
         grand.parentGroup = db.childGroup;
         db.childGroup.groups.push(grand);
+        const view = buildDatabaseView(db);
 
-        expect(resolveGroupMove(db, 'child', 'child', 'inside')).toBe(null); // onto self
-        expect(resolveGroupMove(db, 'child', 'grand', 'inside')).toBe(null); // into own descendant
-        expect(resolveGroupMove(db, 'root', 'child', 'inside')).toBe(null); // root can't move
-        expect(resolveGroupMove(db, 'child', 'root', 'before')).toBe(null); // root has no siblings
-        expect(resolveGroupMove(db, 'child', 'missing', 'inside')).toBe(null);
+        expect(resolveGroupMove(view, 'child', 'child', 'inside')).toBe(null); // onto self
+        expect(resolveGroupMove(view, 'child', 'grand', 'inside')).toBe(null); // into own descendant
+        expect(resolveGroupMove(view, 'root', 'child', 'inside')).toBe(null); // root can't move
+        expect(resolveGroupMove(view, 'child', 'root', 'before')).toBe(null); // root has no siblings
+        expect(resolveGroupMove(view, 'child', 'missing', 'inside')).toBe(null);
     });
 
     test('validates group sibling names and generates unique defaults', () => {

@@ -201,7 +201,6 @@ const props = defineProps({
     isCollapsed: { type: Boolean, default: false },
     depth: { type: Number, default: 0 },
     allEntriesCount: { type: Number, default: 0 },
-    refreshKey: { type: Number, default: 0 },
 });
 
 const emit = defineEmits([
@@ -223,20 +222,18 @@ const isInRecycleBin = computed(
 );
 const isRoot = computed(() => props.depth === 0 && !isAllEntries.value);
 const isSelected = computed(() => props.group.uuid === props.selectedGroupUuid);
-const hasChildren = computed(() => {
-    props.refreshKey;
-    return props.group.children?.length > 0;
-});
-const groupName = computed(() => {
-    props.refreshKey;
-    return props.group.name;
-});
-const entryCount = computed(() => {
-    props.refreshKey;
-    return isAllEntries.value
+// `group` is a plain node from `buildDatabaseView`, rebuilt from scratch on
+// every `dbVersion` change — so these track the database without the
+// `refreshKey` prop this component used to take and read for its side effect.
+// That prop suggested the component reaches into the kdbx graph, which it does
+// not: nothing here is read off a live kdbxweb object.
+const hasChildren = computed(() => props.group.children?.length > 0);
+const groupName = computed(() => props.group.name);
+const entryCount = computed(() =>
+    isAllEntries.value
         ? props.allEntriesCount
-        : (props.group.recursiveEntryCount ?? props.group.entryCount ?? 0);
-});
+        : (props.group.recursiveEntryCount ?? props.group.entryCount ?? 0),
+);
 
 const contextMenu = ref({
     visible: false,
