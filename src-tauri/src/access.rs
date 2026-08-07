@@ -1,7 +1,7 @@
 //! Path access control for the filesystem commands.
 //!
 //! The webview holds no `fs` capability, but that alone does not stop a
-//! compromised frontend from calling the commands in `lib.rs` with a path of
+//! compromised frontend from calling the commands in `files.rs` with a path of
 //! its choosing (`read_database` on `~/.ssh/id_ed25519`, `export_file` over a
 //! shell profile). The commands therefore accept a path only if it is in this
 //! allowlist, and a path gets in exactly two ways:
