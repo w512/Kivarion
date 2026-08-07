@@ -26,6 +26,9 @@
         <p v-if="linkError" class="link-error" role="alert">{{ linkError }}</p>
 
         <div class="modal-actions">
+            <button type="button" class="cancel-btn" @click="openLicenses">
+                Open Source Licenses
+            </button>
             <button type="button" class="cancel-btn" @click="emit('close')">
                 Close
             </button>
@@ -35,9 +38,12 @@
 
 <script setup>
 import { ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import BaseModal from './BaseModal.vue';
+
+const router = useRouter();
 
 const props = defineProps({
     show: { type: Boolean, default: false },
@@ -91,6 +97,13 @@ watch(
         }
     },
 );
+
+// The full notices are their own route: they are megabytes of text, and a
+// dialog is the wrong place to read a license in.
+function openLicenses() {
+    emit('close');
+    router.push({ name: 'licenses' });
+}
 
 // Same rule as the entry URL: the anchor never navigates the webview itself —
 // a navigation would put an unlocked database behind a page a remote origin

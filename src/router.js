@@ -8,6 +8,13 @@ const routes = [
     { path: '/', name: 'home', component: HomePage },
     { path: '/database', name: 'database', component: DatabasePage },
     { path: '/settings', name: 'settings', component: SettingsPage },
+    // Lazily loaded: the notices it renders are megabytes of text that nothing
+    // else in the app needs.
+    {
+        path: '/licenses',
+        name: 'licenses',
+        component: () => import('./pages/LicensesPage.vue'),
+    },
     { path: '/:pathMatch(.*)*', redirect: { name: 'home' } },
 ];
 
