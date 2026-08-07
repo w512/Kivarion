@@ -32,9 +32,9 @@ defineProps({
 
 <style scoped>
 .metadata-section {
-    margin-top: 1.5rem;
+    margin-top: 0;
     border-top: 1px solid var(--border-color);
-    padding-top: 1rem;
+    padding-top: 0.75rem;
 }
 
 .metadata-section h3 {
@@ -42,13 +42,13 @@ defineProps({
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.75rem;
+    margin: 0 0 0.5rem;
 }
 
 .metadata-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 1rem;
+    gap: 0.6rem;
 }
 
 .meta-item {

@@ -9,6 +9,7 @@ import { toExactArrayBuffer } from '../utils.js';
 import { getDefaultGroup, getObjectUuid } from '../kdbxView.js';
 import RestoreBackupModal from '../components/RestoreBackupModal.vue';
 import ConfirmModal from '../components/ConfirmModal.vue';
+import AboutModal from '../components/AboutModal.vue';
 import { clearDatabasePreferences } from '../databasePreferences.js';
 
 const router = useRouter();
@@ -32,6 +33,7 @@ const showRestore = ref(false);
 const backups = ref([]);
 const restoreBusy = ref(false);
 const restoreError = ref('');
+const showAbout = ref(false);
 const showForgetDatabaseData = ref(false);
 const forgetDatabaseDataBusy = ref(false);
 const forgetDatabaseDataError = ref('');
@@ -300,7 +302,24 @@ async function restoreBackup(backup) {
                     </button>
                 </div>
             </div>
+
+            <div class="setting-item">
+                <div class="setting-info">
+                    <h3>About Kivarion</h3>
+                    <p>
+                        Version, and the open-source projects Kivarion is built
+                        with.
+                    </p>
+                </div>
+                <div class="setting-action">
+                    <button class="action-button" @click="showAbout = true">
+                        About…
+                    </button>
+                </div>
+            </div>
         </div>
+
+        <AboutModal :show="showAbout" @close="showAbout = false" />
 
         <RestoreBackupModal
             :show="showRestore"

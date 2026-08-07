@@ -141,12 +141,17 @@ describe('kdbx view helpers', () => {
         expect(view.groupTree[0]).toEqual({
             uuid: 'root',
             name: 'Root',
+            iconSrc: null,
+            // The default group icon, for a group that carries no `IconID`.
+            iconId: 48,
             entryCount: 1,
             isRecycleBin: false,
             children: [
                 {
                     uuid: 'child',
                     name: 'Child',
+                    iconSrc: null,
+                    iconId: 48,
                     entryCount: 1,
                     recursiveEntryCount: 1,
                     isRecycleBin: false,
@@ -156,6 +161,8 @@ describe('kdbx view helpers', () => {
                 {
                     uuid: 'recycle',
                     name: 'Recycle Bin',
+                    iconSrc: null,
+                    iconId: 48,
                     entryCount: 1,
                     recursiveEntryCount: 1,
                     isRecycleBin: true,
@@ -165,6 +172,8 @@ describe('kdbx view helpers', () => {
                 {
                     uuid: 'duplicate',
                     name: 'New group',
+                    iconSrc: null,
+                    iconId: 48,
                     entryCount: 0,
                     recursiveEntryCount: 0,
                     isRecycleBin: false,
@@ -219,6 +228,45 @@ describe('kdbx view helpers', () => {
 
         expect(first).toBe(second);
         expect(cache.size).toBe(1);
+    });
+
+    test('reads custom icons for groups too, from the same cache', () => {
+        const db = makeDb();
+        db.meta.customIcons.set('icon-1', {
+            data: new Uint8Array([1, 2, 3]).buffer,
+        });
+        // Groups carry the same CustomIconUUID field entries do.
+        db.childGroup.customIcon = uuid('icon-1');
+        db.childEntry.customIcon = uuid('icon-1');
+        const cache = new Map();
+
+        const view = buildDatabaseView(db, cache);
+        const childNode = view.groupTree[0].children[0];
+
+        expect(childNode.uuid).toBe('child');
+        expect(childNode.iconSrc).toStartWith('data:image/png;base64,');
+        // One icon, one encode — shared with the entry using it.
+        expect(view.entryItems.get('entry-child').iconSrc).toBe(
+            childNode.iconSrc,
+        );
+        expect(cache.size).toBe(1);
+        expect(view.groupTree[0].iconSrc).toBe(null);
+    });
+
+    test('labels a custom icon by its own bytes, not always PNG', () => {
+        const db = makeDb();
+        // Databases from other programs carry SVG icons; labelled image/png
+        // they rendered as nothing at all.
+        db.meta.customIcons.set('icon-svg', {
+            data: new TextEncoder().encode('<svg viewBox="0 0 24 24"/>').buffer,
+        });
+        db.childGroup.customIcon = uuid('icon-svg');
+
+        const view = buildDatabaseView(db);
+
+        expect(view.groupTree[0].children[0].iconSrc).toStartWith(
+            'data:image/svg+xml;base64,',
+        );
     });
 
     test('detects recycled objects and resolves their restore targets', () => {

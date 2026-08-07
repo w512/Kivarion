@@ -51,6 +51,37 @@
                         <transition name="dropdown">
                             <div v-if="showMenu" class="dropdown-menu">
                                 <button
+                                    class="menu-item"
+                                    @click="
+                                        emit('change-icon');
+                                        showMenu = false;
+                                    "
+                                >
+                                    <svg
+                                        width="14"
+                                        height="14"
+                                        viewBox="0 0 24 24"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        stroke-width="2"
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                    >
+                                        <rect
+                                            x="3"
+                                            y="3"
+                                            width="18"
+                                            height="18"
+                                            rx="2"
+                                        />
+                                        <circle cx="9" cy="9" r="2" />
+                                        <path
+                                            d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"
+                                        />
+                                    </svg>
+                                    Change Icon…
+                                </button>
+                                <button
                                     v-if="store.downloadSiteIcons"
                                     class="menu-item"
                                     @click="
@@ -149,7 +180,10 @@
             </div>
         </div>
 
-        <div v-if="!isEditing" class="detail-scroll-content">
+        <div
+            v-if="!isEditing"
+            class="detail-scroll-content detail-view-content"
+        >
             <EntryViewFields :entry="entry" :email-field="emailField" />
             <EntryCustomFields
                 :is-editing="false"
@@ -262,7 +296,7 @@ const props = defineProps({
     entry: { type: Object, required: true },
 });
 
-const emit = defineEmits(['updated', 'close', 'delete']);
+const emit = defineEmits(['updated', 'close', 'delete', 'change-icon']);
 const store = useStore();
 
 const showMenu = ref(false);
@@ -470,7 +504,7 @@ onUnmounted(() => {
 }
 
 .detail-header {
-    padding: 0.75rem 0;
+    padding: 0.5rem 0;
     background: var(--bg-color);
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
@@ -506,6 +540,10 @@ onUnmounted(() => {
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+}
+
+.detail-view-content {
+    gap: 0.75rem;
 }
 
 .menu-container {

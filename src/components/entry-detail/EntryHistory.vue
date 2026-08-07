@@ -47,16 +47,16 @@ const historyItems = computed(() => {
 
 <style scoped>
 .history-section {
-    margin-top: 1.5rem;
+    margin-top: 0;
     border-top: 1px solid var(--border-color);
-    padding-top: 1rem;
+    padding-top: 0.75rem;
 }
 
 .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
 }
 
 .section-header h3 {
@@ -64,6 +64,7 @@ const historyItems = computed(() => {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    margin: 0;
 }
 
 .section-header span {
@@ -74,7 +75,7 @@ const historyItems = computed(() => {
 .history-list {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    gap: 0.3rem;
 }
 
 .history-item {
@@ -82,7 +83,7 @@ const historyItems = computed(() => {
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.55rem 0.65rem;
+    padding: 0.4rem 0.55rem;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--input-bg);

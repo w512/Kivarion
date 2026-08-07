@@ -28,9 +28,12 @@
         @drop.prevent="onDrop"
         @dragend="onDragEnd"
     >
+        <!-- "All Entries" is a UI row rather than a group in the database, so it
+             keeps its own glyph and has nothing to collapse. -->
         <svg
-            width="14"
-            height="14"
+            v-if="isAllEntries"
+            width="18"
+            height="18"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -38,31 +41,24 @@
             stroke-linecap="round"
             stroke-linejoin="round"
             class="collapse-toggle"
-            :class="{
-                'has-children': hasChildren,
-                collapsed: isCollapsed,
-            }"
+        >
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <line x1="3" y1="9" x2="21" y2="9" />
+            <line x1="9" y1="21" x2="9" y2="9" />
+        </svg>
+        <!-- The icon doubles as the collapse toggle, so it has to keep the
+             class (drag-start skips it) and the handlers. -->
+        <ObjectIcon
+            v-else
+            :src="iconSrc"
+            :icon-id="displayIconId"
+            :fallback-icon-id="DEFAULT_GROUP_ICON"
+            :size="18"
+            class="collapse-toggle"
+            :class="{ 'has-children': hasChildren }"
             @click.stop="toggleCollapse"
             @mousedown.stop
-        >
-            <!-- All Entries Icon -->
-            <template v-if="isAllEntries">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="3" y1="9" x2="21" y2="9" />
-                <line x1="9" y1="21" x2="9" y2="9" />
-            </template>
-            <!-- Group Icon -->
-            <template v-else>
-                <path
-                    v-if="hasChildren && !isCollapsed"
-                    d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-3.21 8a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20"
-                />
-                <path
-                    v-else
-                    d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-                />
-            </template>
-        </svg>
+        />
         <span class="group-label">{{ groupName }}</span>
         <span class="group-badge">{{ entryCount }}</span>
 
@@ -143,6 +139,27 @@
                     Rename
                 </div>
                 <div
+                    v-if="!isRecycleBin"
+                    class="menu-item"
+                    @click="handleAction('change-icon')"
+                >
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <circle cx="9" cy="9" r="2" />
+                        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+                    </svg>
+                    Change Icon…
+                </div>
+                <div
                     v-if="!isRoot && !isRecycleBin"
                     class="menu-item delete"
                     @click="handleAction('delete')"
@@ -194,6 +211,8 @@
 <script setup>
 import { computed, nextTick, ref, onMounted, onUnmounted } from 'vue';
 import { useGroupDragDrop } from '../composables/useGroupDragDrop.js';
+import ObjectIcon from './ObjectIcon.vue';
+import { DEFAULT_GROUP_ICON, OPEN_FOLDER_ICON } from '../standardIcons.js';
 
 const props = defineProps({
     group: { type: Object, required: true },
@@ -211,6 +230,7 @@ const emit = defineEmits([
     'delete-group',
     'restore-group',
     'empty-recycle-bin',
+    'change-icon',
     'move-group',
     'move-entry',
 ]);
@@ -229,6 +249,18 @@ const isSelected = computed(() => props.group.uuid === props.selectedGroupUuid);
 // not: nothing here is read off a live kdbxweb object.
 const hasChildren = computed(() => props.group.children?.length > 0);
 const groupName = computed(() => props.group.name);
+const iconSrc = computed(() => props.group.iconSrc || null);
+
+// A group left on the default folder icon still opens and closes with the
+// branch, which is the only cue this row has that it can be expanded — a group
+// the user gave an icon of its own keeps that icon in both states.
+const displayIconId = computed(() => {
+    const id = props.group.iconId ?? DEFAULT_GROUP_ICON;
+    if (id !== DEFAULT_GROUP_ICON && id !== OPEN_FOLDER_ICON) return id;
+    return hasChildren.value && !props.isCollapsed
+        ? OPEN_FOLDER_ICON
+        : DEFAULT_GROUP_ICON;
+});
 const entryCount = computed(() =>
     isAllEntries.value
         ? props.allEntriesCount
@@ -315,6 +347,7 @@ function handleAction(action) {
     else if (action === 'delete') emit('delete-group', props.group.uuid);
     else if (action === 'restore') emit('restore-group', props.group.uuid);
     else if (action === 'empty') emit('empty-recycle-bin', props.group.uuid);
+    else if (action === 'change-icon') emit('change-icon', props.group.uuid);
     contextMenu.value.visible = false;
 }
 
@@ -515,26 +548,22 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
     bottom: -1px;
 }
 
-.group-node svg {
+/* The row's icon — the "All Entries" glyph, a standard icon or a custom image —
+   always occupies the same 18px box, or rows drift out of their virtualized
+   slots. */
+.group-node > .collapse-toggle {
     flex-shrink: 0;
     color: var(--text-secondary);
-    transition:
-        transform 0.2s,
-        fill 0.2s;
+    transition: transform 0.2s;
 }
 
-.group-node svg.has-children {
+.group-node > .collapse-toggle.has-children {
     cursor: pointer;
 }
 
-.group-node svg.has-children:hover {
+.group-node > .collapse-toggle.has-children:hover {
     color: var(--text-primary);
     transform: scale(1.1);
-}
-
-.group-node svg.collapsed {
-    fill: var(--text-secondary);
-    fill-opacity: 0.1;
 }
 
 .group-label {

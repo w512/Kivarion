@@ -13,26 +13,11 @@
         @dragstart="onDragStart"
     >
         <div class="entry-icon">
-            <img
-                v-if="entry.iconSrc"
+            <ObjectIcon
                 :src="entry.iconSrc"
-                class="custom-icon-img"
-                alt=""
+                :icon-id="entry.iconId"
+                :size="20"
             />
-            <svg
-                v-else
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-            >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-            </svg>
         </div>
         <div class="entry-info">
             <span class="entry-title">{{ entry.title || 'No title' }}</span>
@@ -67,6 +52,7 @@
 
 <script setup>
 import { computed } from 'vue';
+import ObjectIcon from '../ObjectIcon.vue';
 
 const props = defineProps({
     entry: { type: Object, required: true },
@@ -134,12 +120,6 @@ const formattedDate = computed(() => {
     color: var(--text-secondary);
     flex-shrink: 0;
     overflow: hidden;
-}
-
-.custom-icon-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
 }
 
 .entry-row.active .entry-icon {

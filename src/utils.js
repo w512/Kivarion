@@ -150,6 +150,57 @@ export function isUnsafeAttachmentPreview(name) {
     return !!fileInfo(name)?.unsafePreview;
 }
 
+/**
+ * The image type of raw bytes, by magic number, or `null` when the bytes are not
+ * a recognizable image. Use this to *decide* whether something is an image (the
+ * icon file the user picked); use `detectImageMimeType` to label bytes that are
+ * already known to be one.
+ */
+export function sniffImageMimeType(bytes) {
+    const data =
+        bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    const at = (offset, ...signature) =>
+        signature.every((byte, i) => data[offset + i] === byte);
+
+    if (at(0, 0x89, 0x50, 0x4e, 0x47)) return 'image/png';
+    if (at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg';
+    if (at(0, 0x47, 0x49, 0x46, 0x38)) return 'image/gif';
+    // RIFF....WEBP
+    if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50))
+        return 'image/webp';
+    if (at(0, 0x42, 0x4d)) return 'image/bmp';
+    if (at(0, 0x00, 0x00, 0x01, 0x00)) return 'image/x-icon';
+    if (isSvgMarkup(data)) return 'image/svg+xml';
+    return null;
+}
+
+/**
+ * The image type of raw bytes, falling back to PNG. A KDBX custom icon is stored
+ * as bytes with no type recorded anywhere in the format, and nothing requires it
+ * to be a PNG — a database whose icons came from an SVG set (KeePassXC accepts
+ * one) showed nothing at all while every icon was labelled `image/png`.
+ *
+ * The fallback stays PNG: that is what KeePass itself writes, and it is the type
+ * these icons were assumed to be before this existed.
+ */
+export function detectImageMimeType(bytes) {
+    return sniffImageMimeType(bytes) || 'image/png';
+}
+
+// SVG has no magic number, so this looks for the markup itself: an XML
+// declaration, a comment or a doctype may come first, and the file often starts
+// with a BOM or whitespace. Only the head of the file is decoded — an icon that
+// mentions `<svg` a kilobyte in is not one.
+function isSvgMarkup(data) {
+    if (typeof TextDecoder === 'undefined') return false;
+
+    const head = new TextDecoder('utf-8', { fatal: false })
+        .decode(data.subarray(0, 1024))
+        .trimStart();
+    if (!head.startsWith('<')) return false;
+    return /<svg[\s/>]/i.test(head);
+}
+
 const PASSWORD_SYMBOLS = '!@#$%^&*()_+-=[]{}|;:,.<>?';
 
 function passwordCharClasses(options = {}) {

@@ -10,6 +10,8 @@ mod access;
 mod biometrics;
 mod crypto;
 mod files;
+#[cfg(target_os = "macos")]
+mod menu;
 mod quicklook;
 #[cfg(test)]
 mod test_support;
@@ -232,13 +234,23 @@ fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(navigation_guard())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    // Replaces Tauri's default menu, whose About panel carries no attribution.
+    // macOS is the only platform that gets a default menu at all.
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder.menu(menu::build);
+    }
+
+    let app = builder
         .setup(|app| {
             use tauri::Manager;
 

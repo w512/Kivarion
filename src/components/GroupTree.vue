@@ -26,6 +26,7 @@
                     @delete-group="emit('delete-group', $event)"
                     @restore-group="emit('restore-group', $event)"
                     @empty-recycle-bin="emit('empty-recycle-bin', $event)"
+                    @change-icon="emit('change-icon', $event)"
                     @move-group="handleMoveGroup"
                     @move-entry="emit('move-entry', $event)"
                 />
@@ -60,11 +61,12 @@ const emit = defineEmits([
     'delete-group',
     'restore-group',
     'empty-recycle-bin',
+    'change-icon',
     'move-group',
     'move-entry',
 ]);
 
-const ROW_HEIGHT = 37;
+const ROW_HEIGHT = 32;
 const OVERSCAN = 8;
 const scrollRef = ref(null);
 const scrollTop = ref(0);
@@ -216,13 +218,13 @@ onUnmounted(() => resizeObserver?.disconnect());
 .group-position {
     position: absolute;
     inset: 0 0 auto;
-    height: 37px;
+    height: 32px;
     padding-bottom: 1px;
     box-sizing: border-box;
 }
 
 .group-position :deep(.group-node) {
-    height: 36px;
+    height: 31px;
     padding-top: 0;
     padding-bottom: 0;
     box-sizing: border-box;

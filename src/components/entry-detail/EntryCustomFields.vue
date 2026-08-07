@@ -293,16 +293,16 @@ function copy(text, fieldId, isProtected = false) {
 
 <style scoped>
 .custom-fields-section {
-    margin-top: 1.5rem;
+    margin-top: 0;
     border-top: 1px solid var(--border-color);
-    padding-top: 1rem;
+    padding-top: 0.75rem;
 }
 
 .section-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1rem;
+    margin-bottom: 0.6rem;
 }
 
 .section-header h3 {
@@ -316,13 +316,13 @@ function copy(text, fieldId, isProtected = false) {
 .fields-view {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.4rem;
 }
 
 .field-row {
     background: var(--badge-bg);
     border-radius: 8px;
-    padding: 0.6rem 0.75rem;
+    padding: 0.4rem 0.6rem;
 }
 
 .field-row label {
@@ -332,7 +332,7 @@ function copy(text, fieldId, isProtected = false) {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.15rem;
 }
 
 .field-value-row {

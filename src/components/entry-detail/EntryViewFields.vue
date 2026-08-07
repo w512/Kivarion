@@ -231,13 +231,13 @@ function copy(text, fieldId, secret = false) {
 .fields-view {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.4rem;
 }
 
 .field-row {
     background: var(--badge-bg);
     border-radius: 8px;
-    padding: 0.6rem 0.75rem;
+    padding: 0.4rem 0.6rem;
 }
 
 .field-row label {
@@ -247,7 +247,7 @@ function copy(text, fieldId, secret = false) {
     color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.15rem;
 }
 
 .field-value-row {

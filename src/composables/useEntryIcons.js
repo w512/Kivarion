@@ -1,5 +1,10 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
-import * as kdbxweb from 'kdbxweb';
+import {
+    addCustomIcon,
+    arrayBuffersEqual,
+    getIconId,
+    removeUnusedCustomIcon,
+} from '../customIcons.js';
 import { getField, normalizeHttpUrl } from '../utils';
 import { useStore } from '../store';
 
@@ -96,15 +101,7 @@ async function applyIcon(entry, store, emit) {
         return false;
     }
 
-    const existingIconId = findCustomIconByData(db, buffer);
-    const nextIcon = existingIconId
-        ? new kdbxweb.KdbxUuid(existingIconId)
-        : kdbxweb.KdbxUuid.random();
-
-    if (!existingIconId) {
-        db.meta.customIcons.set(nextIcon.id, { data: buffer });
-    }
-
+    const nextIcon = addCustomIcon(db, buffer, domain);
     if (oldIconId === nextIcon.id) return false;
 
     entry.customIcon = nextIcon;
@@ -225,49 +222,4 @@ async function readLimitedBody(res, controller) {
         offset += chunk.byteLength;
     }
     return out.buffer;
-}
-
-function findCustomIconByData(db, data) {
-    for (const [id, icon] of db.meta.customIcons) {
-        if (icon?.data && arrayBuffersEqual(icon.data, data)) return id;
-    }
-    return null;
-}
-
-function removeUnusedCustomIcon(db, iconId) {
-    if (!iconId || !db?.meta?.customIcons?.has(iconId)) return;
-
-    const isUsed = collectAllEntries(db).some(
-        (entry) => getIconId(entry.customIcon) === iconId,
-    );
-    if (!isUsed) db.meta.customIcons.delete(iconId);
-}
-
-function collectAllEntries(db) {
-    const out = [];
-    collectEntries(db?.getDefaultGroup?.(), out);
-    return out;
-}
-
-function collectEntries(group, out) {
-    if (!group) return;
-    out.push(...(group.entries || []));
-    for (const child of group.groups || []) {
-        collectEntries(child, out);
-    }
-}
-
-function getIconId(icon) {
-    return icon?.id || icon || null;
-}
-
-function arrayBuffersEqual(a, b) {
-    const left = new Uint8Array(a);
-    const right = new Uint8Array(b);
-    if (left.byteLength !== right.byteLength) return false;
-
-    for (let i = 0; i < left.byteLength; i++) {
-        if (left[i] !== right[i]) return false;
-    }
-    return true;
 }

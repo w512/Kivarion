@@ -76,6 +76,20 @@ async function mountPage() {
             'DatabaseSettingsModal',
             ['show', 'dbName', 'keyFilePath', 'busy', 'error'],
         ),
+        '../components/IconPickerModal.vue': captureStub('IconPickerModal', [
+            'show',
+            'targetName',
+            'customIcons',
+            'selectedIconId',
+            'selectedCustomIconId',
+            'canDownloadFavicon',
+        ]),
+        // The real one registers a module-level `kivarion:before-lock` listener
+        // against whatever `window` existed when it was first imported, which
+        // would leak into `useEntryIcons.test.js` through the shared registry.
+        '../composables/useEntryIcons.js': {
+            useEntryIcons: () => ({ downloadIcon: async () => false }),
+        },
     };
 
     const component = await loadVueComponent(
@@ -180,6 +194,23 @@ describe('DatabasePage', () => {
         expect(confirm.props.message).toContain('Recycle Bin');
     });
 
+    test('opens one icon picker for both the tree and the detail column', async () => {
+        await mountPage();
+
+        last('GroupTree').attrs.onChangeIcon('child');
+        await nextTick();
+        expect(last('IconPickerModal').props.show).toBe(true);
+        expect(last('IconPickerModal').props.targetName).toBe('Child');
+        // A group has no URL to derive a favicon domain from.
+        expect(last('IconPickerModal').props.canDownloadFavicon).toBe(false);
+
+        last('EntryList').attrs.onSelect('entry-child');
+        await nextTick();
+        last('EntryDetail').attrs.onChangeIcon();
+        await nextTick();
+        expect(last('IconPickerModal').props.targetName).toBe('Child Entry');
+    });
+
     test('a forced lock closes every dialog and drops the selection', async () => {
         await mountPage();
 
@@ -189,7 +220,9 @@ describe('DatabasePage', () => {
         await nextTick();
         last('EntryDetail').attrs.onDelete();
         last('GroupTree').attrs.onRenameGroup('child');
+        last('GroupTree').attrs.onChangeIcon('child');
         await nextTick();
+        expect(last('IconPickerModal').props.show).toBe(true);
         expect(confirmModalTitled('entry').props.show).toBe(true);
         expect(last('InputModal').props.show).toBe(true);
 
@@ -201,6 +234,7 @@ describe('DatabasePage', () => {
         expect(confirmModalTitled('entry').props.show).toBe(false);
         expect(last('InputModal').props.show).toBe(false);
         expect(last('DatabaseSettingsModal').props.show).toBe(false);
+        expect(last('IconPickerModal').props.show).toBe(false);
         expect(last('EntryList').props.selectedEntryUuid).toBe(null);
     });
 });

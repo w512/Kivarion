@@ -275,9 +275,9 @@ onUnmounted(() => {
 
 <style scoped>
 .attachments-section {
-    margin-top: 1.5rem;
+    margin-top: 0;
     border-top: 1px solid var(--border-color);
-    padding-top: 1rem;
+    padding-top: 0.75rem;
 }
 
 .section-header {
@@ -285,7 +285,7 @@ onUnmounted(() => {
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.6rem;
 }
 
 .section-header h3 {
@@ -347,7 +347,7 @@ onUnmounted(() => {
 
 .no-attachments {
     text-align: center;
-    padding: 1rem;
+    padding: 0.75rem;
     color: var(--text-secondary);
     font-size: 0.85rem;
     background: var(--badge-bg);
@@ -357,7 +357,7 @@ onUnmounted(() => {
 .attachments-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 0.75rem;
+    gap: 0.5rem;
 }
 
 .attachment-card {

@@ -84,6 +84,7 @@
                     @delete-group="requestDeleteGroup"
                     @restore-group="restoreGroup"
                     @empty-recycle-bin="requestEmptyRecycleBin"
+                    @change-icon="openGroupIconPicker"
                     @move-group="moveGroup"
                     @move-entry="moveEntry"
                 />
@@ -122,6 +123,7 @@
                     @updated="onEntryUpdated"
                     @delete="requestDelete(selectedEntry)"
                     @close="requestCloseEntryDetail"
+                    @change-icon="openEntryIconPicker(selectedEntry)"
                 />
             </aside>
         </div>
@@ -293,6 +295,24 @@
             @clear-error="settingsError = ''"
             @cancel="closeDatabaseSettings"
         />
+
+        <!-- Icon Picker — one dialog for both groups and entries -->
+        <IconPickerModal
+            :show="showIconPicker"
+            :target-name="iconTargetName"
+            :custom-icons="pickerCustomIcons"
+            :selected-icon-id="selectedIconId"
+            :selected-custom-icon-id="selectedCustomIconId"
+            :can-download-favicon="canDownloadFavicon"
+            :busy="iconPickerBusy"
+            :error="iconPickerError"
+            @select-standard="chooseStandardIcon"
+            @select-custom="chooseCustomIcon"
+            @pick-file="pickIconFile"
+            @download-favicon="downloadFavicon"
+            @use-default="useDefaultIcon"
+            @cancel="closeIconPicker"
+        />
     </div>
 </template>
 
@@ -313,6 +333,7 @@ import DatabaseHeader from '../components/DatabaseHeader.vue';
 import ConfirmModal from '../components/ConfirmModal.vue';
 import InputModal from '../components/InputModal.vue';
 import DatabaseSettingsModal from '../components/DatabaseSettingsModal.vue';
+import IconPickerModal from '../components/IconPickerModal.vue';
 
 // Composables
 import { useResizable } from '../composables/useResizable.js';
@@ -324,6 +345,8 @@ import { useGroupActions } from '../composables/useGroupActions.js';
 import { useEntryActions } from '../composables/useEntryActions.js';
 import { useDatabaseSettings } from '../composables/useDatabaseSettings.js';
 import { useDatabaseTeardown } from '../composables/useDatabaseTeardown.js';
+import { useEntryIcons } from '../composables/useEntryIcons.js';
+import { useIconPicker } from '../composables/useIconPicker.js';
 
 const router = useRouter();
 const store = useStore();
@@ -407,6 +430,34 @@ const {
     onEntryUpdated,
 } = useEntryActions(store, { databaseView, selection, actions });
 
+// `useEntryIcons` reports a stored icon the way a child component would, so the
+// page's own save handler is what its `emit('updated')` lands on.
+const { downloadIcon } = useEntryIcons(() => onEntryUpdated());
+
+const {
+    showIconPicker,
+    iconTargetName,
+    pickerCustomIcons,
+    selectedIconId,
+    selectedCustomIconId,
+    canDownloadFavicon,
+    iconPickerError,
+    iconPickerBusy,
+    openGroupIconPicker,
+    openEntryIconPicker,
+    chooseStandardIcon,
+    chooseCustomIcon,
+    useDefaultIcon,
+    pickIconFile,
+    downloadFavicon,
+    closeIconPicker,
+} = useIconPicker(store, {
+    databaseView,
+    actions,
+    iconDataUrls: customIconDataUrls,
+    downloadIcon,
+});
+
 const {
     showSettingsModal,
     settingsBusy,
@@ -474,6 +525,7 @@ function prepareForForcedLock() {
     cancelGroupAction();
     cancelDelete();
     resetDatabaseSettings();
+    closeIconPicker();
     customIconDataUrls.clear();
 }
 

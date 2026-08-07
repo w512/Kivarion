@@ -12,6 +12,7 @@ import {
     passwordStrengthLabel,
     splitPasswordRuns,
     isUnsafeAttachmentPreview,
+    detectImageMimeType,
     isEmailFieldName,
     isStandardFieldName,
     normalizeHttpUrl,
@@ -213,6 +214,60 @@ describe('isUnsafeAttachmentPreview', () => {
         expect(isUnsafeAttachmentPreview('a.js')).toBe(true);
         expect(isUnsafeAttachmentPreview('a.css')).toBe(true);
         expect(isUnsafeAttachmentPreview('a.png')).toBe(false);
+    });
+});
+
+describe('detectImageMimeType', () => {
+    const bytes = (...values) => new Uint8Array(values);
+    const text = (value) => new TextEncoder().encode(value);
+
+    test('recognizes the raster formats by magic number', () => {
+        expect(detectImageMimeType(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d))).toBe(
+            'image/png',
+        );
+        expect(detectImageMimeType(bytes(0xff, 0xd8, 0xff, 0xe0))).toBe(
+            'image/jpeg',
+        );
+        expect(detectImageMimeType(text('GIF89a'))).toBe('image/gif');
+        expect(detectImageMimeType(text('RIFF....WEBPVP8 '))).toBe(
+            'image/webp',
+        );
+        expect(detectImageMimeType(text('BM...'))).toBe('image/bmp');
+        expect(detectImageMimeType(bytes(0x00, 0x00, 0x01, 0x00, 0x01))).toBe(
+            'image/x-icon',
+        );
+    });
+
+    test('recognizes SVG behind a declaration, comment or BOM', () => {
+        expect(detectImageMimeType(text('<svg width="24"></svg>'))).toBe(
+            'image/svg+xml',
+        );
+        // What a database whose icons came from an SVG set actually stores.
+        expect(
+            detectImageMimeType(
+                text(
+                    '<?xml version="1.0" encoding="utf-8"?><!-- Generator -->\r\n<svg viewBox="0 0 24 24"/>',
+                ),
+            ),
+        ).toBe('image/svg+xml');
+        expect(detectImageMimeType(text('﻿\n  <svg/>'))).toBe('image/svg+xml');
+    });
+
+    test('falls back to PNG, which is what KeePass writes', () => {
+        expect(detectImageMimeType(bytes(1, 2, 3))).toBe('image/png');
+        expect(detectImageMimeType(new Uint8Array())).toBe('image/png');
+        expect(detectImageMimeType(null)).toBe('image/png');
+        // An ArrayBuffer, which is how the icon comes out of kdbxweb.
+        expect(detectImageMimeType(bytes(0x89, 0x50, 0x4e, 0x47).buffer)).toBe(
+            'image/png',
+        );
+        // Not markup, and markup that is not an SVG.
+        expect(detectImageMimeType(text('this mentions <svg> in prose'))).toBe(
+            'image/png',
+        );
+        expect(detectImageMimeType(text('<html><body/></html>'))).toBe(
+            'image/png',
+        );
     });
 });
 

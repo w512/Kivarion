@@ -1,5 +1,12 @@
 import * as kdbxweb from 'kdbxweb';
-import { getField, isProtectedValue, STANDARD_FIELDS } from './utils.js';
+import { getIconId } from './customIcons.js';
+import { DEFAULT_ENTRY_ICON, DEFAULT_GROUP_ICON } from './standardIcons.js';
+import {
+    detectImageMimeType,
+    getField,
+    isProtectedValue,
+    STANDARD_FIELDS,
+} from './utils.js';
 
 export const ALL_ENTRIES_UUID = 'all';
 
@@ -190,25 +197,41 @@ function toEntryListItem(entry, db, iconDataUrls) {
         title: getField(entry, 'Title') || 'No title',
         createdAt: entry?.times?.creationTime || new Date(0),
         modifiedAt: entry?.times?.lastModTime || new Date(0),
-        iconSrc: getEntryIconSrc(entry, db, iconDataUrls),
+        iconSrc: getCustomIconSrc(entry, db, iconDataUrls),
+        iconId: entry?.icon ?? DEFAULT_ENTRY_ICON,
     };
 }
 
-function getEntryIconSrc(entry, db, iconDataUrls) {
-    if (!entry?.customIcon || !db?.meta?.customIcons) return null;
-
-    const iconId = entry.customIcon.id || entry.customIcon;
+/**
+ * The data URL of a custom icon by its uuid, or `null`. Cached by that uuid, so
+ * the same icon used by a group, ten entries and the picker's own grid is
+ * encoded once — building these is the expensive part of a list row.
+ */
+export function customIconDataUrl(db, iconId, iconDataUrls) {
+    if (!iconId || !db?.meta?.customIcons) return null;
     if (iconDataUrls?.has(iconId)) return iconDataUrls.get(iconId);
 
     const customIcon = db.meta.customIcons.get(iconId);
     if (!customIcon?.data) return null;
 
-    const b64 = kdbxweb.ByteUtils.bytesToBase64(
-        new Uint8Array(customIcon.data),
-    );
-    const dataUrl = `data:image/png;base64,${b64}`;
+    // The type is not recorded in the file, so it is sniffed from the bytes:
+    // KDBX does not require a PNG, and an SVG icon labelled `image/png` renders
+    // as nothing. Rendering it through `<img>` (never inline) is what keeps an
+    // SVG inert — no scripts, no external references.
+    const bytes = new Uint8Array(customIcon.data);
+    const b64 = kdbxweb.ByteUtils.bytesToBase64(bytes);
+    const dataUrl = `data:${detectImageMimeType(bytes)};base64,${b64}`;
     iconDataUrls?.set(iconId, dataUrl);
     return dataUrl;
+}
+
+/**
+ * The data URL of an object's custom icon, or `null`. Groups and entries carry
+ * the same `CustomIconUUID` field pointing into the file-wide `Meta/CustomIcons`
+ * list, so both go through here.
+ */
+function getCustomIconSrc(object, db, iconDataUrls) {
+    return customIconDataUrl(db, getIconId(object?.customIcon), iconDataUrls);
 }
 
 function entrySearchText(entry) {
@@ -285,6 +308,8 @@ export function buildDatabaseView(db, iconDataUrls = new Map()) {
         return {
             uuid: getObjectUuid(group),
             name: group?.name || '',
+            iconSrc: getCustomIconSrc(group, db, iconDataUrls),
+            iconId: group?.icon ?? DEFAULT_GROUP_ICON,
             entryCount: ownEntries.length,
             recursiveEntryCount,
             isRecycleBin,
