@@ -12,9 +12,10 @@
                     v-if="field.id === 'Password'"
                     class="field-value password-value"
                 >
-                    {{
-                        showPassword ? field.value : maskedPassword(field.value)
-                    }}
+                    <ColoredPassword v-if="showPassword" :value="field.value" />
+                    <template v-else>{{
+                        maskedPassword(field.value)
+                    }}</template>
                 </div>
                 <div v-else-if="field.id === 'URL'" class="field-value">
                     <a
@@ -130,6 +131,7 @@ import { ref, computed, watch } from 'vue';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getField, normalizeHttpUrl } from '../../utils';
 import { useClipboard } from '../../composables/useClipboard';
+import ColoredPassword from './ColoredPassword.vue';
 
 const props = defineProps({
     entry: { type: Object, required: true },

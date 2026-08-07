@@ -13,12 +13,18 @@
                     <label>{{ field.key }}</label>
                     <div class="field-value-row">
                         <div class="field-value">
-                            {{
-                                field.protected &&
-                                !isProtectedFieldVisible(field.key)
+                            <ColoredPassword
+                                v-if="
+                                    field.protected &&
+                                    isProtectedFieldVisible(field.key)
+                                "
+                                :value="field.value"
+                            />
+                            <template v-else>{{
+                                field.protected
                                     ? maskedValue(field.value)
                                     : field.value
-                            }}
+                            }}</template>
                         </div>
                         <div class="field-actions">
                             <button
@@ -224,6 +230,7 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useClipboard } from '../../composables/useClipboard';
+import ColoredPassword from './ColoredPassword.vue';
 
 const props = defineProps({
     isEditing: { type: Boolean, default: false },

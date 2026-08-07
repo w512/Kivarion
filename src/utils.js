@@ -214,6 +214,39 @@ export function estimatePasswordEntropy(options = {}) {
     return length * Math.log2(charsetSize);
 }
 
+// A letter keeps its combining marks: splitting `é` written as `e` + U+0301 into
+// two runs would colour the accent as a symbol and hang it off a differently
+// coloured letter.
+const PASSWORD_LETTER = /[\p{L}\p{M}]/u;
+const PASSWORD_DIGIT = /\p{Nd}/u;
+
+/**
+ * Split a password into consecutive runs of one character class each, so it can
+ * be rendered with a colour per class (`ColoredPassword.vue`).
+ *
+ * Iterated by code point rather than by UTF-16 unit: half a surrogate pair in
+ * its own `<span>` renders as a replacement character, which would corrupt the
+ * password on screen for anyone whose password contains one.
+ *
+ * @param {string} password
+ * @returns {{ kind: 'letter'|'digit'|'symbol', text: string }[]} concatenating
+ *   `text` in order reproduces the input exactly.
+ */
+export function splitPasswordRuns(password) {
+    const runs = [];
+    for (const char of String(password ?? '')) {
+        const kind = PASSWORD_DIGIT.test(char)
+            ? 'digit'
+            : PASSWORD_LETTER.test(char)
+              ? 'letter'
+              : 'symbol';
+        const last = runs.at(-1);
+        if (last?.kind === kind) last.text += char;
+        else runs.push({ kind, text: char });
+    }
+    return runs;
+}
+
 export function passwordStrengthLabel(entropyBits) {
     if (entropyBits >= 100) return 'Excellent';
     if (entropyBits >= 80) return 'Strong';

@@ -15,7 +15,9 @@
             </div>
 
             <div class="preview-area">
-                <div class="generated-password">{{ currentPassword }}</div>
+                <div class="generated-password">
+                    <ColoredPassword :value="currentPassword" />
+                </div>
                 <button
                     class="refresh-btn"
                     title="Regenerate"
@@ -129,6 +131,7 @@
 <script setup>
 import { computed, ref, reactive, watch } from 'vue';
 import BaseModal from '../BaseModal.vue';
+import ColoredPassword from './ColoredPassword.vue';
 import {
     estimatePasswordEntropy,
     generatePassword,
@@ -287,7 +290,6 @@ watch(
     flex: 1;
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 1.1rem;
-    color: var(--accent-color);
     word-break: break-all;
     user-select: all;
     min-height: 1.4em;

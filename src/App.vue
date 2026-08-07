@@ -121,6 +121,13 @@ function quitApp() {
     --error-color: #ef4444;
     --input-bg: #12131a;
     --badge-bg: #1f2028;
+    /* A revealed password is drawn one colour per character class
+       (`ColoredPassword.vue`). Letters follow the surrounding text so an
+       ordinary password still looks ordinary; digits are green and symbols red,
+       the two that have to be told apart at a glance. */
+    --password-letter: var(--text-primary);
+    --password-digit: #22c55e;
+    --password-symbol: #ff5a5a;
 }
 
 :root[data-theme='light'] {
@@ -134,6 +141,14 @@ function quitApp() {
     --error-color: #ef4444;
     --input-bg: #f1f5f9;
     --badge-bg: #f1f5f9;
+    /* Red survives the white background at full brightness (#ff0000 is 4.0:1);
+       green does not — pure #00ff00 lands at 1.4:1, which is unreadable rather
+       than merely bright. This green is about as vivid as one can get here and
+       still be read: 3.2:1 on the card, 2.9:1 on the generator's preview strip.
+       Anything brighter stops being legible, and misreading one character of a
+       password is worth avoiding. */
+    --password-digit: #0ea54a;
+    --password-symbol: #ff0000;
 }
 
 * {

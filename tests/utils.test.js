@@ -10,6 +10,7 @@ import {
     generatePassword,
     isProtectedValue,
     passwordStrengthLabel,
+    splitPasswordRuns,
     isUnsafeAttachmentPreview,
     isEmailFieldName,
     isStandardFieldName,
@@ -376,5 +377,61 @@ describe('generatePassword', () => {
         expect(passwordStrengthLabel(65)).toBe('Good');
         expect(passwordStrengthLabel(85)).toBe('Strong');
         expect(passwordStrengthLabel(105)).toBe('Excellent');
+    });
+});
+
+describe('password colouring', () => {
+    test('groups consecutive characters of one class', () => {
+        expect(splitPasswordRuns('Ab12!!cd')).toEqual([
+            { kind: 'letter', text: 'Ab' },
+            { kind: 'digit', text: '12' },
+            { kind: 'symbol', text: '!!' },
+            { kind: 'letter', text: 'cd' },
+        ]);
+    });
+
+    test('reproduces the password exactly', () => {
+        // Spaces, an accent written as a combining mark, a non-Latin letter, an
+        // Eastern Arabic digit and an astral symbol — every one of them has to
+        // come back out of the runs unchanged.
+        for (const password of [
+            '',
+            'plain',
+            'a b',
+            'e\u0301clair',
+            'Пароль42',
+            '\u0664\u0665',
+            'x\u{1F511}y',
+            '   ',
+        ]) {
+            expect(
+                splitPasswordRuns(password)
+                    .map((run) => run.text)
+                    .join(''),
+            ).toBe(password);
+        }
+    });
+
+    test('classifies by character class, not by ASCII range', () => {
+        const kinds = (password) =>
+            splitPasswordRuns(password).map((run) => run.kind);
+
+        // Eastern Arabic numerals are digits; Cyrillic letters are letters.
+        expect(kinds('\u0664')).toEqual(['digit']);
+        expect(kinds('Ж')).toEqual(['letter']);
+        // A combining mark stays with its base letter: on its own it would be
+        // painted as a symbol and hung off a differently coloured letter.
+        expect(kinds('e\u0301')).toEqual(['letter']);
+        // Space is neither letter nor digit, so it shares the symbol colour.
+        expect(kinds(' ')).toEqual(['symbol']);
+        // An emoji is one run, not two halves of a surrogate pair.
+        expect(splitPasswordRuns('\u{1F511}')).toEqual([
+            { kind: 'symbol', text: '\u{1F511}' },
+        ]);
+    });
+
+    test('treats a missing password as empty', () => {
+        expect(splitPasswordRuns(null)).toEqual([]);
+        expect(splitPasswordRuns(undefined)).toEqual([]);
     });
 });
