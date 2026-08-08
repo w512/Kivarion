@@ -55,10 +55,11 @@ describe('ColoredPassword', () => {
             'src/components/entry-detail/ColoredPassword.vue',
         );
 
-        const { root } = mount(ColoredPassword, () => ({ value: 'Ab12!!cd' }));
+        const { root } = mount(ColoredPassword, () => ({ value: 'ABc12!!cd' }));
 
         expect(runs(root)).toEqual([
-            { kind: 'letter', text: 'Ab' },
+            { kind: 'upper', text: 'AB' },
+            { kind: 'letter', text: 'c' },
             { kind: 'digit', text: '12' },
             { kind: 'symbol', text: '!!' },
             { kind: 'letter', text: 'cd' },

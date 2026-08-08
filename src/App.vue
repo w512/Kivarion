@@ -144,10 +144,16 @@ function quitApp() {
     --note-border: #66551c;
     --note-label: #e0c45c;
     /* A revealed password is drawn one colour per character class
-       (`ColoredPassword.vue`). Letters follow the surrounding text so an
-       ordinary password still looks ordinary; digits are green and symbols red,
-       the two that have to be told apart at a glance. */
+       (`ColoredPassword.vue`). Lowercase letters follow the surrounding text so
+       an ordinary password still looks ordinary; uppercase is blue (l/L is the
+       distinction a monospace glyph alone does not settle), digits are green
+       and symbols red — the classes that have to be told apart at a glance. */
     --password-letter: var(--text-primary);
+    /* Amber, and deliberately not a blue or cyan: sky tones sit close enough
+       to the digit green to be mistaken for it at glance distance, which
+       defeats the class. It also has to keep its distance from the symbol
+       red — this one is yellow enough to stay apart. */
+    --password-upper: #fde047;
     --password-digit: #22c55e;
     --password-symbol: #ff5a5a;
 }
@@ -171,7 +177,12 @@ function quitApp() {
        than merely bright. This green is about as vivid as one can get here and
        still be read: 3.2:1 on the card, 2.9:1 on the generator's preview strip.
        Anything brighter stops being legible, and misreading one character of a
-       password is worth avoiding. */
+       password is worth avoiding. Yellow suffers on white worse than any of
+       them — the bright one is unreadable — so this is as yellow as the card
+       allows (~3.5:1, carried by the bold weight `ColoredPassword` sets)
+       while staying clearly warmer than the symbol red and nowhere near the
+       digit green. */
+    --password-upper: #ca8a04;
     --password-digit: #0ea54a;
     --password-symbol: #ff0000;
 }

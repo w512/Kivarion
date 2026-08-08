@@ -490,8 +490,9 @@ describe('generatePassword', () => {
 
 describe('password colouring', () => {
     test('groups consecutive characters of one class', () => {
-        expect(splitPasswordRuns('Ab12!!cd')).toEqual([
-            { kind: 'letter', text: 'Ab' },
+        expect(splitPasswordRuns('ABc12!!cd')).toEqual([
+            { kind: 'upper', text: 'AB' },
+            { kind: 'letter', text: 'c' },
             { kind: 'digit', text: '12' },
             { kind: 'symbol', text: '!!' },
             { kind: 'letter', text: 'cd' },
@@ -524,12 +525,16 @@ describe('password colouring', () => {
         const kinds = (password) =>
             splitPasswordRuns(password).map((run) => run.kind);
 
-        // Eastern Arabic numerals are digits; Cyrillic letters are letters.
+        // Eastern Arabic numerals are digits; Cyrillic letters are letters,
+        // and their case is told apart like Latin case.
         expect(kinds('\u0664')).toEqual(['digit']);
-        expect(kinds('Ж')).toEqual(['letter']);
-        // A combining mark stays with its base letter: on its own it would be
-        // painted as a symbol and hung off a differently coloured letter.
+        expect(kinds('ж')).toEqual(['letter']);
+        expect(kinds('Ж')).toEqual(['upper']);
+        // A combining mark stays with its base letter — whatever the case of
+        // that letter: on its own it would be painted as a symbol and hung off
+        // a differently coloured letter.
         expect(kinds('e\u0301')).toEqual(['letter']);
+        expect(kinds('E\u0301')).toEqual(['upper']);
         // Space is neither letter nor digit, so it shares the symbol colour.
         expect(kinds(' ')).toEqual(['symbol']);
         // An emoji is one run, not two halves of a surrogate pair.

@@ -268,7 +268,12 @@ export function estimatePasswordEntropy(options = {}) {
 // A letter keeps its combining marks: splitting `é` written as `e` + U+0301 into
 // two runs would colour the accent as a symbol and hang it off a differently
 // coloured letter.
-const PASSWORD_LETTER = /[\p{L}\p{M}]/u;
+const PASSWORD_LETTER = /\p{L}/u;
+// Uppercase and titlecase — everything a shifted key produces. Case is the one
+// distinction inside "letter" that is genuinely hard to see in a random string
+// (l/L in most monospace fonts), which is why it gets its own class.
+const PASSWORD_UPPER = /[\p{Lu}\p{Lt}]/u;
+const PASSWORD_MARK = /\p{M}/u;
 const PASSWORD_DIGIT = /\p{Nd}/u;
 
 /**
@@ -280,18 +285,31 @@ const PASSWORD_DIGIT = /\p{Nd}/u;
  * password on screen for anyone whose password contains one.
  *
  * @param {string} password
- * @returns {{ kind: 'letter'|'digit'|'symbol', text: string }[]} concatenating
- *   `text` in order reproduces the input exactly.
+ * @returns {{ kind: 'upper'|'letter'|'digit'|'symbol', text: string }[]}
+ *   concatenating `text` in order reproduces the input exactly.
  */
 export function splitPasswordRuns(password) {
     const runs = [];
     for (const char of String(password ?? '')) {
-        const kind = PASSWORD_DIGIT.test(char)
-            ? 'digit'
-            : PASSWORD_LETTER.test(char)
-              ? 'letter'
-              : 'symbol';
         const last = runs.at(-1);
+        let kind;
+        if (PASSWORD_MARK.test(char)) {
+            // A combining mark stays with the letter before it whatever its
+            // case — `É` written as `E` + U+0301 must not hang its accent off
+            // a differently coloured run.
+            kind =
+                last?.kind === 'upper' || last?.kind === 'letter'
+                    ? last.kind
+                    : 'letter';
+        } else if (PASSWORD_DIGIT.test(char)) {
+            kind = 'digit';
+        } else if (PASSWORD_UPPER.test(char)) {
+            kind = 'upper';
+        } else if (PASSWORD_LETTER.test(char)) {
+            kind = 'letter';
+        } else {
+            kind = 'symbol';
+        }
         if (last?.kind === kind) last.text += char;
         else runs.push({ kind, text: char });
     }

@@ -31,10 +31,18 @@ const runs = computed(() => splitPasswordRuns(props.value));
 .colored-password {
     /* Same colours whatever the surrounding text colour is. */
     font-variant-ligatures: none;
+    /* Bold, everywhere the component is used: a revealed password is there to
+       be read character by character, and the heavier stroke keeps the
+       class colours legible at small sizes. */
+    font-weight: 700;
 }
 
 .run-letter {
     color: var(--password-letter);
+}
+
+.run-upper {
+    color: var(--password-upper);
 }
 
 .run-digit {
