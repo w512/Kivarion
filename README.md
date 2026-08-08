@@ -41,6 +41,7 @@ Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. macOS builds r
 | **Routing**  | [Vue Router](https://router.vuejs.org/)                                                     |
 | **KDBX**     | [kdbxweb](https://github.com/keeweb/kdbxweb)                                                |
 | **Crypto**   | [RustCrypto argon2](https://github.com/RustCrypto/password-hashes) (native, in the backend) |
+| **Icons**    | [Lucide](https://lucide.dev/)                                                               |
 | **Styling**  | Vanilla CSS (Variables & Glassmorphism)                                                     |
 
 ## Development
@@ -94,22 +95,39 @@ Kivarion is licensed under the GNU General Public License v3.0 only. See [LICENS
 
 ```
 src/
-├── main.js              # Vue and crypto engine initialization
-├── App.vue              # Root component and global style tokens
-├── store.js             # Pinia store (database, credentials, theme)
-├── pages/               # Main screens: HomePage, DatabasePage, SettingsPage
-├── components/          # Modular UI (modals, header, EntryDetail, GroupTree, etc.)
-├── composables/         # Shared logic (auth, actions, resizing, icons, attachments)
-├── crypto-init.js       # points kdbxweb's Argon2 at the Rust backend
-├── dbHelper.js          # Low-level filesystem operations
-└── utils.js             # Formatting and password generation utilities
+├── main.js                # Vue and crypto engine initialization
+├── App.vue                # Root component, global style tokens, teardown guards
+├── router.js              # Hash-history routes
+├── store.js               # Pinia store (database, credentials, settings)
+├── pages/                 # Screens: HomePage, DatabasePage, SettingsPage, LicensesPage
+├── components/            # UI parts and modals, plus entry-detail/ and entry-list/
+├── composables/           # Shared logic (auth, save actions, selection, icons, attachments)
+├── crypto-init.js         # Points kdbxweb's Argon2 at the Rust backend
+├── kdbxView.js            # View model and lookup index, rebuilt once per change
+├── dbHelper.js            # Serializes the database and calls the backend save command
+├── ipc.js                 # Raw-byte IPC helpers for the bulk-payload commands
+├── customIcons.js         # The file-wide custom-icon list (Meta/CustomIcons)
+├── standardIcons.js       # KDBX icon ids mapped to Lucide glyphs
+├── databasePreferences.js # localStorage keys owned by one database file
+├── modalState.js          # App-wide count of open dialogs
+├── teardownGuard.js       # Which page answers a window close or quit
+├── licenses.js            # Verbatim notices rendered by LicensesPage
+└── utils.js               # Formatting and password generation utilities
 
 src-tauri/
-├── capabilities/        # Plugin permission configuration (http, dialog)
+├── capabilities/          # Plugin permissions: core, opener, http scoped to icon.horse
+│                          # (deliberately no fs and no dialog — see Security)
 ├── src/
-│   ├── main.rs          # Rust entry point
-│   └── lib.rs           # Plugin registration and custom commands
-└── tauri.conf.json      # Tauri build configuration
+│   ├── main.rs            # Rust entry point
+│   ├── lib.rs             # Command registration, navigation guard, IPC helpers
+│   ├── files.rs           # Filesystem commands, save lock, backup rotation
+│   ├── access.rs          # Path allowlist behind every path-taking command
+│   ├── crypto.rs          # Argon2 key derivation
+│   ├── biometrics.rs      # Touch ID and Keychain storage (macOS)
+│   ├── quicklook.rs       # Quick Look attachment preview (macOS)
+│   ├── menu.rs            # macOS application menu
+│   └── test_support.rs    # Fixtures shared by the module tests
+└── tauri.conf.json        # Tauri build configuration
 ```
 
 ## Security
