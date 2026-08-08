@@ -1,5 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
+    basename,
     formatDate,
     formatSize,
     getField,
@@ -13,6 +14,7 @@ import {
     splitPasswordRuns,
     isUnsafeAttachmentPreview,
     detectImageMimeType,
+    sniffImageMimeType,
     isEmailFieldName,
     isStandardFieldName,
     normalizeHttpUrl,
@@ -42,6 +44,20 @@ describe('formatSize', () => {
     });
     test('megabytes', () => {
         expect(formatSize(1048576)).toBe('1 MB');
+    });
+});
+
+describe('basename', () => {
+    test('takes the last segment of a unix or windows path', () => {
+        expect(basename('/Users/test/vault.kdbx')).toBe('vault.kdbx');
+        // The backslash split is the reason this exists at all.
+        expect(basename('C:\\Users\\test\\vault.kdbx')).toBe('vault.kdbx');
+        expect(basename('vault.kdbx')).toBe('vault.kdbx');
+    });
+    test('returns an empty string for empty input', () => {
+        expect(basename('')).toBe('');
+        expect(basename(null)).toBe('');
+        expect(basename(undefined)).toBe('');
     });
 });
 
@@ -266,6 +282,43 @@ describe('detectImageMimeType', () => {
             'image/png',
         );
         expect(detectImageMimeType(text('<html><body/></html>'))).toBe(
+            'image/png',
+        );
+    });
+});
+
+describe('sniffImageMimeType', () => {
+    const bytes = (...values) => new Uint8Array(values);
+    const text = (value) => new TextEncoder().encode(value);
+
+    // The null is the validation gate: it is what makes the icon picker and
+    // the favicon download refuse a file that is not actually an image.
+    test('returns null for bytes that are not a recognizable image', () => {
+        expect(sniffImageMimeType(text('just a text file'))).toBe(null);
+        expect(sniffImageMimeType(new Uint8Array())).toBe(null);
+        expect(sniffImageMimeType(null)).toBe(null);
+        expect(sniffImageMimeType(bytes(1, 2, 3, 4))).toBe(null);
+        // Markup that is not an SVG, and prose that merely mentions one.
+        expect(sniffImageMimeType(text('<html><body/></html>'))).toBe(null);
+        expect(sniffImageMimeType(text('this mentions <svg> in prose'))).toBe(
+            null,
+        );
+        // A RIFF container that is not WEBP — e.g. a .wav renamed to .png.
+        expect(sniffImageMimeType(text('RIFF....WAVEfmt '))).toBe(null);
+    });
+
+    test('agrees with detectImageMimeType on real images', () => {
+        expect(sniffImageMimeType(bytes(0x89, 0x50, 0x4e, 0x47, 0x0d))).toBe(
+            'image/png',
+        );
+        expect(sniffImageMimeType(bytes(0xff, 0xd8, 0xff, 0xe0))).toBe(
+            'image/jpeg',
+        );
+        expect(sniffImageMimeType(text('<svg width="24"/>'))).toBe(
+            'image/svg+xml',
+        );
+        // An ArrayBuffer, which is how a picked file's bytes arrive.
+        expect(sniffImageMimeType(bytes(0x89, 0x50, 0x4e, 0x47).buffer)).toBe(
             'image/png',
         );
     });

@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted } from 'vue';
+import { onBeforeUnmount, onMounted, unref } from 'vue';
 
 /**
  * Invoke `handler` when a click happens outside the given element.
@@ -15,7 +15,10 @@ import { onBeforeUnmount, onMounted } from 'vue';
  */
 export function useOutsideClick(elementRef, handler) {
     function onDocumentClick(event) {
-        const el = elementRef?.value ?? elementRef;
+        // `unref`, not `?.value ?? elementRef`: the latter handed back the ref
+        // object itself while its value was still null (boundary not mounted
+        // yet, or behind a v-if), and the `contains` call below threw.
+        const el = unref(elementRef);
         if (!el) return;
         const target = event.target;
         if (el === target || el.contains(target)) return;

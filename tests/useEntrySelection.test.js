@@ -233,6 +233,30 @@ describe('entry actions', () => {
             { object: db.recycleEntry, target: db.childGroup },
         ]);
     });
+
+    test('restoring an entry that is not in the bin does nothing', () => {
+        const { entries } = mountPage();
+
+        entries.restoreEntry('entry-child');
+        entries.restoreEntry('entry-that-does-not-exist');
+
+        expect(db.moved).toEqual([]);
+        expect(saves).toEqual([]);
+    });
+
+    test('restoring the open entry closes the detail column', () => {
+        const { selection, entries } = mountPage();
+        selection.selectedEntryUuid.value = 'entry-trash';
+
+        // No previousParentGroup recorded (pre-4.1 file): root is the target.
+        entries.restoreEntry('entry-trash');
+
+        expect(db.moved).toEqual([
+            { object: db.recycleEntry, target: db.root },
+        ]);
+        expect(selection.selectedEntryUuid.value).toBe(null);
+        expect(saves).toEqual([{ debounce: true }]);
+    });
 });
 
 describe('group actions', () => {
@@ -282,6 +306,111 @@ describe('group actions', () => {
         expect(db.removed).toEqual([db.childGroup]);
         expect(store.selectedGroupUuid).toBe('root');
         expect(selection.selectedEntryUuid.value).toBe(null);
+    });
+
+    test('deleting a group already in the bin is permanent', () => {
+        const trashGroup = {
+            uuid: uuid('trash-group'),
+            name: 'Old',
+            entries: [],
+            groups: [],
+            parentGroup: db.recycleGroup,
+        };
+        db.recycleGroup.groups.push(trashGroup);
+        const { groups } = mountPage();
+
+        groups.requestDeleteGroup('trash-group');
+        expect(groups.groupDeleteIsPermanent.value).toBe(true);
+        expect(groups.groupDeleteMessage.value).toContain(
+            'permanently deleted',
+        );
+
+        groups.confirmDeleteGroup();
+
+        // `move(group, null)` records a tombstone; `remove` would recycle the
+        // group right back into the bin it is being deleted from.
+        expect(db.moved).toEqual([{ object: trashGroup, target: null }]);
+        expect(db.removed).toEqual([]);
+        expect(groups.showDeleteGroupConfirm.value).toBe(false);
+        expect(saves).toEqual([{ debounce: true }]);
+    });
+
+    test('restoring a group sends it back to the group it came from', () => {
+        const trashGroup = {
+            uuid: uuid('trash-group'),
+            name: 'Old',
+            entries: [],
+            groups: [],
+            parentGroup: db.recycleGroup,
+            previousParentGroup: db.childGroup.uuid,
+        };
+        db.recycleGroup.groups.push(trashGroup);
+        const { groups } = mountPage();
+
+        groups.restoreGroup('trash-group');
+
+        expect(db.moved).toEqual([
+            { object: trashGroup, target: db.childGroup },
+        ]);
+        expect(saves).toEqual([{ debounce: true }]);
+    });
+
+    test('restoring falls back to the root when the original parent is gone', () => {
+        const trashGroup = {
+            uuid: uuid('trash-group'),
+            name: 'Old',
+            entries: [],
+            groups: [],
+            parentGroup: db.recycleGroup,
+            previousParentGroup: uuid('group-that-no-longer-exists'),
+        };
+        db.recycleGroup.groups.push(trashGroup);
+        const { groups } = mountPage();
+
+        groups.restoreGroup('trash-group');
+
+        expect(db.moved).toEqual([{ object: trashGroup, target: db.root }]);
+    });
+
+    test('restoring a group that is not in the bin does nothing', () => {
+        const { groups } = mountPage();
+
+        groups.restoreGroup('child');
+        groups.restoreGroup('group-that-does-not-exist');
+
+        expect(db.moved).toEqual([]);
+        expect(saves).toEqual([]);
+    });
+
+    test('a drag reorder moves the group to the resolved index', () => {
+        const { groups } = mountPage();
+
+        // Root's children are [Child, Recycle Bin]; dropping Child after the
+        // bin lands at index 1 because `move` splices Child out first.
+        groups.moveGroup({
+            draggedUuid: 'child',
+            targetUuid: 'recycle',
+            position: 'after',
+        });
+
+        expect(db.moved).toEqual([
+            { object: db.childGroup, target: db.root, atIndex: 1 },
+        ]);
+        expect(saves).toEqual([{ debounce: true }]);
+    });
+
+    test('a drag the view model rejects moves nothing', () => {
+        const { groups } = mountPage();
+
+        // The root cannot be moved; `resolveGroupMove` returns null.
+        groups.moveGroup({
+            draggedUuid: 'root',
+            targetUuid: 'child',
+            position: 'inside',
+        });
+
+        expect(db.moved).toEqual([]);
+        expect(saves).toEqual([]);
     });
 
     test('emptying the bin waits for the draft, then clears both kinds', () => {

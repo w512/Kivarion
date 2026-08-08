@@ -56,7 +56,7 @@ function saveArgs(index = 0) {
 
 const { resetDatabaseActions, useDatabaseActions } =
     await import('../src/composables/useDatabaseActions.js');
-const { buildUpdatedCredentials, saveDatabase } =
+const { buildUpdatedCredentials, loadDatabaseFromDisk, saveDatabase } =
     await import('../src/dbHelper.js');
 
 function makeStore() {
@@ -728,6 +728,44 @@ describe('useDatabaseActions reload from disk', () => {
             );
             expect(actions.saveError.value).not.toContain('InvalidKey');
         });
+    });
+});
+
+describe('loadDatabaseFromDisk with fallback credentials', () => {
+    // The fallback exists for exactly one case — the file is still keyed with
+    // the credentials an unsaved rekey replaced — so only `InvalidKey` may
+    // trigger it. A corrupt file must surface its own error, not a misleading
+    // second `InvalidKey` from retrying garbage with the old credentials.
+    test('a corrupt file rethrows its own error instead of trying the fallback', async () => {
+        readInvokeMock = mock(async () => new Uint8Array([1, 2, 3, 4]));
+        const credentials = new kdbxweb.Credentials(
+            kdbxweb.ProtectedValue.fromString('current'),
+        );
+        const fallback = new kdbxweb.Credentials(
+            kdbxweb.ProtectedValue.fromString('previous'),
+        );
+        await Promise.all([credentials.ready, fallback.ready]);
+
+        const loadSpy = spyOn(kdbxweb.Kdbx, 'load');
+        try {
+            let error;
+            try {
+                await loadDatabaseFromDisk(
+                    '/tmp/x.kdbx',
+                    credentials,
+                    fallback,
+                );
+            } catch (caught) {
+                error = caught;
+            }
+
+            expect(error).toBeDefined();
+            expect(error.code).not.toBe(kdbxweb.Consts.ErrorCodes.InvalidKey);
+            // One attempt: the fallback was never consulted.
+            expect(loadSpy).toHaveBeenCalledTimes(1);
+        } finally {
+            loadSpy.mockRestore();
+        }
     });
 });
 

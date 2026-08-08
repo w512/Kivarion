@@ -71,8 +71,14 @@ export function makeFakeDatabase() {
             customIcons: new Map(),
         },
         getDefaultGroup: () => root,
-        move(object, target) {
-            moved.push({ object, target });
+        move(object, target, atIndex) {
+            // Only record the index when a caller passed one, so the many
+            // assertions written as `{ object, target }` keep matching.
+            moved.push(
+                atIndex === undefined
+                    ? { object, target }
+                    : { object, target, atIndex },
+            );
         },
         remove(object) {
             removed.push(object);
