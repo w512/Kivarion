@@ -121,6 +121,9 @@ function quitApp() {
     --error-color: #ef4444;
     --input-bg: #12131a;
     --badge-bg: #1f2028;
+    --note-bg: #3d3518;
+    --note-border: #66551c;
+    --note-label: #e0c45c;
     /* A revealed password is drawn one colour per character class
        (`ColoredPassword.vue`). Letters follow the surrounding text so an
        ordinary password still looks ordinary; digits are green and symbols red,
@@ -141,6 +144,9 @@ function quitApp() {
     --error-color: #ef4444;
     --input-bg: #f1f5f9;
     --badge-bg: #f1f5f9;
+    --note-bg: #fff7cc;
+    --note-border: #eadb8b;
+    --note-label: #806600;
     /* Red survives the white background at full brightness (#ff0000 is 4.0:1);
        green does not — pure #00ff00 lands at 1.4:1, which is unreadable rather
        than merely bright. This green is about as vivid as one can get here and

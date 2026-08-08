@@ -1,5 +1,5 @@
 <template>
-    <div class="fields-view">
+    <div class="fields-view" :class="{ 'has-custom-fields': hasCustomFields }">
         <div
             v-for="field in standardFields"
             v-show="field.value"
@@ -31,12 +31,7 @@
                         {{ linkError }}
                     </p>
                 </div>
-                <div
-                    v-else
-                    :class="['field-value', { notes: field.id === 'Notes' }]"
-                >
-                    {{ field.value }}
-                </div>
+                <div v-else class="field-value">{{ field.value }}</div>
 
                 <div class="field-actions">
                     <button
@@ -124,6 +119,48 @@
             </div>
         </div>
     </div>
+
+    <div v-if="notes" class="notes-field">
+        <label>Notes</label>
+        <div class="field-value-row">
+            <div class="field-value notes">{{ notes }}</div>
+            <div class="copy-btn-wrapper">
+                <transition name="mini-toast">
+                    <div v-if="activeCopyField === 'Notes'" class="mini-toast">
+                        Copied!
+                    </div>
+                </transition>
+                <button
+                    class="copy-btn"
+                    title="Copy notes"
+                    @click="copy(notes, 'Notes')"
+                >
+                    <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <rect
+                            x="9"
+                            y="9"
+                            width="13"
+                            height="13"
+                            rx="2"
+                            ry="2"
+                        />
+                        <path
+                            d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                        />
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
 </template>
 
 <script setup>
@@ -137,6 +174,7 @@ const props = defineProps({
     entry: { type: Object, required: true },
     // A custom field the parent promoted into this group (see isEmailFieldName).
     emailField: { type: Object, default: null },
+    hasCustomFields: { type: Boolean, default: false },
 });
 
 const showPassword = ref(false);
@@ -151,6 +189,8 @@ watch(
 // No Title row: it repeated the detail column's own heading verbatim, and
 // unlike every other field it was never empty, so it always cost a row. Copying
 // it lives in the heading's "More actions" menu instead (EntryDetail).
+const notes = computed(() => getField(props.entry, 'Notes'));
+
 const standardFields = computed(() => [
     {
         id: 'UserName',
@@ -181,7 +221,6 @@ const standardFields = computed(() => [
         value: getField(props.entry, 'URL'),
         href: normalizeHttpUrl(getField(props.entry, 'URL')),
     },
-    { id: 'Notes', label: 'Notes', value: getField(props.entry, 'Notes') },
 ]);
 
 function maskedPassword(pw) {
@@ -233,28 +272,43 @@ function copy(text, fieldId, secret = false) {
 .fields-view {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    overflow: hidden;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+/* A field reads as one horizontal row: its name is a stable left column, the
+   value takes the available space, and its controls remain on the right. */
+.fields-view.has-custom-fields {
+    border-bottom: 0;
+    border-radius: 10px 10px 0 0;
 }
 
 .field-row {
-    background: var(--badge-bg);
-    border-radius: 8px;
-    padding: 0.4rem 0.6rem;
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 32%) minmax(0, 1fr);
+    align-items: center;
+    min-height: 3rem;
+    padding: 0.45rem 0.75rem;
+}
+
+.field-row + .field-row {
+    border-top: 1px solid var(--border-color);
 }
 
 .field-row label {
-    display: block;
-    font-size: 0.7rem;
-    font-weight: 600;
+    padding-right: 1.25rem;
     color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.15rem;
+    font-size: 0.9rem;
+    font-weight: 400;
+    text-align: right;
 }
 
 .field-value-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
+    min-width: 0;
     gap: 0.5rem;
 }
 
@@ -265,6 +319,30 @@ function copy(text, fieldId, secret = false) {
     flex: 1;
 }
 
+.field-value.notes {
+    white-space: pre-wrap;
+    line-height: 1.5;
+}
+
+.notes-field {
+    order: 2;
+    margin-top: 0.75rem;
+    padding: 0.6rem;
+    background: var(--note-bg);
+    border: 1px solid var(--note-border);
+    border-radius: 8px;
+}
+
+.notes-field label {
+    display: block;
+    margin-bottom: 0.15rem;
+    color: var(--note-label);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
 .field-value a {
     color: var(--accent-color);
     text-decoration: none;
@@ -272,11 +350,6 @@ function copy(text, fieldId, secret = false) {
 
 .field-value a:hover {
     text-decoration: underline;
-}
-
-.field-value.notes {
-    white-space: pre-wrap;
-    line-height: 1.5;
 }
 
 .link-error {

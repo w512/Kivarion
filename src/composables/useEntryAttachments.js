@@ -1,6 +1,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { invokeWithBytes } from '../ipc.js';
+import { pushEntryHistory } from '../entryHistory.js';
 import { getMimeType, isImage, toExactArrayBuffer } from '../utils';
 import { useStore } from '../store';
 import { useClipboard } from './useClipboard';
@@ -98,7 +99,7 @@ export function addEntryAttachment(entry, name, binary) {
     const uniqueName = getUniqueAttachmentName(name, [
         ...entry.binaries.keys(),
     ]);
-    entry.pushHistory?.();
+    pushEntryHistory(entry);
     entry.binaries.set(uniqueName, binary);
     entry.times?.update?.();
     return { ok: true, name: uniqueName };
@@ -119,7 +120,7 @@ export function renameEntryAttachment(entry, oldName, newName) {
     if (normalized === oldName) return { ok: true, changed: false };
 
     const binary = entry.binaries.get(oldName);
-    entry.pushHistory?.();
+    pushEntryHistory(entry);
     entry.binaries.delete(oldName);
     entry.binaries.set(normalized, binary);
     entry.times?.update?.();
@@ -128,7 +129,7 @@ export function renameEntryAttachment(entry, oldName, newName) {
 
 export function deleteEntryAttachment(entry, name) {
     if (!entry?.binaries?.has(name)) return false;
-    entry.pushHistory?.();
+    pushEntryHistory(entry);
     entry.binaries.delete(name);
     entry.times?.update?.();
     return true;

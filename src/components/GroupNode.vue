@@ -71,7 +71,7 @@
             class="group-icon"
         />
         <span class="group-label">{{ groupName }}</span>
-        <span class="group-badge">{{ entryCount }}</span>
+        <span v-if="entryCount > 0" class="group-badge">{{ entryCount }}</span>
 
         <!-- Context Menu Portal -->
         <Teleport to="body">
@@ -275,10 +275,11 @@ const displayIconId = computed(() => {
         ? OPEN_FOLDER_ICON
         : DEFAULT_GROUP_ICON;
 });
+// A group's badge describes that row only. Descendant entries have their own
+// rows and must not inflate every ancestor's count; the synthetic All Entries
+// row remains the one deliberate aggregate.
 const entryCount = computed(() =>
-    isAllEntries.value
-        ? props.allEntriesCount
-        : (props.group.recursiveEntryCount ?? props.group.entryCount ?? 0),
+    isAllEntries.value ? props.allEntriesCount : (props.group.entryCount ?? 0),
 );
 
 const contextMenu = ref({

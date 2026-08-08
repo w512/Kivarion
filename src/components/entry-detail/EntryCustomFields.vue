@@ -4,8 +4,9 @@
         <div
             v-if="!isEditing && fields.length > 0"
             class="custom-fields-section"
+            :class="{ 'merged-with-standard': mergeWithStandard }"
         >
-            <div class="section-header">
+            <div v-if="!mergeWithStandard" class="section-header">
                 <h3>Custom Fields</h3>
             </div>
             <div class="fields-view">
@@ -234,6 +235,7 @@ import ColoredPassword from './ColoredPassword.vue';
 
 const props = defineProps({
     isEditing: { type: Boolean, default: false },
+    mergeWithStandard: { type: Boolean, default: false },
     fields: { type: Array, default: () => [] }, // For view mode
     modelValue: { type: Array, default: () => [] }, // For edit mode
 });
@@ -298,6 +300,15 @@ function copy(text, fieldId, isProtected = false) {
     padding-top: 0.75rem;
 }
 
+.custom-fields-section.merged-with-standard {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.custom-fields-section.merged-with-standard .fields-view {
+    border-radius: 0 0 10px 10px;
+}
+
 .section-header {
     display: flex;
     align-items: center;
@@ -316,28 +327,36 @@ function copy(text, fieldId, isProtected = false) {
 .fields-view {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
+    overflow: hidden;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
 }
 
 .field-row {
-    background: var(--badge-bg);
-    border-radius: 8px;
-    padding: 0.4rem 0.6rem;
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 32%) minmax(0, 1fr);
+    align-items: center;
+    min-height: 3rem;
+    padding: 0.45rem 0.75rem;
+}
+
+.field-row + .field-row {
+    border-top: 1px solid var(--border-color);
 }
 
 .field-row label {
-    display: block;
-    font-size: 0.7rem;
-    font-weight: 600;
+    padding-right: 1.25rem;
     color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.15rem;
+    font-size: 0.9rem;
+    font-weight: 400;
+    text-align: right;
 }
 
 .field-value-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
+    min-width: 0;
     gap: 0.5rem;
 }
 

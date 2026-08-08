@@ -547,6 +547,7 @@ describe('component refresh behaviour', () => {
                     uuid: 'group-1',
                     name: 'Parent',
                     entryCount: 0,
+                    recursiveEntryCount: 1,
                     children: [
                         {
                             uuid: 'group-2',
@@ -618,6 +619,18 @@ describe('component refresh behaviour', () => {
         expect(String(slotOf(root, 'all').props.class)).toContain(
             'collapse-spacer',
         );
+    });
+
+    test('GroupTree counts only entries directly inside each group', async () => {
+        const { root } = await mountTree();
+        const parent = findByProp(root, 'data-group-uuid', 'group-1');
+        const badge = findFirst(parent, (node) =>
+            String(node.props?.class || '').includes('group-badge'),
+        );
+
+        // The parent has one entry below it, but none directly inside it; zero
+        // is omitted rather than adding noise to every empty group row.
+        expect(badge).toBeNull();
     });
 
     test('GroupTree leaves the group icon inert so a click on it selects', async () => {

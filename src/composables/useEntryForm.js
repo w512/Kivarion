@@ -6,6 +6,7 @@ import {
     normalizeFieldName,
     STANDARD_FIELDS,
 } from '../utils';
+import { pushEntryHistory } from '../entryHistory';
 
 export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     const isEditing = ref(false);
@@ -85,7 +86,7 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
             form.value.URL &&
             (!entry.customIcon || getField(entry, 'URL') !== form.value.URL);
 
-        entry.pushHistory();
+        pushEntryHistory(entry);
         entry.fields.set('Title', form.value.Title);
         entry.fields.set('UserName', form.value.UserName);
         entry.fields.set(

@@ -119,12 +119,20 @@
             v-if="!isEditing"
             class="detail-scroll-content detail-view-content"
         >
-            <EntryViewFields :entry="entry" :email-field="emailField" />
-            <EntryCustomFields
-                :is-editing="false"
-                :fields="otherCustomFields"
-            />
+            <div class="entry-fields-card">
+                <EntryViewFields
+                    :entry="entry"
+                    :email-field="emailField"
+                    :has-custom-fields="otherCustomFields.length > 0"
+                />
+                <EntryCustomFields
+                    :is-editing="false"
+                    :fields="otherCustomFields"
+                    merge-with-standard
+                />
+            </div>
             <EntryAttachments
+                :entry-id="entry.uuid?.id"
                 :attachments="attachments"
                 :thumbnails="attachmentThumbnails"
                 :total-size="totalAttachmentsSize"
@@ -235,6 +243,7 @@ import {
     isProtectedValue,
     STANDARD_FIELDS,
 } from '../utils';
+import { pushEntryHistory } from '../entryHistory';
 
 const props = defineProps({
     entry: { type: Object, required: true },
@@ -400,7 +409,7 @@ function restoreHistoryVersion(index) {
     const historyEntry = props.entry.history?.[index];
     if (!historyEntry) return;
 
-    props.entry.pushHistory();
+    pushEntryHistory(props.entry);
     const history = [...props.entry.history];
     props.entry.copyFrom(historyEntry);
     props.entry.history = history;
@@ -456,7 +465,6 @@ onUnmounted(() => {
 .detail-header {
     padding: 0.5rem 0;
     background: var(--bg-color);
-    border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
 }
 
@@ -534,6 +542,11 @@ onUnmounted(() => {
 
 .detail-view-content {
     gap: 0.75rem;
+}
+
+.entry-fields-card {
+    display: flex;
+    flex-direction: column;
 }
 
 .menu-container {
