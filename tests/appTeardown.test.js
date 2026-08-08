@@ -9,6 +9,8 @@ let pageHandler;
 let closeRequested;
 let quitRequested;
 let destroyWindow;
+let hideWindow;
+let isMac;
 let invoke;
 let unlistenClose;
 let unlistenQuit;
@@ -30,6 +32,9 @@ async function mountApp() {
         './teardownGuard.js': {
             teardownPageHandler: () => pageHandler,
         },
+        './composables/usePlatform.js': {
+            usePlatform: () => ({ isMac }),
+        },
         '@tauri-apps/api/core': {
             invoke: (...args) => invoke(...args),
         },
@@ -47,6 +52,7 @@ async function mountApp() {
                     return unlistenClose;
                 }),
                 destroy: (...args) => destroyWindow(...args),
+                hide: (...args) => hideWindow(...args),
             }),
         },
     });
@@ -69,6 +75,8 @@ beforeEach(() => {
     closeRequested = null;
     quitRequested = null;
     destroyWindow = mock(async () => {});
+    hideWindow = mock(async () => {});
+    isMac = ref(false);
     invoke = mock(async () => {});
     unlistenClose = mock(() => {});
     unlistenQuit = mock(() => {});
@@ -164,6 +172,42 @@ describe('application-level teardown guard', () => {
         await tick();
 
         expect(event.preventDefault).toHaveBeenCalledTimes(1);
+        expect(destroyWindow).not.toHaveBeenCalled();
+        app.unmount();
+    });
+
+    test('on macOS a clean close hides the window instead of letting Tauri destroy it', async () => {
+        isMac.value = true;
+        const app = await mountApp();
+        const event = { preventDefault: mock(() => {}) };
+
+        await closeRequested(event);
+
+        // Unprevented closes are finalized by Tauri's wrapper with destroy(),
+        // so the macOS branch must always prevent before hiding.
+        expect(event.preventDefault).toHaveBeenCalledTimes(1);
+        expect(hideWindow).toHaveBeenCalledTimes(1);
+        expect(destroyWindow).not.toHaveBeenCalled();
+        app.unmount();
+    });
+
+    test('on macOS a guarded close hides the window only after finish', async () => {
+        isMac.value = true;
+        let finish;
+        pageHandler = mock((complete) => {
+            finish = complete;
+            return true;
+        });
+        const app = await mountApp();
+        const event = { preventDefault: mock(() => {}) };
+
+        await closeRequested(event);
+
+        expect(event.preventDefault).toHaveBeenCalledTimes(1);
+        expect(hideWindow).not.toHaveBeenCalled();
+
+        finish();
+        expect(hideWindow).toHaveBeenCalledTimes(1);
         expect(destroyWindow).not.toHaveBeenCalled();
         app.unmount();
     });

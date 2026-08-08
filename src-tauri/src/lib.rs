@@ -308,8 +308,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 
-    app.run(|app_handle, event| {
-        if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { api, code, .. } => {
             // A user quit (Cmd+Q / app menu) arrives with no exit code and
             // does NOT go through the window close-requested guard, so it
             // would kill the process while an auto-save is still in flight.
@@ -320,10 +320,38 @@ pub fn run() {
             use tauri::{Emitter, Manager};
             if code.is_none() && !app_handle.webview_windows().is_empty() {
                 api.prevent_exit();
+                // On macOS the window may be hidden (close-to-hide): a quit
+                // from the Dock menu still runs the frontend guard, and its
+                // "Saving changes…" / conflict modals must be visible to be
+                // answered.
+                show_main_window(app_handle);
                 let _ = app_handle.emit("kivarion:quit-requested", ());
             }
         }
+        // A Dock-icon click with no visible window (the close button hid it —
+        // see the close guard in `App.vue`) brings the window back. With a
+        // visible window macOS activates the app by itself.
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen {
+            has_visible_windows,
+            ..
+        } => {
+            if !has_visible_windows {
+                show_main_window(app_handle);
+            }
+        }
+        _ => {}
     });
+}
+
+/// Shows and focuses the main window. A no-op when it is already visible
+/// (showing a shown window does nothing) or has been destroyed.
+fn show_main_window(app_handle: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 #[cfg(test)]

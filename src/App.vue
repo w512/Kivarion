@@ -7,6 +7,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useStore } from './store.js';
 import { useAutoLock } from './composables/useAutoLock.js';
 import { useDatabaseActions } from './composables/useDatabaseActions.js';
+import { usePlatform } from './composables/usePlatform.js';
 import { teardownPageHandler } from './teardownGuard.js';
 
 useAutoLock();
@@ -30,10 +31,19 @@ useAutoLock();
 // While this listener exists the capability must grant
 // `core:window:allow-destroy`, or the title-bar close button silently stops
 // working.
+//
+// On macOS a window close hides the window instead of ending the process — the
+// app stays in the Dock, and the backend's `RunEvent::Reopen` handler brings
+// the window back on a Dock click. The guard still runs first so a pending
+// save is flushed before the window disappears; only the `finish` differs
+// (`hideWindow`, needing `core:window:allow-hide`). The `preventDefault()`
+// there is unconditional, because an unprevented close is finalized by Tauri's
+// wrapper with `destroy()`. Cmd+Q remains a real quit on every platform.
 const store = useStore();
 const router = useRouter();
 const { isSaving, hasUnsavedChanges, saveDatabaseChanges } =
     useDatabaseActions(store);
+const { isMac } = usePlatform();
 
 let unlistenCloseRequested = null;
 let unlistenQuitRequested = null;
@@ -41,6 +51,11 @@ let unlistenQuitRequested = null;
 onMounted(async () => {
     unlistenCloseRequested = await getCurrentWindow().onCloseRequested(
         async (event) => {
+            if (isMac.value) {
+                event.preventDefault();
+                if (!(await guardTeardown(hideWindow))) hideWindow();
+                return;
+            }
             if (await guardTeardown(closeWindow)) event.preventDefault();
         },
     );
@@ -98,6 +113,10 @@ function closeWindow() {
     // destroy() rather than close(): the flush already ran, and close() would
     // re-enter the guard above.
     void getCurrentWindow().destroy();
+}
+
+function hideWindow() {
+    void getCurrentWindow().hide();
 }
 
 function quitApp() {
