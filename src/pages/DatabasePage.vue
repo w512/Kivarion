@@ -8,6 +8,7 @@
             @lock="lockDatabaseFromHeader"
             @close="closeAndForgetDatabase"
             @edit-db="openDatabaseSettings"
+            @settings="router.push({ name: 'settings' })"
         />
 
         <!-- Save failure banner — never let a failed save go unnoticed -->

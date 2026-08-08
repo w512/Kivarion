@@ -9,6 +9,20 @@
 
 import * as kdbxweb from 'kdbxweb';
 
+/**
+ * The largest icon that may enter that list, whichever way it arrives — picked
+ * from a file or downloaded for an entry's site.
+ *
+ * A custom icon is stored inside the `.kdbx`, so its cost is not the one-off
+ * read: it is re-encrypted on every save, copied into every `.bak`, and carried
+ * by each entry-history version. Icons are small — anything past this is a photo
+ * the user meant to attach, not an icon. It lives here, with the list itself,
+ * because the two paths that write into it must agree: a downloaded favicon
+ * refused at a lower cap than a hand-picked file is the same icon rejected for
+ * the same file it would have produced.
+ */
+export const MAX_CUSTOM_ICON_BYTES = 256 * 1024;
+
 export function getIconId(icon) {
     return icon?.id || icon || null;
 }

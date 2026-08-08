@@ -46,12 +46,21 @@ mock.module('@tauri-apps/plugin-http', () => ({
 const { clearEntryIconCaches, useEntryIcons } =
     await import('../src/composables/useEntryIcons.js');
 
+// The fetched bytes are sniffed, so a fixture has to be a recognizable image:
+// three arbitrary bytes are what the download path now rejects.
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47];
+const ICO_SIGNATURE = [0x00, 0x00, 0x01, 0x00];
+
+function png(...tail) {
+    return [...PNG_SIGNATURE, ...tail];
+}
+
 function response({
     ok = true,
     status = 200,
     type = 'image/png',
     length,
-    bytes = [1, 2, 3],
+    bytes = png(1, 2, 3),
 } = {}) {
     const data = new Uint8Array(bytes).buffer;
     return {
@@ -144,9 +153,32 @@ describe('useEntryIcons', () => {
         expect(entry.customIcon).toBeUndefined();
     });
 
-    test('rejects non-image/png responses without mutating the entry', async () => {
+    // A favicon is whatever the site publishes, and ICO is still the common
+    // case; the old `image/png` content-type allowlist turned most real sites
+    // into "Unexpected icon content-type: image/x-icon".
+    test('accepts an icon the server labels image/x-icon', async () => {
         fetchMock = mock(async () =>
-            response({ type: 'text/html', bytes: [60, 33] }),
+            response({ type: 'image/x-icon', bytes: [...ICO_SIGNATURE, 9] }),
+        );
+        const entry = makeEntry('https://ico.example');
+        const store = makeStore([entry]);
+        const emit = mock(() => {});
+
+        const { downloadIcon } = useEntryIcons(emit);
+        const changed = await downloadIcon(entry);
+        await tick();
+
+        expect(changed).toBe(true);
+        expect(store.db.meta.customIcons.size).toBe(1);
+        expect(emit).toHaveBeenCalled();
+    });
+
+    // The header is the server's claim; the bytes are what gets stored in the
+    // vault and rendered. Sniffing rejects an HTML error page even when it is
+    // labelled as an image, which the old header check did not.
+    test('rejects a response whose bytes are not an image', async () => {
+        fetchMock = mock(async () =>
+            response({ type: 'image/png', bytes: [60, 33] }),
         );
         const entry = makeEntry('https://bad.example');
         const store = makeStore([entry]);
@@ -167,7 +199,7 @@ describe('useEntryIcons', () => {
         const store = makeStore([entry]);
         const icon = kdbxweb.KdbxUuid.random();
         store.db.meta.customIcons.set(icon.id, {
-            data: new Uint8Array([1, 2, 3]).buffer,
+            data: new Uint8Array(png(1, 2, 3)).buffer,
         });
         entry.customIcon = icon;
         const emit = mock(() => {});
@@ -183,7 +215,7 @@ describe('useEntryIcons', () => {
     });
 
     test('removes the previous custom icon when it becomes unused', async () => {
-        fetchMock = mock(async () => response({ bytes: [9, 8, 7] }));
+        fetchMock = mock(async () => response({ bytes: png(9, 8, 7) }));
         const entry = makeEntry('https://replace.example');
         const store = makeStore([entry]);
         const oldIcon = kdbxweb.KdbxUuid.random();
@@ -202,7 +234,7 @@ describe('useEntryIcons', () => {
     });
 
     test('keeps the previous custom icon when another entry still uses it', async () => {
-        fetchMock = mock(async () => response({ bytes: [7, 7, 7] }));
+        fetchMock = mock(async () => response({ bytes: png(7, 7, 7) }));
         const entry = makeEntry('https://shared.example');
         const otherEntry = makeEntry('https://other.example');
         const store = makeStore([entry, otherEntry]);
@@ -261,7 +293,7 @@ describe('useEntryIcons', () => {
             () =>
                 new Promise((resolve) => {
                     resolveFetch = () =>
-                        resolve(response({ bytes: [4, 5, 6] }));
+                        resolve(response({ bytes: png(4, 5, 6) }));
                 }),
         );
         const entryA = makeEntry('https://cache.example/a');

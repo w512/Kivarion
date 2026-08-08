@@ -148,8 +148,10 @@ watch(
     () => (linkError.value = ''),
 );
 
+// No Title row: it repeated the detail column's own heading verbatim, and
+// unlike every other field it was never empty, so it always cost a row. Copying
+// it lives in the heading's "More actions" menu instead (EntryDetail).
 const standardFields = computed(() => [
-    { id: 'Title', label: 'Title', value: getField(props.entry, 'Title') },
     {
         id: 'UserName',
         label: 'Username',

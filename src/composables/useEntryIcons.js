@@ -3,18 +3,22 @@ import {
     addCustomIcon,
     arrayBuffersEqual,
     getIconId,
+    MAX_CUSTOM_ICON_BYTES,
     removeUnusedCustomIcon,
 } from '../customIcons.js';
-import { getField, normalizeHttpUrl } from '../utils';
+import { getField, normalizeHttpUrl, sniffImageMimeType } from '../utils';
 import { useStore } from '../store';
 
 const ICON_ENDPOINT = 'https://icon.horse/icon/';
-const MAX_ICON_BYTES = 100 * 1024;
+// The same cap a hand-picked file gets: this path ends in the same
+// `Meta/CustomIcons` list, and the lower one it used to carry refused site
+// icons a user could then add by hand from a downloaded file.
+const MAX_ICON_BYTES = MAX_CUSTOM_ICON_BYTES;
 const ICON_FETCH_TIMEOUT_MS = 8000;
+const ICON_FORMATS = 'PNG, JPEG, GIF, WebP, BMP, ICO or SVG';
 const ICON_DEBOUNCE_MS = globalThis.__KIVARION_ICON_DEBOUNCE_MS__ ?? 300;
 const MAX_ICON_CACHE_ENTRIES =
     globalThis.__KIVARION_ICON_CACHE_MAX_ENTRIES__ ?? 100;
-const ALLOWED_ICON_MIME = new Set(['image/png']);
 
 const iconCache = new Map();
 const inFlightFetches = new Map();
@@ -163,22 +167,28 @@ async function fetchIcon(domain) {
         if (!res.ok)
             throw new Error(`Icon fetch failed with status ${res.status}`);
 
-        const contentType = (res.headers.get('content-type') || '')
-            .split(';')[0]
-            .trim()
-            .toLowerCase();
-        if (!ALLOWED_ICON_MIME.has(contentType)) {
-            throw new Error(
-                `Unexpected icon content-type: ${contentType || 'unknown'}`,
-            );
-        }
-
         const contentLength = Number(res.headers.get('content-length') || 0);
         if (contentLength > MAX_ICON_BYTES) {
             throw new Error(`Icon is too large: ${contentLength} bytes`);
         }
 
-        return await readLimitedBody(res, controller);
+        const buffer = await readLimitedBody(res, controller);
+
+        // The gate is the bytes, not the `Content-Type` header. A favicon is
+        // whatever the site publishes — icon.horse passes ICO, SVG and JPEG
+        // through unchanged, and a strict `image/png` allowlist rejected most
+        // real sites' icons. Sniffing is also the stricter check of the two: a
+        // server can label an HTML error page `image/png`, and the header said
+        // nothing about what would actually be stored in the vault. This is the
+        // same rule the icon picker applies to a local file.
+        const mime = sniffImageMimeType(new Uint8Array(buffer));
+        if (!mime) {
+            throw new Error(
+                `Downloaded icon is not a supported image (${ICON_FORMATS})`,
+            );
+        }
+
+        return buffer;
     } finally {
         clearTimeout(timeout);
     }

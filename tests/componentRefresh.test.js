@@ -56,10 +56,26 @@ function makePropCapturingStub(name, props, sink) {
     };
 }
 
+// Finds a labelled item of an open dropdown menu, in either the entry's header
+// or the database header — both render `.menu-item` buttons.
+function menuItem(root, label) {
+    return findFirst(
+        root,
+        (node) =>
+            String(node.props?.class || '').includes('menu-item') &&
+            allText(node).includes(label),
+    );
+}
+
+// Filled by the useClipboard stub below; reset by the tests that inspect it.
+const clipboardCalls = [];
+
 function entryDetailStubs(overrides = {}) {
     return {
         '../store': { useStore: () => currentStore },
-        '@tauri-apps/plugin-os': { type: async () => 'linux' },
+        '../composables/usePlatform': {
+            usePlatform: () => ({ isMac: ref(false) }),
+        },
         './entry-detail/EntryViewFields.vue': {
             default: makeStubComponent('EntryViewFields'),
         },
@@ -97,6 +113,15 @@ function entryDetailStubs(overrides = {}) {
         },
         '../composables/useEntryIcons': {
             useEntryIcons: () => ({ downloadIcon() {} }),
+        },
+        '../composables/useClipboard': {
+            useClipboard: () => ({
+                activeCopyField: ref(null),
+                copy: (...args) => {
+                    clipboardCalls.push(args);
+                    return true;
+                },
+            }),
         },
         '../composables/useEntryForm': {
             useEntryForm: () => ({
@@ -140,6 +165,60 @@ describe('component refresh behaviour', () => {
         expect(textContent(findFirst(root, (node) => node.type === 'h2'))).toBe(
             'New title',
         );
+    });
+
+    // The dropdown lives inside a `<transition>`, so the pass-through stub is
+    // what makes an opened menu observable here at all.
+    async function mountEntryWithMenu(entry) {
+        const EntryDetail = await loadVueComponent(
+            'src/components/EntryDetail.vue',
+            entryDetailStubs({ vue: await vueWithoutTransitions() }),
+        );
+        const { root } = mount(EntryDetail, () => ({ entry }));
+        await nextTick();
+
+        findFirst(root, (node) => node.props?.class === 'menu-trigger')
+            // `@click.stop`, so the handler calls this on what it is given.
+            .props.onClick({ stopPropagation: () => {} });
+        await nextTick();
+        return root;
+    }
+
+    // The Title row used to sit in EntryViewFields, repeating the heading
+    // verbatim. It is gone; the heading carries the full-text tooltip (the h2
+    // truncates with an ellipsis) and copying it lives in the header's menu —
+    // rare next to the username and password, which have their own buttons.
+    test('EntryDetail copies the title from its menu, and never as a secret', async () => {
+        clipboardCalls.length = 0;
+        const entry = markRaw({
+            fields: new Map([['Title', 'Microsoft account']]),
+        });
+        const root = await mountEntryWithMenu(entry);
+
+        expect(findFirst(root, (node) => node.type === 'h2').props.title).toBe(
+            'Microsoft account',
+        );
+
+        menuItem(root, 'Copy Title').props.onClick();
+
+        // A title is not a secret: copying it must not arm the clipboard
+        // auto-clear, or pasting it later hands the user an empty clipboard.
+        expect(clipboardCalls).toEqual([['Microsoft account', 'Title']]);
+    });
+
+    test('EntryDetail offers no title copy for an untitled entry', async () => {
+        const entry = markRaw({ fields: new Map([['UserName', 'user']]) });
+        const root = await mountEntryWithMenu(entry);
+
+        // The heading falls back to a placeholder; copying "No title" or
+        // showing it as a tooltip would both be nonsense.
+        expect(textContent(findFirst(root, (node) => node.type === 'h2'))).toBe(
+            'No title',
+        );
+        expect(
+            findFirst(root, (node) => node.type === 'h2').props.title,
+        ).toBeFalsy();
+        expect(menuItem(root, 'Copy Title')).toBe(null);
     });
 
     test('EntryDetail shows an e-mail custom field with the main fields, not twice', async () => {
@@ -326,7 +405,6 @@ describe('component refresh behaviour', () => {
         await nextTick();
 
         for (const label of [
-            'title',
             'username',
             'e-mail',
             'password',
@@ -343,7 +421,6 @@ describe('component refresh behaviour', () => {
         // emptied the clipboard under a user who had copied a URL or a login to
         // paste later on.
         expect(copies).toEqual([
-            { fieldId: 'Title', autoClear: false },
             { fieldId: 'UserName', autoClear: false },
             { fieldId: 'E-mail', autoClear: false },
             { fieldId: 'Password', autoClear: true },
@@ -491,10 +568,8 @@ describe('component refresh behaviour', () => {
         }));
         await nextTick();
 
-        // The collapse chevron of that row, not the row itself (clicking the
-        // row selects the group) and not the first chevron in the tree (that
-        // one belongs to the "All Entries" pseudo-group, which has no children
-        // and so ignores the click).
+        // The collapse chevron of that row, not the row itself — clicking the
+        // row selects the group.
         const row = findFirst(
             root,
             (n) => n.props?.['data-group-uuid'] === 'group-1',
@@ -512,6 +587,55 @@ describe('component refresh behaviour', () => {
             });
         return { root, state, updates, toggle };
     }
+
+    // Which rows carry a chevron is the tree's only answer to "can this be
+    // expanded?". The row's icon used to be it — and stopped saying anything
+    // the moment a group was given a custom icon, which the icon picker made
+    // ordinary.
+    function slotOf(root, uuid) {
+        const row = findFirst(
+            root,
+            (n) => n.props?.['data-group-uuid'] === uuid,
+        );
+        return findFirst(row, (n) =>
+            String(n.props?.class || '').includes('collapse-'),
+        );
+    }
+
+    test('GroupTree marks expandable rows and still reserves the slot on leaves', async () => {
+        const { root } = await mountTree();
+
+        expect(String(slotOf(root, 'group-1').props.class)).toContain(
+            'collapse-toggle',
+        );
+        // A leaf keeps the box but not the chevron: without the reserved slot
+        // its icon would sit a chevron's width left of its siblings'.
+        const leaf = slotOf(root, 'group-2');
+        expect(String(leaf.props.class)).toContain('collapse-spacer');
+        expect(leaf.props.onClick).toBeUndefined();
+        // "All Entries" is a UI row with nothing under it, and is aligned the
+        // same way.
+        expect(String(slotOf(root, 'all').props.class)).toContain(
+            'collapse-spacer',
+        );
+    });
+
+    test('GroupTree leaves the group icon inert so a click on it selects', async () => {
+        const { root } = await mountTree();
+        const row = findFirst(
+            root,
+            (n) => n.props?.['data-group-uuid'] === 'group-1',
+        );
+
+        // The icon carried the collapse handler, so clicking a group's icon
+        // toggled its branch instead of selecting it — the one part of the row
+        // that did not do what the rest of the row does.
+        const icon = findFirst(row, (n) =>
+            String(n.props?.class || '').includes('group-icon'),
+        );
+        expect(icon).not.toBeNull();
+        expect(icon.props.onClick).toBeUndefined();
+    });
 
     test('GroupTree reports collapse changes instead of mutating the map it was given', async () => {
         const original = {};
@@ -878,6 +1002,79 @@ describe('component refresh behaviour', () => {
 
         expect(allText(root)).toContain('New group');
         expect(allText(root)).toContain('2');
+    });
+});
+
+// The header used to line four bordered icon buttons up beside the search box,
+// where "Close database" looked exactly as ordinary as "Lock". The three that
+// act on the file now hang off its name in a menu, and Lock — frequent, and
+// about safety — is the only button left.
+describe('DatabaseHeader actions', () => {
+    async function mountHeader() {
+        const DatabaseHeader = await loadVueComponent(
+            'src/components/DatabaseHeader.vue',
+            {
+                '../composables/usePlatform': {
+                    usePlatform: () => ({ isMac: ref(true) }),
+                },
+            },
+        );
+        const emitted = [];
+        const record = (name) => () => emitted.push(name);
+        const { root } = mount(DatabaseHeader, () => ({
+            dbName: 'Vault',
+            filePath: '/Users/me/Vault.kdbx',
+            search: '',
+            onLock: record('lock'),
+            onClose: record('close'),
+            onEditDb: record('edit-db'),
+            onSettings: record('settings'),
+        }));
+        await nextTick();
+        return { root, emitted };
+    }
+
+    async function openMenu(root) {
+        findFirst(root, (node) =>
+            String(node.props?.class || '').includes('db-trigger'),
+        ).props.onClick();
+        await nextTick();
+    }
+
+    test('keeps Lock out of the menu and reachable in one click', async () => {
+        const { root, emitted } = await mountHeader();
+
+        expect(menuItem(root, 'Close Database')).toBe(null);
+        const lock = findFirst(root, (node) =>
+            String(node.props?.class || '').includes('lock-btn'),
+        );
+        lock.props.onClick();
+
+        expect(emitted).toEqual(['lock']);
+        // The shortcut is worded for the platform, ⌘ here.
+        expect(lock.props.title).toBe('Lock database (⌘L)');
+    });
+
+    test('hangs the database-level actions off the database name', async () => {
+        const { root, emitted } = await mountHeader();
+        await openMenu(root);
+
+        menuItem(root, 'Database Settings…').props.onClick();
+        await nextTick();
+        expect(emitted).toEqual(['edit-db']);
+
+        // Choosing an item closes the menu, so each one needs it reopened.
+        await openMenu(root);
+        menuItem(root, 'App Settings…').props.onClick();
+        await nextTick();
+        expect(emitted).toEqual(['edit-db', 'settings']);
+
+        await openMenu(root);
+        menuItem(root, 'Close Database').props.onClick();
+        await nextTick();
+        expect(emitted).toEqual(['edit-db', 'settings', 'close']);
+
+        expect(menuItem(root, 'Close Database')).toBe(null);
     });
 });
 

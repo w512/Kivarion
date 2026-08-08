@@ -1,41 +1,69 @@
 <template>
     <header class="page-header">
-        <div class="header-left">
-            <svg
-                width="22"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.5"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+        <!-- Everything that acts on the *file* hangs off its name, rather than
+             sitting in the right-hand corner among the search box and the
+             session controls: those actions are rare, and the database they
+             apply to is what the user is looking at while choosing one. -->
+        <div ref="dbMenuRoot" class="db-menu" @keydown="onMenuKeydown">
+            <h1 class="db-heading">
+                <button
+                    ref="triggerRef"
+                    class="db-trigger"
+                    :class="{ open: isMenuOpen }"
+                    aria-haspopup="menu"
+                    :aria-expanded="isMenuOpen"
+                    :title="filePath"
+                    @click="toggleMenu"
+                    @keydown.down.prevent="openAndFocusFirst"
+                >
+                    <span class="db-meta">
+                        <span class="db-name">{{ dbName }}</span>
+                        <span class="file-name">{{ filePath }}</span>
+                    </span>
+                    <ChevronDown
+                        class="chevron"
+                        :class="{ open: isMenuOpen }"
+                        :size="14"
+                        :stroke-width="2.5"
+                    />
+                </button>
+            </h1>
+            <div
+                v-if="isMenuOpen"
+                ref="menuRef"
+                class="dropdown-menu"
+                role="menu"
             >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                <circle cx="12" cy="16" r="1" />
-            </svg>
-            <div>
-                <h1>{{ dbName }}</h1>
-                <span class="file-name">{{ filePath }}</span>
+                <button
+                    class="menu-item"
+                    role="menuitem"
+                    @click="choose(() => emit('edit-db'))"
+                >
+                    <KeyRound :size="14" />
+                    Database Settings…
+                </button>
+                <button
+                    class="menu-item"
+                    role="menuitem"
+                    @click="choose(() => emit('settings'))"
+                >
+                    <Settings :size="14" />
+                    App Settings…
+                </button>
+                <div class="menu-divider"></div>
+                <button
+                    class="menu-item danger"
+                    role="menuitem"
+                    @click="choose(() => emit('close'))"
+                >
+                    <LogOut :size="14" />
+                    Close Database
+                </button>
             </div>
         </div>
         <div class="header-actions">
-            <div class="search-box">
-                <svg
-                    class="search-icon"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <circle cx="11" cy="11" r="8" />
-                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
+            <div class="search-box" :title="searchTitle">
+                <Search class="search-icon" :size="14" />
                 <input
                     ref="searchInputRef"
                     v-model="search"
@@ -51,120 +79,124 @@
                     aria-label="Clear search"
                     @click="search = ''"
                 >
-                    <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2.5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                    >
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
+                    <X :size="12" :stroke-width="2.5" />
                 </button>
             </div>
-            <button
-                class="icon-btn settings-btn"
-                title="Settings"
-                @click="$router.push({ name: 'settings' })"
-            >
-                <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <circle cx="12" cy="12" r="3"></circle>
-                    <path
-                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
-                    ></path>
-                </svg>
-            </button>
-            <button
-                class="icon-btn edit-btn"
-                title="Edit database settings"
-                @click="$emit('edit-db')"
-            >
-                <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path
-                        d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-                    ></path>
-                    <path
-                        d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-                    ></path>
-                </svg>
-            </button>
+            <!-- The one action here that is both frequent and about safety, so
+                 it stays a button instead of joining the menu above. -->
             <button
                 class="icon-btn lock-btn"
-                title="Lock database"
-                @click="$emit('lock')"
+                :title="lockTitle"
+                @click="emit('lock')"
             >
-                <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                </svg>
-            </button>
-            <button
-                class="icon-btn close-btn"
-                title="Close database"
-                @click="$emit('close')"
-            >
-                <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                >
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                    <polyline points="16 17 21 12 16 7" />
-                    <line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
+                <Lock :size="16" />
             </button>
         </div>
     </header>
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { computed, nextTick, ref } from 'vue';
+import {
+    ChevronDown,
+    KeyRound,
+    Lock,
+    LogOut,
+    Search,
+    Settings,
+    X,
+} from 'lucide-vue-next';
+import { useOutsideClick } from '../composables/useOutsideClick';
+import { usePlatform } from '../composables/usePlatform';
 
 defineProps({
     dbName: { type: String, default: 'Unnamed' },
     filePath: { type: String, default: '' },
 });
 
-defineEmits(['lock', 'close', 'edit-db']);
+const emit = defineEmits(['lock', 'close', 'edit-db', 'settings']);
 
 const search = defineModel('search', { type: String, default: '' });
 const searchInputRef = ref(null);
+
+const isMenuOpen = ref(false);
+const dbMenuRoot = ref(null);
+const triggerRef = ref(null);
+const menuRef = ref(null);
+
+const { isMac } = usePlatform();
+const mod = computed(() => (isMac.value ? '⌘' : 'Ctrl+'));
+const searchTitle = computed(() => `Search entries (${mod.value}F)`);
+const lockTitle = computed(() => `Lock database (${mod.value}L)`);
+
+useOutsideClick(dbMenuRoot, () => (isMenuOpen.value = false));
+
+function toggleMenu() {
+    isMenuOpen.value = !isMenuOpen.value;
+}
+
+function closeMenu() {
+    isMenuOpen.value = false;
+}
+
+function choose(action) {
+    closeMenu();
+    action();
+}
+
+function menuItems() {
+    return menuRef.value
+        ? Array.from(menuRef.value.querySelectorAll('.menu-item'))
+        : [];
+}
+
+function focusItem(index) {
+    const items = menuItems();
+    if (items.length === 0) return;
+    items[(index + items.length) % items.length].focus();
+}
+
+function openAndFocusFirst() {
+    isMenuOpen.value = true;
+    nextTick(() => focusItem(0));
+}
+
+// On the wrapper rather than on the menu, so Escape closes it while the focus
+// still sits on the trigger — which is where a mouse click leaves it. The event
+// is stopped as well: DatabasePage listens for Escape on the window and would
+// otherwise clear the search box behind the menu the user was dismissing.
+function onMenuKeydown(e) {
+    if (!isMenuOpen.value) return;
+    const items = menuItems();
+    const current = items.indexOf(document.activeElement);
+    switch (e.key) {
+        case 'ArrowDown':
+            e.preventDefault();
+            focusItem(current + 1);
+            break;
+        case 'ArrowUp':
+            e.preventDefault();
+            focusItem(current - 1);
+            break;
+        case 'Home':
+            e.preventDefault();
+            focusItem(0);
+            break;
+        case 'End':
+            e.preventDefault();
+            focusItem(items.length - 1);
+            break;
+        case 'Escape':
+            e.preventDefault();
+            e.stopPropagation();
+            closeMenu();
+            triggerRef.value?.focus();
+            break;
+        case 'Tab':
+            closeMenu();
+            break;
+    }
+}
 
 function focusSearch() {
     searchInputRef.value?.focus();
@@ -183,24 +215,68 @@ defineExpose({ focusSearch, clearSearch });
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0.5rem 0.75rem 0.5rem 1.25rem;
+    gap: 1rem;
+    padding: 0.4rem 0.75rem 0.4rem 0.6rem;
     border-bottom: 1px solid var(--border-color);
     background: var(--card-bg);
     flex-shrink: 0;
 }
 
-.header-left {
+.db-menu {
+    position: relative;
+    min-width: 0;
+}
+
+.db-heading {
+    margin: 0;
+    font-size: inherit;
+    font-weight: inherit;
+}
+
+.db-trigger {
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    color: var(--accent-color);
+    max-width: 100%;
+    padding: 0.3rem 0.5rem;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    /* Only the chevron takes this now — the name and the path set their own,
+       and an accent-coloured chevron shouted louder than the name beside it. */
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-align: left;
+    transition:
+        background 0.15s,
+        color 0.15s;
 }
 
-.header-left h1 {
+.db-trigger:hover,
+.db-trigger.open {
+    background: var(--badge-bg);
+}
+
+/* `min-width: 0` so a long path can shrink and ellipsize instead of pushing
+   the search box off the header. */
+.db-meta {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.db-name,
+.file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.db-name {
     font-size: 1.1rem;
     font-weight: 700;
-    margin: 0;
     color: var(--text-primary);
+    line-height: 1.2;
 }
 
 .file-name {
@@ -208,10 +284,75 @@ defineExpose({ focusSearch, clearSearch });
     color: var(--text-secondary);
 }
 
+.chevron {
+    flex-shrink: 0;
+    opacity: 0.7;
+    transition: transform 0.2s;
+}
+
+.chevron.open {
+    transform: rotate(180deg);
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 100;
+    min-width: 190px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.4rem;
+    box-shadow:
+        0 10px 15px -3px rgba(0, 0, 0, 0.3),
+        0 4px 6px -2px rgba(0, 0, 0, 0.15);
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.5rem 0.6rem;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    text-align: left;
+    white-space: nowrap;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.menu-item:hover,
+.menu-item:focus-visible {
+    background: var(--badge-bg);
+}
+
+.menu-item.danger {
+    color: var(--error-color);
+}
+
+.menu-item.danger:hover,
+.menu-item.danger:focus-visible {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.menu-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 0.4rem 0.25rem;
+}
+
+/* Never shrinks: a long file path has to ellipsize on the left instead of
+   squeezing the search box. */
 .header-actions {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.75rem;
+    flex-shrink: 0;
 }
 
 .search-box {
@@ -267,37 +408,26 @@ defineExpose({ focusSearch, clearSearch });
     color: var(--text-primary);
 }
 
+/* Borderless on purpose: a border around every icon turns a row of them into a
+   grid of boxes, and the search box beside it is then the only framed element
+   — which is the one that should draw the eye. */
 .icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0.45rem;
     border-radius: 6px;
-    border: 1px solid var(--border-color);
+    border: none;
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all 0.15s;
-    box-shadow: none;
+    transition:
+        background 0.15s,
+        color 0.15s;
 }
 
-.settings-btn:hover {
-    border-color: var(--accent-color);
+.icon-btn:hover {
+    background: var(--badge-bg);
     color: var(--accent-color);
-}
-
-.edit-btn:hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-}
-
-.lock-btn:hover {
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-}
-
-.close-btn:hover {
-    border-color: var(--error-color);
-    color: var(--error-color);
 }
 </style>

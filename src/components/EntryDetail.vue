@@ -2,54 +2,52 @@
     <div class="entry-detail">
         <div class="detail-header">
             <div class="detail-title-row">
-                <h2>{{ displayTitle }}</h2>
+                <h2 :title="entryTitle">{{ displayTitle }}</h2>
                 <div v-if="!isEditing" class="detail-actions">
+                    <transition name="mini-toast">
+                        <div
+                            v-if="activeCopyField === 'Title'"
+                            class="mini-toast"
+                        >
+                            Copied!
+                        </div>
+                    </transition>
+                    <!-- The primary action of this column, so it is a labelled
+                         button: a second pencil icon here only competed with
+                         the one the header uses for the database's settings. -->
                     <button
                         class="edit-btn"
                         title="Edit entry"
                         @click="startEdit"
                     >
-                        <svg
-                            width="16"
-                            height="16"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            stroke-width="2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        >
-                            <path
-                                d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"
-                            />
-                            <path
-                                d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"
-                            />
-                        </svg>
+                        Edit
                     </button>
                     <div class="menu-container">
                         <button
                             class="menu-trigger"
                             title="More actions"
+                            aria-haspopup="menu"
+                            :aria-expanded="showMenu"
                             @click.stop="showMenu = !showMenu"
                         >
-                            <svg
-                                width="18"
-                                height="18"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                stroke-width="2"
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                            >
-                                <circle cx="12" cy="12" r="1" />
-                                <circle cx="12" cy="5" r="1" />
-                                <circle cx="12" cy="19" r="1" />
-                            </svg>
+                            <EllipsisVertical :size="18" />
                         </button>
                         <transition name="dropdown">
                             <div v-if="showMenu" class="dropdown-menu">
+                                <!-- Copying the title is rare next to the
+                                     username and the password, which have their
+                                     own buttons in the field rows below. -->
+                                <button
+                                    v-if="entryTitle"
+                                    class="menu-item"
+                                    @click="
+                                        copyTitle();
+                                        showMenu = false;
+                                    "
+                                >
+                                    <Copy :size="14" />
+                                    Copy Title
+                                </button>
                                 <button
                                     class="menu-item"
                                     @click="
@@ -57,28 +55,7 @@
                                         showMenu = false;
                                     "
                                 >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                    >
-                                        <rect
-                                            x="3"
-                                            y="3"
-                                            width="18"
-                                            height="18"
-                                            rx="2"
-                                        />
-                                        <circle cx="9" cy="9" r="2" />
-                                        <path
-                                            d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"
-                                        />
-                                    </svg>
+                                    <ImageIcon :size="14" />
                                     Change Icon…
                                 </button>
                                 <button
@@ -89,22 +66,7 @@
                                         showMenu = false;
                                     "
                                 >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                    >
-                                        <path
-                                            d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
-                                        />
-                                        <polyline points="7 10 12 15 17 10" />
-                                        <line x1="12" y1="15" x2="12" y2="3" />
-                                    </svg>
+                                    <Download :size="14" />
                                     Update Icon
                                 </button>
                                 <button
@@ -114,22 +76,7 @@
                                         showMenu = false;
                                     "
                                 >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                    >
-                                        <polyline points="3 6 5 6 21 6" />
-                                        <path d="M19 6l-1 14H6L5 6" />
-                                        <path d="M10 11v6" />
-                                        <path d="M14 11v6" />
-                                        <path d="M9 6V4h6v2" />
-                                    </svg>
+                                    <Trash2 :size="14" />
                                     Delete
                                 </button>
                                 <div class="menu-divider"></div>
@@ -140,19 +87,7 @@
                                         showMenu = false;
                                     "
                                 >
-                                    <svg
-                                        width="14"
-                                        height="14"
-                                        viewBox="0 0 24 24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-width="2"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                    >
-                                        <line x1="18" y1="6" x2="6" y2="18" />
-                                        <line x1="6" y1="6" x2="18" y2="18" />
-                                    </svg>
+                                    <X :size="14" />
                                     Close
                                 </button>
                             </div>
@@ -264,7 +199,14 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, toRef, watch } from 'vue';
-import { type } from '@tauri-apps/plugin-os';
+import {
+    Copy,
+    Download,
+    EllipsisVertical,
+    Image as ImageIcon,
+    Trash2,
+    X,
+} from 'lucide-vue-next';
 import { useStore } from '../store';
 
 // Sub-components
@@ -282,6 +224,8 @@ import ConfirmModal from './ConfirmModal.vue';
 import { useEntryAttachments } from '../composables/useEntryAttachments';
 import { useEntryIcons } from '../composables/useEntryIcons';
 import { useEntryForm } from '../composables/useEntryForm';
+import { useClipboard } from '../composables/useClipboard';
+import { usePlatform } from '../composables/usePlatform';
 
 // Utils
 import {
@@ -300,7 +244,7 @@ const emit = defineEmits(['updated', 'close', 'delete', 'change-icon']);
 const store = useStore();
 
 const showMenu = ref(false);
-const isMac = ref(false);
+const { isMac } = usePlatform();
 const showRenameAttachment = ref(false);
 const attachmentToRenameName = ref('');
 const attachmentRenameName = ref('');
@@ -308,10 +252,21 @@ const attachmentRenameError = ref('');
 const showDeleteAttachment = ref(false);
 const attachmentToDeleteName = ref('');
 
-const displayTitle = computed(() => {
+const { activeCopyField, copy } = useClipboard();
+
+const entryTitle = computed(() => {
     store.dbVersion;
-    return getField(props.entry, 'Title') || 'No title';
+    return getField(props.entry, 'Title');
 });
+
+// The heading falls back to a placeholder; the copy button and the tooltip use
+// `entryTitle` so an untitled entry neither copies nor advertises "No title".
+const displayTitle = computed(() => entryTitle.value || 'No title');
+
+// A title is not a secret, so no clipboard auto-clear (see EntryViewFields).
+function copyTitle() {
+    return copy(entryTitle.value, 'Title');
+}
 
 const customFields = computed(() => {
     store.dbVersion;
@@ -469,14 +424,9 @@ const handleKeyDown = (e) => {
     }
 };
 
-onMounted(async () => {
+onMounted(() => {
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('keydown', handleKeyDown);
-    try {
-        isMac.value = (await type()) === 'macos';
-    } catch (e) {
-        console.error('Failed to detect OS', e);
-    }
 });
 
 onUnmounted(() => {
@@ -528,9 +478,49 @@ onUnmounted(() => {
 }
 
 .detail-actions {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* The field rows hang their toast above the button; here that would land
+   outside the top of the detail column, so this one drops below instead. */
+.mini-toast {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    right: 0;
+    background: var(--accent-color);
+    color: white;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+    z-index: 100;
+}
+
+.mini-toast::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    right: 8px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-bottom: 4px solid var(--accent-color);
+}
+
+.mini-toast-enter-active,
+.mini-toast-leave-active {
+    transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.mini-toast-enter-from,
+.mini-toast-leave-to {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.8);
 }
 
 .detail-scroll-content {
@@ -550,24 +540,43 @@ onUnmounted(() => {
     position: relative;
 }
 
-.menu-trigger,
 .edit-btn {
+    padding: 0.35rem 0.9rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.edit-btn:hover {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+/* Borderless, so the secondary action does not read as a second button of the
+   same weight as Edit beside it. */
+.menu-trigger {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 32px;
     height: 32px;
     border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background: var(--card-bg);
+    border: none;
+    background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all 0.15s;
+    transition:
+        background 0.15s,
+        color 0.15s;
 }
 
-.menu-trigger:hover,
-.edit-btn:hover {
-    border-color: var(--accent-color);
+.menu-trigger:hover {
+    background: var(--badge-bg);
     color: var(--accent-color);
 }
 

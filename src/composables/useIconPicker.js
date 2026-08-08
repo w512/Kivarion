@@ -4,6 +4,7 @@ import * as kdbxweb from 'kdbxweb';
 import {
     addCustomIcon,
     getIconId,
+    MAX_CUSTOM_ICON_BYTES,
     removeUnusedCustomIcon,
 } from '../customIcons.js';
 import {
@@ -21,13 +22,8 @@ import {
 } from '../utils.js';
 import { withSystemInteraction } from './useSystemInteraction.js';
 
-/**
- * A custom icon is stored inside the `.kdbx`, so its cost is not the one-off
- * read: it is re-encrypted on every save, copied into every `.bak`, and carried
- * by each entry-history version. Icons are small — anything past this is a photo
- * the user meant to attach, not an icon.
- */
-export const MAX_ICON_FILE_SIZE = 256 * 1024;
+/** Kept as a named re-export: this is where the picker's callers look for it. */
+export const MAX_ICON_FILE_SIZE = MAX_CUSTOM_ICON_BYTES;
 
 /**
  * The icon picker shared by groups and entries.

@@ -9,7 +9,7 @@
             'drag-over-before': dropClass === 'before',
             'drag-over-after': dropClass === 'after',
         }"
-        :style="{ paddingLeft: depth * 16 + 10 + 'px' }"
+        :style="{ paddingLeft: depth * 12 + 8 + 'px' }"
         :draggable="isDraggable"
         role="treeitem"
         tabindex="0"
@@ -28,8 +28,24 @@
         @drop.prevent="onDrop"
         @dragend="onDragEnd"
     >
+        <!-- The slot is reserved on every row, children or not: a leaf that
+             skipped it would sit a chevron's width left of its siblings and the
+             indent column would stop reading as one. The chevron is
+             `aria-hidden` and not focusable — the row itself is the treeitem,
+             carries `aria-expanded`, and answers ←/→. -->
+        <span
+            v-if="hasChildren"
+            class="collapse-toggle"
+            :class="{ open: !isCollapsed }"
+            aria-hidden="true"
+            @click.stop="toggleCollapse"
+            @mousedown.stop
+        >
+            <ChevronRight :size="14" :stroke-width="2.5" />
+        </span>
+        <span v-else class="collapse-spacer" aria-hidden="true"></span>
         <!-- "All Entries" is a UI row rather than a group in the database, so it
-             keeps its own glyph and has nothing to collapse. -->
+             keeps its own glyph. -->
         <svg
             v-if="isAllEntries"
             width="18"
@@ -40,24 +56,19 @@
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
-            class="collapse-toggle"
+            class="group-icon"
         >
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
             <line x1="3" y1="9" x2="21" y2="9" />
             <line x1="9" y1="21" x2="9" y2="9" />
         </svg>
-        <!-- The icon doubles as the collapse toggle, so it has to keep the
-             class (drag-start skips it) and the handlers. -->
         <ObjectIcon
             v-else
             :src="iconSrc"
             :icon-id="displayIconId"
             :fallback-icon-id="DEFAULT_GROUP_ICON"
             :size="18"
-            class="collapse-toggle"
-            :class="{ 'has-children': hasChildren }"
-            @click.stop="toggleCollapse"
-            @mousedown.stop
+            class="group-icon"
         />
         <span class="group-label">{{ groupName }}</span>
         <span class="group-badge">{{ entryCount }}</span>
@@ -210,6 +221,7 @@
 
 <script setup>
 import { computed, nextTick, ref, onMounted, onUnmounted } from 'vue';
+import { ChevronRight } from 'lucide-vue-next';
 import { useGroupDragDrop } from '../composables/useGroupDragDrop.js';
 import ObjectIcon from './ObjectIcon.vue';
 import { DEFAULT_GROUP_ICON, OPEN_FOLDER_ICON } from '../standardIcons.js';
@@ -252,8 +264,10 @@ const groupName = computed(() => props.group.name);
 const iconSrc = computed(() => props.group.iconSrc || null);
 
 // A group left on the default folder icon still opens and closes with the
-// branch, which is the only cue this row has that it can be expanded — a group
-// the user gave an icon of its own keeps that icon in both states.
+// branch — a second, free cue beside the chevron, and the one KeePass itself
+// uses. A group the user gave an icon of its own keeps that icon in both
+// states, which is exactly why the chevron had to exist: with a custom icon
+// this swap does nothing, and it used to be the row's only cue.
 const displayIconId = computed(() => {
     const id = props.group.iconId ?? DEFAULT_GROUP_ICON;
     if (id !== DEFAULT_GROUP_ICON && id !== OPEN_FOLDER_ICON) return id;
@@ -548,30 +562,64 @@ onUnmounted(() => document.removeEventListener('click', onGlobalClick));
     bottom: -1px;
 }
 
+/* Both are the same box so the icons of siblings line up whether or not a row
+   can be expanded. The negative margin eats most of the row's own 0.5rem gap
+   for this one pair: the chevron belongs to the icon it sits against, not to
+   the label further along, and the row's remaining gaps stay as they are. */
+.collapse-toggle,
+.collapse-spacer {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-right: -6px;
+    flex-shrink: 0;
+}
+
+.collapse-toggle {
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition:
+        transform 0.2s,
+        color 0.15s;
+}
+
+.collapse-toggle.open {
+    transform: rotate(90deg);
+}
+
+.collapse-toggle:hover {
+    color: var(--text-primary);
+}
+
 /* The row's icon — the "All Entries" glyph, a standard icon or a custom image —
    always occupies the same 18px box, or rows drift out of their virtualized
-   slots. */
-.group-node > .collapse-toggle {
+   slots. It is no longer the collapse target: clicking it toggled the branch
+   and therefore did not select the group, which is what every other part of the
+   row does. */
+.group-icon {
     flex-shrink: 0;
     color: var(--text-secondary);
-    transition: transform 0.2s;
 }
 
-.group-node > .collapse-toggle.has-children {
-    cursor: pointer;
-}
-
-.group-node > .collapse-toggle.has-children:hover {
-    color: var(--text-primary);
-    transform: scale(1.1);
-}
-
+/* The name reads at full strength while the chevron, the icon and the count
+   stay secondary — the row's own colour is the muted one, so this overrides it
+   rather than inheriting. `--text-primary` and not a literal black: it is
+   near-white under the dark theme. */
 .group-label {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Selection would otherwise lose its accent text: a colour set on the label
+   itself beats the one the active row passes down. */
+.group-node.active .group-label {
+    color: var(--accent-color);
 }
 
 .group-badge {
