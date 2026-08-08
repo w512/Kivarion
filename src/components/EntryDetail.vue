@@ -602,7 +602,7 @@ onUnmounted(() => {
     border: 1px solid var(--border-color);
     border-radius: 8px;
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-    min-width: 150px;
+    min-width: 160px;
     z-index: 100;
     padding: 0.4rem;
 }
@@ -621,6 +621,9 @@ onUnmounted(() => {
     border-radius: 6px;
     transition: all 0.15s;
     text-align: left;
+    /* An item like "Change Icon…" must widen the menu, not wrap onto a
+       second line inside it. */
+    white-space: nowrap;
 }
 
 .menu-item:hover {
