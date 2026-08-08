@@ -50,14 +50,17 @@ export function useCollapsedGroups(store, knownGroups) {
         );
     }
 
-    watch(() => store.filePath, load, { immediate: true });
-
+    // Register persistence before the immediate load below: pruning replaces
+    // the map, and that first replacement must also remove stale UUIDs from
+    // storage rather than waiting for the user to toggle another group.
     // Not `deep`: GroupTree replaces the map instead of mutating it, so the ref
     // itself changes on every toggle.
     watch(collapsedGroups, (value) => {
         const key = storageKey();
         if (key) localStorage.setItem(key, JSON.stringify(value));
     });
+
+    watch(() => store.filePath, load, { immediate: true });
 
     return collapsedGroups;
 }
