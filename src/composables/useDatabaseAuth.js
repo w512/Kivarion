@@ -2,7 +2,7 @@ import { ref, nextTick } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
-import { readFileMtime, saveDatabase } from '../dbHelper.js';
+import { normalizeDatabase, readFileMtime, saveDatabase } from '../dbHelper.js';
 import { basename, toExactArrayBuffer } from '../utils.js';
 import { biometricPreferenceKey } from '../databasePreferences.js';
 import { withSystemInteraction } from './useSystemInteraction.js';
@@ -304,7 +304,9 @@ export function useDatabaseAuth(router, passwordInputRef) {
 
             const credentials = await buildCredentials(password.value, keyPath);
 
-            const db = await kdbxweb.Kdbx.load(arrayBuffer, credentials);
+            const db = normalizeDatabase(
+                await kdbxweb.Kdbx.load(arrayBuffer, credentials),
+            );
 
             // The selection may have changed during the async read/KDF; discard
             // this result rather than opening a stale database.

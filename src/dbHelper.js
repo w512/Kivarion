@@ -5,6 +5,82 @@ import { SETTING_LIMITS, clampNumberSetting, useStore } from './store.js';
 import { toExactArrayBuffer } from './utils.js';
 
 /**
+ * Repair the optional fields kdbxweb cannot round-trip safely.
+ *
+ * When the source file omits an optional element (some KeePass ports do),
+ * kdbxweb reads the field as `undefined` — and on save writes it back as an
+ * *empty* element. KeePass 2.x and kdbxweb itself shrug that off, but
+ * KeePassXC's strict parser rejects the whole file ("Invalid EnableSearching
+ * value", "Invalid number value"), locking the user out of their own vault in
+ * other software. So right after load every such field is pinned to the value
+ * KeePass would default it to, and every later save/XML export serializes
+ * something all readers accept:
+ *
+ * - `EnableSearching` / `EnableAutoType` (tri-state: true/false/`null` =
+ *   inherit) → `null`;
+ * - `IsExpanded` / `Expires` (plain booleans) → kdbxweb's own creation
+ *   defaults (`true` / `false`);
+ * - `IconID` on groups → Folder, `UsageCount` in every Times block and the
+ *   history-policy numbers in Meta → their KeePass defaults. (Entry `IconID`
+ *   and AutoType obfuscation are already defaulted by kdbxweb's writer.)
+ *
+ * Kivarion never sets these fields to `undefined` itself; running this once
+ * per load is enough.
+ *
+ * @param {kdbxweb.Kdbx} db
+ * @returns {kdbxweb.Kdbx} the same instance, for call-site convenience
+ */
+export function normalizeDatabase(db) {
+    for (const topLevelGroup of db?.groups ?? []) {
+        for (const group of topLevelGroup.allGroups()) {
+            if (group.enableSearching === undefined) {
+                group.enableSearching = null;
+            }
+            if (group.enableAutoType === undefined) {
+                group.enableAutoType = null;
+            }
+            if (group.expanded === undefined) {
+                group.expanded = true;
+            }
+            if (!Number.isFinite(group.icon)) {
+                group.icon = kdbxweb.Consts.Icons.Folder;
+            }
+            normalizeTimes(group.times);
+            for (const entry of group.entries) {
+                normalizeTimes(entry.times);
+                for (const historyEntry of entry.history) {
+                    normalizeTimes(historyEntry.times);
+                }
+            }
+        }
+    }
+    if (db?.meta) {
+        const { Defaults } = kdbxweb.Consts;
+        const meta = db.meta;
+        if (!Number.isFinite(meta.mntncHistoryDays)) {
+            meta.mntncHistoryDays = Defaults.MntncHistoryDays;
+        }
+        // -1 is KeePass's "no recommendation / not forced".
+        if (!Number.isFinite(meta.keyChangeRec)) meta.keyChangeRec = -1;
+        if (!Number.isFinite(meta.keyChangeForce)) meta.keyChangeForce = -1;
+        if (!Number.isFinite(meta.historyMaxItems)) {
+            meta.historyMaxItems = Defaults.HistoryMaxItems;
+        }
+        if (!Number.isFinite(meta.historyMaxSize)) {
+            meta.historyMaxSize = Defaults.HistoryMaxSize;
+        }
+    }
+    return db;
+}
+
+/** @param {import('kdbxweb').KdbxTimes} [times] */
+function normalizeTimes(times) {
+    if (!times) return;
+    if (!Number.isFinite(times.usageCount)) times.usageCount = 0;
+    if (times.expires === undefined) times.expires = false;
+}
+
+/**
  * Re-read a database from disk with the given credentials.
  *
  * Used to resolve an external-modification conflict by taking the version that
@@ -32,10 +108,12 @@ export async function loadDatabaseFromDisk(
     const buffer = toExactArrayBuffer(bytes);
 
     try {
-        return await kdbxweb.Kdbx.load(buffer, credentials);
+        return normalizeDatabase(await kdbxweb.Kdbx.load(buffer, credentials));
     } catch (error) {
         if (!fallbackCredentials || error?.code !== 'InvalidKey') throw error;
-        return kdbxweb.Kdbx.load(buffer, fallbackCredentials);
+        return normalizeDatabase(
+            await kdbxweb.Kdbx.load(buffer, fallbackCredentials),
+        );
     }
 }
 

@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router';
 import * as kdbxweb from 'kdbxweb';
 import { invoke } from '@tauri-apps/api/core';
 import { useStore } from '../store.js';
-import { saveDatabase } from '../dbHelper.js';
+import { normalizeDatabase, saveDatabase } from '../dbHelper.js';
 import { toExactArrayBuffer } from '../utils.js';
 import { getDefaultGroup, getObjectUuid } from '../kdbxView.js';
 import RestoreBackupModal from '../components/RestoreBackupModal.vue';
@@ -85,7 +85,9 @@ async function restoreBackup(backup) {
         const buffer = toExactArrayBuffer(bytes);
         // Reuse the open database's credentials; a backup from before a password
         // change will fail to load here, which we surface as an error.
-        const restored = await kdbxweb.Kdbx.load(buffer, store.db.credentials);
+        const restored = normalizeDatabase(
+            await kdbxweb.Kdbx.load(buffer, store.db.credentials),
+        );
 
         store.db = restored;
         const root = getDefaultGroup(restored);
