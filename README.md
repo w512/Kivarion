@@ -6,6 +6,14 @@
 
 Kivarion is a modern, fast, and secure desktop password manager that works with the KeePass format (`.kdbx` files). Built with **Tauri 2** and **Vue 3**, it provides a native user experience with a strong focus on security.
 
+## Why Kivarion?
+
+- **Your data, your storage.** A vault is a single `.kdbx` file on your disk. Kivarion has no cloud, no servers, and never sees your data — you decide where the file lives (a local folder, an encrypted drive, or your own sync service such as Syncthing, iCloud Drive, or Dropbox).
+- **No account, no subscription.** There is nothing to sign up for and nothing to pay for. The app works fully offline; the only optional network request is favicon fetching, which is a single Settings switch away from never happening.
+- **Open format, no lock-in.** Kivarion reads and writes standard KDBX 4, so your vault stays compatible with KeePass, KeePassXC, KeeWeb, and the rest of the ecosystem. Leaving Kivarion never requires an export or migration.
+- **Open source.** The entire application is GPL-3.0 and auditable — the encryption, the file handling, and everything in between.
+- **Proven cryptography.** KDBX 4 encryption (AES-256 / ChaCha20) with **Argon2** key derivation — a modern, memory-hard KDF that is considerably harder to brute-force than PBKDF2.
+
 ## Key Features
 
 - **Full KDBX 4 support** — securely work with KeePass 2.x databases.
@@ -13,12 +21,17 @@ Kivarion is a modern, fast, and secure desktop password manager that works with 
 - **Flexible unlock** — open a database with a master password, a key file, or both. The key file is remembered per database.
 - **Create databases** — make a brand-new `.kdbx` from the app, protected by a master password.
 - **Three-column interface** — convenient navigation with a group tree, entry list, and resizable detail panel.
-- **Structure management** — create, rename, and delete groups and entries.
+- **Structure management** — create, rename, and delete groups and entries; move entries between groups with drag & drop.
+- **Entry history** — every edit keeps the previous version (up to 10 per entry); view what changed and restore any earlier state.
+- **Icons** — the standard KDBX icon set (drawn with Lucide) plus custom icons embedded in the database file, with one picker for groups and entries.
 - **Recycle Bin** — deleted groups and entries go to the KeePass Recycle Bin and can be restored to where they came from; deleting them again (or emptying the bin) is permanent.
 - **Global search** — the search field in the top bar filters entries across the entire database, regardless of the selected group. It searches the **Title**, **UserName**, **URL**, **Notes**, and **custom fields** by both name and value. Matching is case-insensitive and substring-based. Protected fields, including passwords and hidden custom fields, are excluded from search.
 - **Attachment support** — add, preview, export, rename, and delete files attached to entries. Adding a file larger than 10 MB asks for confirmation first: attachments live inside the database, so every later save re-encrypts them.
 - **Website favicons** — automatically fetch icons for entries through `icon.horse`. Off-switch in Settings for anyone who would rather not send entry domains to a third party.
-- **Password generator** — create strong passwords with configurable options.
+- **Password generator** — create strong passwords with configurable options; revealed passwords are colour-coded per character class so look-alike characters are easy to tell apart.
+- **Database settings** — change the master password and add or remove a key file for an open database; the current credentials are verified first.
+- **Backups** — rotating encrypted `.bak` copies next to the database (depth configurable in Settings), restorable from Settings.
+- **Touch ID unlock** — on macOS, optionally unlock a database with Touch ID (see Security below for how the password is stored).
 - **Auto-save** — every operation is written to the file (rapid edits are coalesced for a fraction of a second, and anything pending is flushed before locking or closing).
 - **Personalization** — supports light, dark, and system themes.
 - **Saved-data cleanup** — Settings can remove all Kivarion Touch ID passwords, remembered key-file associations, and path-keyed interface preferences without deleting vault files.
@@ -30,6 +43,7 @@ Kivarion targets desktop **macOS, Windows, and Linux** via Tauri. macOS builds r
 
 - **Touch ID unlock** — **macOS only**. On other platforms the biometric commands report "not supported" and the option is unavailable; unlock there is password-only.
 - **Quick Look attachment preview** — **macOS only** (uses `qlmanage`). In-app image/PDF preview and export work on all platforms.
+- **Window close behaviour** — on macOS, closing the window hides the app (click the Dock icon to bring it back) and Cmd+Q quits; on Windows and Linux, closing the window quits the app. Unsaved changes are guarded in both cases.
 
 ## Technology Stack
 
@@ -72,12 +86,12 @@ bun run test:e2e
 
 # Bump the app version everywhere it's duplicated
 # (package.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock)
-bun run bump 0.6.0
+bun run bump 1.6.0
 ```
 
 ## Releases
 
-Windows and Linux packages are built by the **Release Application** GitHub Actions workflow ([`release.yml`](.github/workflows/release.yml)), triggered manually (`workflow_dispatch`); it tags `v<version>` and publishes a (draft) GitHub release via `tauri-action`. The macOS build is produced locally with a signing/notarization script (`build-mac.sh`, not committed — it contains Apple Developer credentials): `./build-mac.sh [universal|intel|silicon|both]`.
+Windows and Linux packages are built by the **Release Application** GitHub Actions workflow ([`release.yml`](.github/workflows/release.yml)), triggered manually (`workflow_dispatch`); it tags `v<version>` and publishes a (draft) GitHub release via `tauri-action`. The macOS build is produced locally with a signing/notarization script (`build-mac.sh`, not committed — it contains Apple Developer credentials): `./build-mac.sh [universal|intel|silicon|both]`. A GitLab mirror builds the same Windows/Linux packages as pipeline artifacts via [`.gitlab-ci.yml`](.gitlab-ci.yml) (manual web pipelines or `v*` tags only).
 
 > **Note (Linux/AppImage):** the release pipeline strips the bundled Wayland/DRM client libraries (`libwayland-*`, `libgbm`, `libdrm*`) from the AppImage after packaging so they resolve from the host — otherwise WebKitGTK's EGL init fails on recent Mesa (see the repack step in [`release.yml`](.github/workflows/release.yml)). A locally built AppImage does not get this treatment; if it aborts with `EGL_BAD_PARAMETER`, remove those libraries from the AppImage the same way.
 
@@ -105,6 +119,7 @@ src/
 ├── crypto-init.js         # Points kdbxweb's Argon2 at the Rust backend
 ├── kdbxView.js            # View model and lookup index, rebuilt once per change
 ├── dbHelper.js            # Serializes the database and calls the backend save command
+├── entryHistory.js        # Entry-history snapshots and change diffs (10 per entry)
 ├── ipc.js                 # Raw-byte IPC helpers for the bulk-payload commands
 ├── customIcons.js         # The file-wide custom-icon list (Meta/CustomIcons)
 ├── standardIcons.js       # KDBX icon ids mapped to Lucide glyphs
