@@ -27,9 +27,6 @@
                         >{{ field.value }}</a
                     >
                     <span v-else>{{ field.value }}</span>
-                    <p v-if="linkError" class="link-error" role="alert">
-                        {{ linkError }}
-                    </p>
                 </div>
                 <div v-else class="field-value">{{ field.value }}</div>
 
@@ -164,11 +161,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed } from 'vue';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { getField, normalizeHttpUrl } from '../../utils';
 import { useClipboard } from '../../composables/useClipboard';
 import ColoredPassword from './ColoredPassword.vue';
+import { showErrorToast } from '../../toast.js';
 
 const props = defineProps({
     entry: { type: Object, required: true },
@@ -178,13 +176,7 @@ const props = defineProps({
 });
 
 const showPassword = ref(false);
-const linkError = ref('');
 const { activeCopyField, copy: copyToClipboard } = useClipboard();
-
-watch(
-    () => props.entry,
-    () => (linkError.value = ''),
-);
 
 // No Title row: it repeated the detail column's own heading verbatim, and
 // unlike every other field it was never empty, so it always cost a row. Copying
@@ -248,14 +240,13 @@ function maskedPassword(pw) {
  * should do exactly what it says.
  */
 async function openLink(href) {
-    linkError.value = '';
     try {
         await openUrl(href);
     } catch (error) {
         console.error('Could not open the link:', error);
         // A link that silently does nothing is the bug this replaced; say so
         // rather than reintroducing it in a rarer form.
-        linkError.value = 'Could not open this link in your browser.';
+        showErrorToast('Could not open this link in your browser.');
     }
 }
 
@@ -289,8 +280,8 @@ function copy(text, fieldId, secret = false) {
     display: grid;
     grid-template-columns: minmax(6.5rem, 32%) minmax(0, 1fr);
     align-items: center;
-    min-height: 3rem;
-    padding: 0.45rem 0.75rem;
+    min-height: 2.25rem;
+    padding: 0.3rem 0.6rem;
 }
 
 .field-row + .field-row {
@@ -298,7 +289,7 @@ function copy(text, fieldId, secret = false) {
 }
 
 .field-row label {
-    padding-right: 1.25rem;
+    padding-right: 1rem;
     color: var(--text-secondary);
     font-size: 0.9rem;
     font-weight: 400;
@@ -327,7 +318,7 @@ function copy(text, fieldId, secret = false) {
 .notes-field {
     order: 2;
     margin-top: 0.75rem;
-    padding: 0.6rem;
+    padding: 0.5rem 0.6rem;
     background: var(--note-bg);
     border: 1px solid var(--note-border);
     border-radius: 8px;
@@ -350,12 +341,6 @@ function copy(text, fieldId, secret = false) {
 
 .field-value a:hover {
     text-decoration: underline;
-}
-
-.link-error {
-    margin-top: 0.35rem;
-    color: var(--error-color);
-    font-size: 0.78rem;
 }
 
 .field-actions {

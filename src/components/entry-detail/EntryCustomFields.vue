@@ -337,8 +337,8 @@ function copy(text, fieldId, isProtected = false) {
     display: grid;
     grid-template-columns: minmax(6.5rem, 32%) minmax(0, 1fr);
     align-items: center;
-    min-height: 3rem;
-    padding: 0.45rem 0.75rem;
+    min-height: 2.25rem;
+    padding: 0.3rem 0.6rem;
 }
 
 .field-row + .field-row {
@@ -346,7 +346,7 @@ function copy(text, fieldId, isProtected = false) {
 }
 
 .field-row label {
-    padding-right: 1.25rem;
+    padding-right: 1rem;
     color: var(--text-secondary);
     font-size: 0.9rem;
     font-weight: 400;

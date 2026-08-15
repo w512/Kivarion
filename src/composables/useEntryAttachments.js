@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { invokeWithBytes } from '../ipc.js';
 import { pushEntryHistory } from '../entryHistory.js';
 import { getMimeType, isImage, toExactArrayBuffer } from '../utils';
+import { showErrorToast } from '../toast';
 import { useStore } from '../store';
 import { useClipboard } from './useClipboard';
 import { withSystemInteraction } from './useSystemInteraction.js';
@@ -143,7 +144,6 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
     const previewUrl = ref(null);
     const previewName = ref('');
     const isAddingAttachment = ref(false);
-    const attachmentError = ref('');
     const attachmentVersion = ref(0);
     const pendingLargeAttachment = ref(null);
     let resolveLargeAttachment = null;
@@ -235,7 +235,6 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
 
         const db = store.db;
         const entry = entryRef.value;
-        attachmentError.value = '';
         isAddingAttachment.value = true;
 
         try {
@@ -272,7 +271,7 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
             emitUpdated('updated');
         } catch (error) {
             console.error('Failed to add attachment:', error);
-            attachmentError.value = 'Could not add this attachment.';
+            showErrorToast('Could not add this attachment.');
         } finally {
             if (resolveLargeAttachment) answerLargeAttachment(false);
             isAddingAttachment.value = false;
@@ -369,10 +368,6 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
         copy(name);
     }
 
-    function clearAttachmentError() {
-        attachmentError.value = '';
-    }
-
     return {
         attachments,
         attachmentThumbnails,
@@ -381,14 +376,12 @@ export function useEntryAttachments(entryRef, isMac, emitUpdated = () => {}) {
         previewUrl,
         previewName,
         isAddingAttachment,
-        attachmentError,
         pendingLargeAttachment,
         confirmLargeAttachment,
         cancelLargeAttachment,
         addAttachment,
         renameAttachment,
         deleteAttachment,
-        clearAttachmentError,
         openPreview,
         closePreview,
         exportAttachment,

@@ -70,8 +70,6 @@
             </section>
         </div>
 
-        <p v-if="error" class="picker-error" role="alert">{{ error }}</p>
-
         <div class="modal-actions">
             <button type="button" class="cancel-btn" @click="emit('cancel')">
                 Cancel
@@ -122,7 +120,6 @@ const props = defineProps({
     selectedCustomIconId: { type: String, default: null },
     canDownloadFavicon: { type: Boolean, default: false },
     busy: { type: Boolean, default: false },
-    error: { type: String, default: '' },
 });
 
 const emit = defineEmits([
@@ -244,12 +241,6 @@ function onGridKeydown(event) {
 .icon-button:disabled {
     opacity: 0.5;
     cursor: default;
-}
-
-.picker-error {
-    margin: 0.75rem 0 0;
-    color: var(--error-color);
-    font-size: 0.8rem;
 }
 
 .modal-actions {

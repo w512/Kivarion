@@ -1,15 +1,14 @@
 <script setup>
-import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import licenses from '../licenses.js';
+import { showErrorToast } from '../toast.js';
 
 // The four projects the About dialog names, with their notices in full: MIT,
 // ISC and Apache-2.0 each ask for the notice to travel with the copies, and a
 // list of names does not do that.
 
 const router = useRouter();
-const linkError = ref('');
 
 function goBack() {
     // A window reloaded directly on #/licenses has no in-app history.
@@ -20,12 +19,11 @@ function goBack() {
 // Same rule as the entry URL: the anchor never navigates the webview itself,
 // which would put an unlocked database behind a page a remote origin controls.
 async function openLink(href) {
-    linkError.value = '';
     try {
         await openUrl(href);
     } catch (error) {
         console.error('Could not open the link:', error);
-        linkError.value = 'Could not open this link in your browser.';
+        showErrorToast('Could not open this link in your browser.');
     }
 }
 </script>
@@ -55,10 +53,6 @@ async function openLink(href) {
             <p class="intro">
                 Kivarion is built on the projects below, and reproduces each
                 notice in full as its license requires.
-            </p>
-
-            <p v-if="linkError" class="link-error" role="alert">
-                {{ linkError }}
             </p>
 
             <section
@@ -199,11 +193,5 @@ async function openLink(href) {
     white-space: pre-wrap;
     word-break: break-word;
     overflow-x: auto;
-}
-
-.link-error {
-    margin: 0;
-    color: var(--error-color);
-    font-size: 0.8rem;
 }
 </style>

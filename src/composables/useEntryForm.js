@@ -7,6 +7,7 @@ import {
     STANDARD_FIELDS,
 } from '../utils';
 import { pushEntryHistory } from '../entryHistory';
+import { showErrorToast } from '../toast';
 
 export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     const isEditing = ref(false);
@@ -18,7 +19,6 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         Notes: '',
         CustomFields: [],
     });
-    const formError = ref('');
     const initialFormSnapshot = ref('');
     const isDirty = computed(
         () =>
@@ -27,7 +27,6 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     );
 
     function loadForm() {
-        formError.value = '';
         form.value = {
             Title: getField(props.entry, 'Title'),
             UserName: getField(props.entry, 'UserName'),
@@ -127,7 +126,6 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
     }
 
     function validateCustomFields() {
-        formError.value = '';
         const normalized = [];
         const seenKeys = new Set();
 
@@ -136,13 +134,15 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
             if (!key) continue;
 
             if (isStandardFieldName(key)) {
-                formError.value = `“${key}” is a standard field and cannot be used as a custom field name.`;
+                showErrorToast(
+                    `“${key}” is a standard field and cannot be used as a custom field name.`,
+                );
                 return null;
             }
 
             const normalizedKey = normalizeFieldName(key);
             if (seenKeys.has(normalizedKey)) {
-                formError.value = `Custom field “${key}” is duplicated.`;
+                showErrorToast(`Custom field “${key}” is duplicated.`);
                 return null;
             }
 
@@ -161,7 +161,6 @@ export function useEntryForm(props, emit, customFields, downloadIconCallback) {
         isEditing,
         isDirty,
         form,
-        formError,
         startEdit,
         cancelEdit,
         saveEdit,

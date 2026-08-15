@@ -14,6 +14,7 @@ import {
     getObjectUuid,
 } from '../kdbxView.js';
 import { DEFAULT_ENTRY_ICON, DEFAULT_GROUP_ICON } from '../standardIcons.js';
+import { showErrorToast } from '../toast.js';
 import {
     getField,
     normalizeHttpUrl,
@@ -50,7 +51,6 @@ export function useIconPicker(
     const showIconPicker = ref(false);
     const iconTargetKind = ref(null); // 'group' | 'entry'
     const iconTargetUuid = ref(null);
-    const iconPickerError = ref('');
     const iconPickerBusy = ref(false);
 
     // Resolved on every read rather than held: an object can be deleted, or the
@@ -119,7 +119,6 @@ export function useIconPicker(
             return;
         }
 
-        iconPickerError.value = '';
         iconPickerBusy.value = false;
         showIconPicker.value = true;
     }
@@ -131,7 +130,6 @@ export function useIconPicker(
         showIconPicker.value = false;
         iconTargetKind.value = null;
         iconTargetUuid.value = null;
-        iconPickerError.value = '';
     }
 
     /**
@@ -184,7 +182,6 @@ export function useIconPicker(
         const object = iconTarget.value;
         if (!db || !object) return;
 
-        iconPickerError.value = '';
         iconPickerBusy.value = true;
         try {
             // Only the picker takes the screen away from the app; the read runs
@@ -198,7 +195,7 @@ export function useIconPicker(
             if (!isStillCurrent(db, object)) return;
 
             if (picked.size > MAX_ICON_FILE_SIZE) {
-                iconPickerError.value = tooLargeMessage(picked.size);
+                showErrorToast(tooLargeMessage(picked.size));
                 return;
             }
 
@@ -207,14 +204,15 @@ export function useIconPicker(
 
             const data = toExactArrayBuffer(bytes);
             if (data.byteLength > MAX_ICON_FILE_SIZE) {
-                iconPickerError.value = tooLargeMessage(data.byteLength);
+                showErrorToast(tooLargeMessage(data.byteLength));
                 return;
             }
             // Strict: unrecognized bytes are not an icon. Labelling them as PNG
             // the way the renderer does would store a file that shows as broken.
             if (!sniffImageMimeType(new Uint8Array(data))) {
-                iconPickerError.value =
-                    'That file is not a supported image (PNG, JPEG, GIF, WebP, BMP, ICO or SVG).';
+                showErrorToast(
+                    'That file is not a supported image (PNG, JPEG, GIF, WebP, BMP, ICO or SVG).',
+                );
                 return;
             }
 
@@ -224,7 +222,7 @@ export function useIconPicker(
             });
         } catch (e) {
             console.error('Failed to set the icon from a file', e);
-            iconPickerError.value = e?.message || String(e);
+            showErrorToast(e?.message || String(e));
         } finally {
             iconPickerBusy.value = false;
         }
@@ -235,7 +233,6 @@ export function useIconPicker(
         const entry = iconTarget.value;
         if (!db || !entry || iconTargetKind.value !== 'entry') return;
 
-        iconPickerError.value = '';
         iconPickerBusy.value = true;
         try {
             // `downloadIcon` stores the icon and reports the save itself; it
@@ -244,13 +241,10 @@ export function useIconPicker(
             if (!isStillCurrent(db, entry)) return;
 
             if (updated) closeIconPicker();
-            else {
-                iconPickerError.value =
-                    'No icon could be downloaded for this entry.';
-            }
+            else showErrorToast('No icon could be downloaded for this entry.');
         } catch (e) {
             console.error('Failed to download the icon', e);
-            iconPickerError.value = e?.message || String(e);
+            showErrorToast(e?.message || String(e));
         } finally {
             iconPickerBusy.value = false;
         }
@@ -271,7 +265,6 @@ export function useIconPicker(
         selectedIconId,
         selectedCustomIconId,
         canDownloadFavicon,
-        iconPickerError,
         iconPickerBusy,
         openGroupIconPicker,
         openEntryIconPicker,

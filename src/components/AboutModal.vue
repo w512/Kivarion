@@ -23,8 +23,6 @@
             </li>
         </ul>
 
-        <p v-if="linkError" class="link-error" role="alert">{{ linkError }}</p>
-
         <div class="modal-actions">
             <button type="button" class="cancel-btn" @click="openLicenses">
                 Open Source Licenses
@@ -42,6 +40,7 @@ import { useRouter } from 'vue-router';
 import { getVersion } from '@tauri-apps/api/app';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import BaseModal from './BaseModal.vue';
+import { showErrorToast } from '../toast.js';
 
 const router = useRouter();
 
@@ -52,7 +51,6 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 
 const version = ref('');
-const linkError = ref('');
 
 // The built-in icon set is Lucide's: KDBX stores only a standard icon *number*,
 // and this is the artwork Kivarion draws it with, so the attribution belongs
@@ -109,12 +107,11 @@ function openLicenses() {
 // a navigation would put an unlocked database behind a page a remote origin
 // controls. `opener:default`'s scope (http/https/mailto/tel) is the second gate.
 async function openLink(href) {
-    linkError.value = '';
     try {
         await openUrl(href);
     } catch (error) {
         console.error('Could not open the link:', error);
-        linkError.value = 'Could not open this link in your browser.';
+        showErrorToast('Could not open this link in your browser.');
     }
 }
 </script>
@@ -167,12 +164,6 @@ async function openLink(href) {
 
 .credit-note {
     color: var(--text-secondary);
-}
-
-.link-error {
-    margin: 0.75rem 0 0;
-    color: var(--error-color);
-    font-size: 0.8rem;
 }
 
 .modal-actions {

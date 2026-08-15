@@ -306,7 +306,6 @@
             :selected-custom-icon-id="selectedCustomIconId"
             :can-download-favicon="canDownloadFavicon"
             :busy="iconPickerBusy"
-            :error="iconPickerError"
             @select-standard="chooseStandardIcon"
             @select-custom="chooseCustomIcon"
             @pick-file="pickIconFile"
@@ -442,7 +441,6 @@ const {
     selectedIconId,
     selectedCustomIconId,
     canDownloadFavicon,
-    iconPickerError,
     iconPickerBusy,
     openGroupIconPicker,
     openEntryIconPicker,

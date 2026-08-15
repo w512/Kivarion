@@ -11,6 +11,7 @@ import RestoreBackupModal from '../components/RestoreBackupModal.vue';
 import ConfirmModal from '../components/ConfirmModal.vue';
 import AboutModal from '../components/AboutModal.vue';
 import { clearDatabasePreferences } from '../databasePreferences.js';
+import { showErrorToast } from '../toast.js';
 
 const router = useRouter();
 const store = useStore();
@@ -32,21 +33,18 @@ const canRestore = computed(() => !!store.db && !!store.filePath);
 const showRestore = ref(false);
 const backups = ref([]);
 const restoreBusy = ref(false);
-const restoreError = ref('');
 const showAbout = ref(false);
 const showForgetDatabaseData = ref(false);
 const forgetDatabaseDataBusy = ref(false);
-const forgetDatabaseDataError = ref('');
 const forgetDatabaseDataSuccess = ref('');
 
 async function openRestore() {
     if (!canRestore.value) return;
-    restoreError.value = '';
     try {
         backups.value = await invoke('list_backups', { path: store.filePath });
     } catch (e) {
         backups.value = [];
-        restoreError.value = 'Could not list backups: ' + (e?.message || e);
+        showErrorToast('Could not list backups: ' + (e?.message || e));
     }
     showRestore.value = true;
 }
@@ -56,7 +54,6 @@ async function forgetSavedDatabaseData() {
 
     showForgetDatabaseData.value = false;
     forgetDatabaseDataBusy.value = true;
-    forgetDatabaseDataError.value = '';
     forgetDatabaseDataSuccess.value = '';
     try {
         const result = await invoke('forget_saved_database_data');
@@ -69,8 +66,9 @@ async function forgetSavedDatabaseData() {
         // Local path-keyed state is safe to clear even if the system keychain
         // operation failed; a retry can still find secrets by Keychain service.
         clearDatabasePreferences();
-        forgetDatabaseDataError.value =
-            'Could not remove all saved credentials from the system. Please try again.';
+        showErrorToast(
+            'Could not remove all saved credentials from the system. Please try again.',
+        );
         showForgetDatabaseData.value = false;
     } finally {
         forgetDatabaseDataBusy.value = false;
@@ -79,7 +77,6 @@ async function forgetSavedDatabaseData() {
 
 async function restoreBackup(backup) {
     restoreBusy.value = true;
-    restoreError.value = '';
     try {
         const bytes = await invoke('read_database', { path: backup.path });
         const buffer = toExactArrayBuffer(bytes);
@@ -101,8 +98,9 @@ async function restoreBackup(backup) {
         showRestore.value = false;
     } catch (e) {
         console.error('Restore failed:', e);
-        restoreError.value =
-            'Could not restore this backup. It may use a different master password.';
+        showErrorToast(
+            'Could not restore this backup. It may use a different master password.',
+        );
     } finally {
         restoreBusy.value = false;
     }
@@ -286,13 +284,6 @@ async function restoreBackup(backup) {
                     >
                         {{ forgetDatabaseDataSuccess }}
                     </p>
-                    <p
-                        v-if="forgetDatabaseDataError"
-                        class="setting-status setting-status--error"
-                        role="alert"
-                    >
-                        {{ forgetDatabaseDataError }}
-                    </p>
                 </div>
                 <div class="setting-action">
                     <button
@@ -327,7 +318,6 @@ async function restoreBackup(backup) {
             :show="showRestore"
             :backups="backups"
             :busy="restoreBusy"
-            :error="restoreError"
             @close="showRestore = false"
             @restore="restoreBackup"
         />
@@ -487,10 +477,6 @@ async function restoreBackup(backup) {
 
 .setting-status--success {
     color: var(--accent-color) !important;
-}
-
-.setting-status--error {
-    color: var(--error-color) !important;
 }
 
 code {

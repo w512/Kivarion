@@ -43,10 +43,6 @@
         </div>
 
         <div v-if="expanded" class="attachments-content">
-            <p v-if="error" class="attachment-error" role="alert">
-                {{ error }}
-            </p>
-
             <div v-if="attachments.length === 0" class="no-attachments">
                 No attachments
             </div>
@@ -56,6 +52,7 @@
                     v-for="att in attachments"
                     :key="att.name"
                     class="attachment-card"
+                    :class="{ 'menu-open': activeMenu === att.name }"
                 >
                     <div
                         class="attachment-preview"
@@ -267,7 +264,6 @@ const props = defineProps({
     thumbnails: { type: Map, default: () => new Map() },
     totalSize: { type: Number, default: 0 },
     adding: { type: Boolean, default: false },
-    error: { type: String, default: '' },
 });
 
 const emit = defineEmits([
@@ -315,7 +311,7 @@ onUnmounted(() => {
 <style scoped>
 .attachments-section {
     margin-top: 0;
-    padding: 0.75rem;
+    padding: 0.45rem 0.6rem;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--card-bg);
@@ -323,6 +319,7 @@ onUnmounted(() => {
 
 .section-header {
     display: flex;
+    min-height: 1.5rem;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
@@ -367,7 +364,7 @@ onUnmounted(() => {
 }
 
 .attachments-content {
-    margin-top: 0.6rem;
+    margin-top: 0.5rem;
 }
 
 .add-attachment-btn {
@@ -375,7 +372,7 @@ onUnmounted(() => {
     align-items: center;
     justify-content: center;
     gap: 0.35rem;
-    padding: 0.35rem 0.6rem;
+    padding: 0.25rem 0.55rem;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     background: var(--card-bg);
@@ -404,15 +401,6 @@ onUnmounted(() => {
     animation: spin 0.7s linear infinite;
 }
 
-.attachment-error {
-    margin: 0 0 0.75rem;
-    padding: 0.55rem 0.7rem;
-    border-radius: 8px;
-    background: rgba(239, 68, 68, 0.12);
-    color: var(--error-color);
-    font-size: 0.78rem;
-}
-
 .no-attachments {
     text-align: center;
     padding: 0.75rem;
@@ -432,11 +420,18 @@ onUnmounted(() => {
     background: var(--card-bg);
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    overflow: hidden;
     position: relative;
     transition:
         transform 0.2s,
         border-color 0.2s;
+}
+
+/* Deliberately no `overflow: hidden` here: the actions menu is a descendant of
+   the card and is taller than it, so clipping to the card cut off its last
+   items — Rename and Delete were unreachable. The preview clips itself
+   instead, and an open menu lifts its card above the following ones. */
+.attachment-card.menu-open {
+    z-index: 20;
 }
 
 .attachment-card:hover {
@@ -452,6 +447,8 @@ onUnmounted(() => {
     justify-content: center;
     cursor: pointer;
     overflow: hidden;
+    /* 7px = the card's 8px radius minus its 1px border. */
+    border-radius: 7px 7px 0 0;
 }
 
 .attachment-preview img {

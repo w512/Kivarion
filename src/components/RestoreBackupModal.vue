@@ -14,8 +14,6 @@
                 Any unsaved changes will be lost.
             </p>
 
-            <p v-if="error" class="restore-error">{{ error }}</p>
-
             <div v-if="backups.length === 0" class="empty">
                 No backups found for this database yet.
             </div>
@@ -59,7 +57,6 @@ defineProps({
     show: { type: Boolean, default: false },
     backups: { type: Array, default: () => [] },
     busy: { type: Boolean, default: false },
-    error: { type: String, default: '' },
 });
 
 defineEmits(['close', 'restore']);
@@ -83,15 +80,6 @@ function backupDate(mtime) {
     color: var(--text-secondary);
     margin: 0 0 1rem;
     line-height: 1.4;
-}
-
-.restore-error {
-    font-size: 0.8rem;
-    color: var(--error-color);
-    background: rgba(239, 68, 68, 0.1);
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    margin: 0 0 1rem;
 }
 
 .empty {

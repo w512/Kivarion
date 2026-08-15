@@ -1,6 +1,12 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { ref } from 'vue';
 import { useEntryForm } from '../src/composables/useEntryForm.js';
+import { resetToasts, toasts } from '../src/toast.js';
+
+/** The messages currently on screen, newest last. */
+function toastMessages() {
+    return toasts.value.map((toast) => toast.message);
+}
 
 function makeEntry(fields = {}) {
     return {
@@ -15,6 +21,8 @@ function protectedValue(text) {
 }
 
 describe('useEntryForm custom fields', () => {
+    beforeEach(() => resetToasts());
+
     test('tracks dirty edit state and resets after cancel/save', () => {
         const entry = makeEntry({ Title: 'Entry' });
         const emit = mock(() => {});
@@ -116,7 +124,7 @@ describe('useEntryForm custom fields', () => {
         const saved = form.saveEdit();
 
         expect(saved).toBe(false);
-        expect(form.formError.value).toContain('standard field');
+        expect(toastMessages().join()).toContain('standard field');
         expect(entry.pushHistory).not.toHaveBeenCalled();
         expect(entry.fields.get('Password').getText()).toBe('secret');
         expect(emit).not.toHaveBeenCalled();
@@ -135,7 +143,7 @@ describe('useEntryForm custom fields', () => {
         const saved = form.saveEdit();
 
         expect(saved).toBe(false);
-        expect(form.formError.value).toContain('duplicated');
+        expect(toastMessages().join()).toContain('duplicated');
         expect(entry.pushHistory).not.toHaveBeenCalled();
         expect(emit).not.toHaveBeenCalled();
     });

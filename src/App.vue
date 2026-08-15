@@ -9,6 +9,7 @@ import { useAutoLock } from './composables/useAutoLock.js';
 import { useDatabaseActions } from './composables/useDatabaseActions.js';
 import { usePlatform } from './composables/usePlatform.js';
 import { teardownPageHandler } from './teardownGuard.js';
+import ToastHost from './components/ToastHost.vue';
 
 useAutoLock();
 
@@ -126,6 +127,9 @@ function quitApp() {
 
 <template>
     <router-view />
+    <!-- Mounted here, outside the router view, so an error raised on one page
+         is not unmounted by the navigation that follows it. -->
+    <ToastHost />
 </template>
 
 <style>

@@ -35,6 +35,9 @@ async function mountApp() {
         './composables/usePlatform.js': {
             usePlatform: () => ({ isMac }),
         },
+        // Only the teardown wiring is under test here; the toast host is a
+        // sibling of the router view that wants a real `window` to listen on.
+        './components/ToastHost.vue': { default: { render: () => null } },
         '@tauri-apps/api/core': {
             invoke: (...args) => invoke(...args),
         },

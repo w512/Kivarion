@@ -9,6 +9,7 @@ import {
     mount,
     textContent,
 } from './helpers/vueSfc.js';
+import { resetToasts, toasts } from '../src/toast.js';
 
 let currentStore;
 
@@ -128,7 +129,6 @@ function entryDetailStubs(overrides = {}) {
                 isEditing: ref(false),
                 isDirty: ref(false),
                 form: reactive({ CustomFields: [] }),
-                formError: ref(''),
                 startEdit() {},
                 cancelEdit() {},
                 saveEdit: () => true,
@@ -517,7 +517,8 @@ describe('component refresh behaviour', () => {
     });
 
     test('EntryViewFields reports a link it could not open', async () => {
-        const { root, link } = await mountUrlField('example.com', {
+        resetToasts();
+        const { link } = await mountUrlField('example.com', {
             openUrl: async () => {
                 throw new Error('no handler for https');
             },
@@ -528,8 +529,11 @@ describe('component refresh behaviour', () => {
         await nextTick();
 
         // Replacing a silently dead link with a silently failing one would be
-        // no improvement.
-        expect(allText(root)).toContain('Could not open this link');
+        // no improvement. The report is a toast now: the URL row is one line in
+        // a scrolling column, and a message pinned under it was easy to miss.
+        expect(toasts.value.map((toast) => toast.message).join()).toContain(
+            'Could not open this link',
+        );
     });
 
     // GroupTree used to write straight into the object it was handed, which

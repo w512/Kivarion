@@ -150,15 +150,19 @@ function togglePreview(index) {
 <style scoped>
 .history-section {
     margin-top: 0;
-    padding: 0.75rem;
+    padding: 0.45rem 0.6rem;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--card-bg);
 }
 
+/* The three collapsible blocks sit under each other, and one of them
+   (Attachments) is as tall as its "Add" button; matching that here keeps all
+   three headers the same height when they are collapsed. */
 .section-header {
     display: flex;
     width: 100%;
+    min-height: 1.5rem;
     align-items: center;
     justify-content: space-between;
     padding: 0;
@@ -198,7 +202,7 @@ function togglePreview(index) {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    margin-top: 0.65rem;
+    margin-top: 0.5rem;
 }
 
 .history-item {

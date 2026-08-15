@@ -58,15 +58,18 @@ watch(
 <style scoped>
 .metadata-section {
     margin-top: 0;
-    padding: 0.75rem;
+    padding: 0.45rem 0.6rem;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--card-bg);
 }
 
+/* Same height as the Attachments header (which is as tall as its "Add"
+   button), so the collapsed blocks form an even stack. */
 .section-header {
     display: flex;
     width: 100%;
+    min-height: 1.5rem;
     align-items: center;
     justify-content: space-between;
     padding: 0;
@@ -98,7 +101,7 @@ watch(
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
     gap: 0.6rem;
-    margin-top: 0.65rem;
+    margin-top: 0.5rem;
 }
 
 .meta-item {

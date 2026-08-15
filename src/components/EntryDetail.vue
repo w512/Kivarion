@@ -137,7 +137,6 @@
                 :thumbnails="attachmentThumbnails"
                 :total-size="totalAttachmentsSize"
                 :adding="isAddingAttachment"
-                :error="attachmentError"
                 @add="addAttachment"
                 @preview="openPreview"
                 @copy-name="copyAttachmentName"
@@ -161,7 +160,6 @@
         >
             <EntryEditFields v-model="form" />
             <EntryCustomFields v-model="form.CustomFields" is-editing />
-            <p v-if="formError" class="form-error">{{ formError }}</p>
         </form>
 
         <AttachmentPreviewModal
@@ -316,7 +314,7 @@ const otherCustomFields = computed(() =>
 // Use Composables
 const { downloadIcon } = useEntryIcons(emit);
 
-const { isEditing, isDirty, form, formError, startEdit, cancelEdit, saveEdit } =
+const { isEditing, isDirty, form, startEdit, cancelEdit, saveEdit } =
     useEntryForm(props, emit, customFields, downloadIcon);
 
 const {
@@ -327,14 +325,12 @@ const {
     previewUrl,
     previewName,
     isAddingAttachment,
-    attachmentError,
     pendingLargeAttachment,
     confirmLargeAttachment,
     cancelLargeAttachment,
     addAttachment,
     renameAttachment,
     deleteAttachment,
-    clearAttachmentError,
     openPreview,
     closePreview,
     exportAttachment,
@@ -348,7 +344,6 @@ const largeAttachmentMessage = computed(() => {
 });
 
 function requestRenameAttachment(attachment) {
-    clearAttachmentError();
     attachmentToRenameName.value = attachment.name;
     attachmentRenameName.value = attachment.name;
     attachmentRenameError.value = '';
@@ -368,7 +363,6 @@ function confirmRenameAttachment() {
 }
 
 function requestDeleteAttachment(attachment) {
-    clearAttachmentError();
     attachmentToDeleteName.value = attachment.name;
     showDeleteAttachment.value = true;
 }
@@ -665,14 +659,6 @@ onUnmounted(() => {
     color: var(--text-secondary);
     font-size: 0.8rem;
     cursor: pointer;
-}
-
-.form-error {
-    padding: 0.6rem 0.75rem;
-    border-radius: 8px;
-    background: rgba(239, 68, 68, 0.12);
-    color: var(--error-color);
-    font-size: 0.85rem;
 }
 
 .dropdown-enter-active,

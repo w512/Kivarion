@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { computed, reactive } from 'vue';
 import * as kdbxweb from 'kdbxweb';
 import { buildDatabaseView } from '../src/kdbxView.js';
+import { resetToasts, toasts } from '../src/toast.js';
 
 // Only the two backend calls the file pick makes are mocked; `mock.module` is
 // process-global in Bun, so the handler is a per-test variable rather than a
@@ -102,8 +103,14 @@ function storeIcon(bytes = PNG, name = 'stored.png') {
 
 beforeEach(() => {
     invokeHandler = async () => null;
+    resetToasts();
     setup();
 });
+
+/** The messages currently on screen, joined for a substring check. */
+function toastText() {
+    return toasts.value.map((toast) => toast.message).join('\n');
+}
 
 describe('useIconPicker', () => {
     test('opens for a group by uuid and for an entry by object', () => {
@@ -261,7 +268,7 @@ describe('useIconPicker', () => {
         // The size comes back with the pick precisely so the bytes are never
         // read: an icon is embedded in the vault and re-encrypted on each save.
         expect(commands).toEqual(['pick_attachment_file']);
-        expect(picker.iconPickerError.value).toContain('under 256 KB');
+        expect(toastText()).toContain('under 256 KB');
         expect(db.meta.customIcons.size).toBe(0);
         expect(picker.showIconPicker.value).toBe(true);
     });
@@ -284,7 +291,7 @@ describe('useIconPicker', () => {
 
         await picker.pickIconFile();
 
-        expect(picker.iconPickerError.value).toContain('not a supported image');
+        expect(toastText()).toContain('not a supported image');
         expect(db.meta.customIcons.size).toBe(0);
         expect(db.entry.customIcon).toBeUndefined();
     });
@@ -334,7 +341,7 @@ describe('useIconPicker', () => {
         picker.openEntryIconPicker(db.entry);
 
         await picker.downloadFavicon();
-        expect(picker.iconPickerError.value).toContain('No icon');
+        expect(toastText()).toContain('No icon');
         expect(picker.showIconPicker.value).toBe(true);
 
         downloadIcon.mockImplementation(async () => true);
